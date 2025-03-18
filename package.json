@@ -8,7 +8,10 @@
   "dependencies": {
     "@poppinss/cliui": "^6.4.3",
     "commander": "^13.1.0",
-    "hono": "^4.7.4"
+    "hono": "^4.7.4",
+    "pg": "^8.14.1",
+    "reflect-metadata": "^0.2.2",
+    "typeorm": "^0.3.21"
   },
   "devDependencies": {
     "@types/bun": "latest"
