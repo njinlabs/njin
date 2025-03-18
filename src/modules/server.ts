@@ -4,6 +4,7 @@ import cli from "./cli";
 import { colors, Instructions } from "@poppinss/cliui";
 import handlers from "../handlers";
 import { cors } from "hono/cors";
+import { errorResponse } from "../utils/response";
 
 class Server implements Module {
   public port = process.env.PORT || 8080;
@@ -17,6 +18,11 @@ class Server implements Module {
 
     handlers.forEach((handler) => {
       this.hono.route(handler.path, handler.action);
+    });
+
+    this.hono.onError((err, c) => {
+      cli.ui.logger.error(err);
+      return c.json(errorResponse(new Error("Internal server error")), 500);
     });
   }
 
