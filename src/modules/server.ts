@@ -3,6 +3,7 @@ import { Hono } from "hono";
 import cli from "./cli";
 import { colors, Instructions } from "@poppinss/cliui";
 import handlers from "../handlers";
+import { cors } from "hono/cors";
 
 class Server implements Module {
   public port = process.env.PORT || 8080;
@@ -11,6 +12,8 @@ class Server implements Module {
 
   boot() {
     this.sticker = cli.ui.sticker();
+
+    this.hono.use("/api/*", cors());
 
     handlers.forEach((handler) => {
       this.hono.route(handler.path, handler.action);
