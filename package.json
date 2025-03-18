@@ -1,0 +1,16 @@
+{
+  "name": "njin",
+  "version": "0.0.1-alpha",
+  "scripts": {
+    "dev": "bun run --hot ./src/njin.ts start",
+    "build": "bun build --compile --minify --sourcemap --bytecode ./src/njin.ts --outfile njin"
+  },
+  "dependencies": {
+    "@poppinss/cliui": "^6.4.3",
+    "commander": "^13.1.0",
+    "hono": "^4.7.4"
+  },
+  "devDependencies": {
+    "@types/bun": "latest"
+  }
+}
