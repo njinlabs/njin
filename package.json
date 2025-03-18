@@ -3,7 +3,8 @@
   "version": "0.0.1-alpha",
   "scripts": {
     "dev": "bun run --hot ./src/njin.ts start",
-    "build": "bun build --compile --minify --sourcemap --bytecode ./src/njin.ts --outfile njin"
+    "build": "bun build --compile --minify --sourcemap ./src/njin.ts --outfile njin",
+    "command": "bun run ./src/njin.ts"
   },
   "dependencies": {
     "@hono/zod-validator": "^0.4.3",
