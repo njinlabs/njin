@@ -5,6 +5,7 @@ import { colors, Instructions } from "@poppinss/cliui";
 import handlers from "../handlers";
 import { cors } from "hono/cors";
 import { errorResponse } from "../utils/response";
+import { TypeORMError } from "typeorm";
 
 class Server implements Module {
   public port = process.env.PORT || 8080;
@@ -22,6 +23,13 @@ class Server implements Module {
 
     this.hono.onError((err, c) => {
       cli.ui.logger.error(err);
+      if (err instanceof TypeORMError) {
+        return c.json(
+          errorResponse(err),
+          err.name === "EntityNotFoundError" ? 404 : 500
+        );
+      }
+
       return c.json(errorResponse(new Error("Internal server error")), 500);
     });
   }

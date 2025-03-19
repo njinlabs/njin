@@ -3,9 +3,19 @@ import validator from "../middlewares/validator";
 import { createUserValidation } from "../validations/user";
 import User from "../database/entities/user";
 import { successResponse } from "../utils/response";
-import { metaDataValidation } from "../validations/general";
+import {
+  metaDataValidation,
+  uuidParamValidation,
+} from "../validations/general";
+import z from "zod";
 
 const user = new Hono();
+
+user.get("/:id", validator("param", uuidParamValidation), async (c) => {
+  const user = await User.findOneByOrFail({ id: c.req.param("id") });
+
+  return c.json(successResponse("User result", user.serialize()));
+});
 
 user.post("/", validator("json", createUserValidation), async (c) => {
   const { password, ...data } = await c.req.valid("json");
