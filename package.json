@@ -9,6 +9,8 @@
   "dependencies": {
     "@hono/zod-validator": "^0.4.3",
     "@poppinss/cliui": "^6.4.3",
+    "argon2": "^0.41.1",
+    "class-transformer": "^0.5.1",
     "commander": "^13.1.0",
     "hono": "^4.7.4",
     "pg": "^8.14.1",

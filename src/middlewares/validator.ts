@@ -1,6 +1,6 @@
 import { zValidator } from "@hono/zod-validator";
 import { ValidationTargets } from "hono";
-import { ZodError, ZodType } from "zod";
+import { ZodError, ZodSchema } from "zod";
 import { errorResponse } from "../utils/response";
 
 export class ValidationError extends Error {
@@ -12,10 +12,10 @@ export class ValidationError extends Error {
   }
 }
 
-export default function validator(
-  target: keyof ValidationTargets,
-  schema: ZodType
-) {
+export default function validator<
+  T extends ZodSchema,
+  Target extends keyof ValidationTargets
+>(target: Target, schema: T) {
   return zValidator(target, schema, (result, c) => {
     if (!result.success) {
       return c.json(
