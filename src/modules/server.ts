@@ -22,6 +22,10 @@ class Server implements Module {
       this.hono.route(handler.path, handler.action);
     });
 
+    this.hono.notFound((c) => {
+      return c.json(response("Route not found"), 404);
+    });
+
     this.hono.onError(async (err, c) => {
       if (err instanceof HTTPException)
         return c.json(
