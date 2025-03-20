@@ -1,5 +1,5 @@
-import cli from "@modules/cli";
-import server from "@modules/server";
+import cli from "@njin-modules/cli";
+import server from "@njin-modules/server";
 
 export default function start() {
   cli.program

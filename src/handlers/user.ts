@@ -1,15 +1,15 @@
-import { Hono } from "hono";
-import User from "../database/entities/user";
-import validator from "../middlewares/validator";
-import { successResponse } from "../utils/response";
+import User from "@njin-entities/user";
+import validator from "@njin-middlewares/validator";
+import { response } from "@njin-utils/response";
 import {
   metaDataValidation,
   uuidParamValidation,
-} from "../validations/general";
+} from "@njin-validations/general";
 import {
   createUserValidation,
   updateUserValidation,
-} from "../validations/user";
+} from "@njin-validations/user";
+import { Hono } from "hono";
 
 const user = new Hono();
 
@@ -17,7 +17,7 @@ user.delete("/:id", validator("param", uuidParamValidation), async (c) => {
   const user = await User.findOneByOrFail({ id: c.req.param("id") });
   await user.remove();
 
-  return c.json(successResponse("User deleted", user.serialize()));
+  return c.json(response("User deleted", user.serialize()));
 });
 
 user.put(
@@ -35,14 +35,14 @@ user.put(
 
     await user.save();
 
-    return c.json(successResponse("User updated", user.serialize()));
+    return c.json(response("User updated", user.serialize()));
   }
 );
 
 user.get("/:id", validator("param", uuidParamValidation), async (c) => {
   const user = await User.findOneByOrFail({ id: c.req.param("id") });
 
-  return c.json(successResponse("User result", user.serialize()));
+  return c.json(response("User result", user.serialize()));
 });
 
 user.post("/", validator("json", createUserValidation), async (c) => {
@@ -53,7 +53,7 @@ user.post("/", validator("json", createUserValidation), async (c) => {
 
   await user.save();
 
-  return c.json(successResponse("User created", user.serialize()));
+  return c.json(response("User created", user.serialize()));
 });
 
 user.get("/", validator("query", metaDataValidation), async (c) => {
@@ -66,7 +66,7 @@ user.get("/", validator("query", metaDataValidation), async (c) => {
   const usersCount = await User.count();
 
   return c.json(
-    successResponse(
+    response(
       "User result",
       users.map((user) => user.serialize()),
       {
