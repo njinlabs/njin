@@ -1,28 +1,6 @@
-export type Meta = {
-  pagination?: {
-    page: number;
-    perPage: number;
-    totalPages: number;
-    totalItems: number;
-  };
-};
+import { Meta } from "@njin-types/meta";
 
-export function errorResponse<Data = any>(
-  e: Error & {
-    data?: Data;
-  }
-) {
-  return {
-    message: e.message,
-    data: e.data,
-  };
-}
-
-export function successResponse<Data>(
-  message: string,
-  data?: Data,
-  meta?: Meta
-) {
+export function response<Data>(message: string, data?: Data, meta?: Meta) {
   return {
     message,
     data,

@@ -1,11 +1,11 @@
-import { Module } from "@njin-types/module";
-import { Hono } from "hono";
-import cli from "./cli";
 import { colors, Instructions } from "@poppinss/cliui";
-import handlers from "../handlers";
+import { Hono } from "hono";
 import { cors } from "hono/cors";
-import { errorResponse } from "../utils/response";
 import { TypeORMError } from "typeorm";
+import handlers from "../handlers";
+import cli from "./cli";
+import { Module } from "@njin-types/module";
+import { response } from "@njin-utils/response";
 
 class Server implements Module {
   public port = process.env.PORT || 8080;
@@ -25,12 +25,12 @@ class Server implements Module {
       cli.ui.logger.error(err);
       if (err instanceof TypeORMError) {
         return c.json(
-          errorResponse(err),
+          response(err.message),
           err.name === "EntityNotFoundError" ? 404 : 500
         );
       }
 
-      return c.json(errorResponse(new Error("Internal server error")), 500);
+      return c.json(response("Internal server error"), 500);
     });
   }
 

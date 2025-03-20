@@ -1,16 +1,7 @@
 import { zValidator } from "@hono/zod-validator";
+import { response } from "@njin-utils/response";
 import { ValidationTargets } from "hono";
-import { ZodError, ZodSchema } from "zod";
-import { errorResponse } from "../utils/response";
-
-export class ValidationError extends Error {
-  public data!: ZodError["issues"];
-
-  constructor(msg: string, data: ZodError) {
-    super(msg);
-    this.data = data.issues;
-  }
-}
+import { ZodSchema } from "zod";
 
 export default function validator<
   T extends ZodSchema,
@@ -18,10 +9,7 @@ export default function validator<
 >(target: Target, schema: T) {
   return zValidator(target, schema, (result, c) => {
     if (!result.success) {
-      return c.json(
-        errorResponse(new ValidationError("Validation failed", result.error)),
-        422
-      );
+      return c.json(response("Validation failed", result.error.issues), 422);
     }
   });
 }

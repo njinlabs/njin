@@ -7,7 +7,11 @@
     "jsxImportSource": "hono/jsx",
     "paths": {
       "@njin-types/*": ["./src/types/*"],
-      "@modules/*": ["./src/modules/*"]
+      "@njin-modules/*": ["./src/modules/*"],
+      "@njin-middlewares/*": ["./src/middlewares/*"],
+      "@njin-utils/*": ["./src/utils/*"],
+      "@njin-validations/*": ["./src/validations/*"],
+      "@njin-entities/*": ["./src/database/entities/*"]
     },
     "moduleResolution": "nodenext",
     "module": "NodeNext",
