@@ -3,11 +3,14 @@ import {
   BeforeUpdate,
   Column,
   Entity,
+  OneToMany,
   PrimaryGeneratedColumn,
+  type Relation,
 } from "typeorm";
 import Base from "./base";
 import { Exclude } from "class-transformer";
 import { hash } from "argon2";
+import UserToken from "./user-token";
 
 @Entity()
 export default class User extends Base {
@@ -38,4 +41,7 @@ export default class User extends Base {
       this.password = await hash(this.plainPassword);
     }
   }
+
+  @OneToMany(() => UserToken, (token) => token.user)
+  public tokens!: User[];
 }

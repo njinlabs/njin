@@ -6,6 +6,7 @@ import handlers from "../handlers";
 import cli from "./cli";
 import { Module } from "@njin-types/module";
 import { response } from "@njin-utils/response";
+import { HTTPException } from "hono/http-exception";
 
 class Server implements Module {
   public port = process.env.PORT || 8080;
@@ -21,7 +22,13 @@ class Server implements Module {
       this.hono.route(handler.path, handler.action);
     });
 
-    this.hono.onError((err, c) => {
+    this.hono.onError(async (err, c) => {
+      if (err instanceof HTTPException)
+        return c.json(
+          response((await err.res?.text()) || err.message),
+          err.status
+        );
+
       cli.ui.logger.error(err);
       if (err instanceof TypeORMError) {
         return c.json(

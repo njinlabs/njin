@@ -8,11 +8,13 @@
   },
   "dependencies": {
     "@hono/zod-validator": "^0.4.3",
+    "@paralleldrive/cuid2": "^2.2.2",
     "@poppinss/cliui": "^6.4.3",
     "argon2": "^0.41.1",
     "class-transformer": "^0.5.1",
     "commander": "^13.1.0",
     "hono": "^4.7.4",
+    "moment": "^2.30.1",
     "pg": "^8.14.1",
     "reflect-metadata": "^0.2.2",
     "typeorm": "^0.3.21",

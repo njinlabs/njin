@@ -1,4 +1,10 @@
-import { instanceToPlain, plainToInstance } from "class-transformer";
+import {
+  instanceToPlain,
+  plainToInstance,
+  Transform,
+  Type,
+} from "class-transformer";
+import moment, { type Moment } from "moment";
 import { BaseEntity, CreateDateColumn, UpdateDateColumn } from "typeorm";
 
 export default class Base extends BaseEntity {
@@ -14,12 +20,18 @@ export default class Base extends BaseEntity {
     type: "timestamptz",
     default: () => "CURRENT_TIMESTAMP(6)",
   })
-  public createdAt!: Date;
+  @Transform(({ value }) => (value ? moment(value) : null), {
+    toClassOnly: true,
+  })
+  public createdAt!: Moment;
 
   @UpdateDateColumn({
     type: "timestamptz",
     default: () => "CURRENT_TIMESTAMP(6)",
     onUpdate: "CURRENT_TIMESTAMP(6)",
   })
-  public updatedAt!: Date;
+  @Transform(({ value }) => (value ? moment(value) : null), {
+    toClassOnly: true,
+  })
+  public updatedAt!: Moment;
 }

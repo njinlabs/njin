@@ -1,5 +1,7 @@
 import User from "@njin-entities/user";
+import auth from "@njin-middlewares/auth";
 import validator from "@njin-middlewares/validator";
+import { Njin } from "@njin-types/njin";
 import { response } from "@njin-utils/response";
 import {
   metaDataValidation,
@@ -11,7 +13,9 @@ import {
 } from "@njin-validations/user";
 import { Hono } from "hono";
 
-const user = new Hono();
+const user = new Hono<Njin>();
+
+user.use(auth("user"));
 
 user.delete("/:id", validator("param", uuidParamValidation), async (c) => {
   const user = await User.findOneByOrFail({ id: c.req.param("id") });
