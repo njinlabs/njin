@@ -1,7 +1,7 @@
 import { DataSource } from "typeorm";
 import User from "./entities/user";
 import UserToken from "@njin-entities/user-token";
-import Group from "@njin-entities/group";
+import Group from "@njin-entities/access-group";
 
 export const AppDataSource = new DataSource({
   type: "postgres",

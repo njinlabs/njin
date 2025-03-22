@@ -1,4 +1,5 @@
 import { type ACLAllowed } from "@njin-types/acl";
+import { toList } from "@njin-utils/acl";
 import { hash } from "argon2";
 import { Exclude, Transform } from "class-transformer";
 import {
@@ -12,10 +13,9 @@ import {
   PrimaryGeneratedColumn,
   type Relation,
 } from "typeorm";
+import { default as AccessGroup } from "./access-group";
 import Base from "./base";
 import UserToken from "./user-token";
-import Group from "./group";
-import { toList } from "@njin-utils/acl";
 
 @Entity()
 export default class User extends Base {
@@ -58,8 +58,8 @@ export default class User extends Base {
 
   @AfterLoad()
   public setControls() {
-    if (this.group) {
-      this.controls = this.group.controls;
+    if (this.accessGroup) {
+      this.controls = this.accessGroup.controls;
     }
   }
 
@@ -67,10 +67,10 @@ export default class User extends Base {
   public tokens?: User[];
 
   @Exclude({ toPlainOnly: true })
-  @ManyToOne(() => Group, (group) => group.users, {
+  @ManyToOne(() => AccessGroup, (group) => group.users, {
     eager: true,
     nullable: true,
     onDelete: "SET NULL",
   })
-  public group?: Relation<Group>;
+  public accessGroup?: Relation<AccessGroup>;
 }

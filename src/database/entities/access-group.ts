@@ -4,7 +4,7 @@ import { ACLAllowed } from "@njin-types/acl";
 import User from "./user";
 
 @Entity()
-export default class Group extends Base {
+export default class AccessGroup extends Base {
   @PrimaryGeneratedColumn("uuid")
   public id!: string;
 
@@ -17,6 +17,6 @@ export default class Group extends Base {
   })
   public controls!: Partial<ACLAllowed> | null;
 
-  @OneToMany(() => User, (user) => user.group)
+  @OneToMany(() => User, (user) => user.accessGroup)
   public users?: User[];
 }
