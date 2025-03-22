@@ -16,6 +16,6 @@ export default function auth(guard: keyof (typeof authLib)["guards"]) {
     },
     noAuthenticationHeaderMessage: "Authentication required",
     invalidAuthenticationHeaderMessage: "Authentication invalid",
-    invalidTokenMessage: "Unathorized",
+    invalidTokenMessage: "Unauthorized",
   });
 }
