@@ -1,6 +1,6 @@
 import { type ACLAllowed } from "@njin-types/acl";
 import { hash } from "argon2";
-import { Exclude } from "class-transformer";
+import { Exclude, Transform } from "class-transformer";
 import {
   AfterLoad,
   BeforeInsert,
@@ -15,6 +15,7 @@ import {
 import Base from "./base";
 import UserToken from "./user-token";
 import Group from "./group";
+import { toList } from "@njin-utils/acl";
 
 @Entity()
 export default class User extends Base {
@@ -36,6 +37,9 @@ export default class User extends Base {
   @Column({
     type: "jsonb",
     nullable: true,
+  })
+  @Transform(({ value }) => (value ? toList(value) : []), {
+    toPlainOnly: true,
   })
   public controls!: Partial<ACLAllowed> | null;
 
