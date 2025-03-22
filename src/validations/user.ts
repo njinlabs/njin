@@ -1,7 +1,7 @@
 import aclConfig from "@njin-config/acl.config";
 import z from "zod";
 
-const controlValidation = Object.keys(aclConfig).reduce(
+export const controlValidation = Object.keys(aclConfig).reduce(
   (carry, key) => {
     carry[key as keyof typeof carry] = z
       .array(z.enum(aclConfig[key as keyof typeof aclConfig]))

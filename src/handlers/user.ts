@@ -4,6 +4,7 @@ import auth from "@njin-middlewares/auth";
 import validator from "@njin-middlewares/validator";
 import { Njin } from "@njin-types/njin";
 import { response } from "@njin-utils/response";
+import { withMeta } from "@njin-utils/with-meta";
 import {
   metaDataValidation,
   uuidParamValidation,
@@ -83,28 +84,11 @@ user.get(
   acl("user", "read"),
   validator("query", metaDataValidation),
   async (c) => {
-    const { perPage, page } = await c.req.valid("query");
+    const meta = await c.req.valid("query");
 
-    const users = await User.find({
-      take: perPage,
-      skip: (page - 1) * perPage,
-    });
-    const usersCount = await User.count();
+    const result = await withMeta(User, { meta });
 
-    return c.json(
-      response(
-        "User result",
-        users.map((user) => user.serialize()),
-        {
-          pagination: {
-            page,
-            perPage,
-            totalItems: usersCount,
-            totalPages: Math.ceil(usersCount / perPage),
-          },
-        }
-      )
-    );
+    return c.json(response("User result", result.data, result.meta));
   }
 );
 

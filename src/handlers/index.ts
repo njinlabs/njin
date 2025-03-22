@@ -3,8 +3,13 @@ import hello from "./hello";
 import user from "./user";
 import auth from "./auth";
 import setup from "./setup";
+import accessGroup from "./access-group";
 
 const handlers: Handler[] = [
+  {
+    path: "/api/access-group",
+    action: accessGroup,
+  },
   {
     path: "/api/auth",
     action: auth,
