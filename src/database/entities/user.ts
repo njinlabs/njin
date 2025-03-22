@@ -1,3 +1,6 @@
+import { type ACLAllowed } from "@njin-types/acl";
+import { hash } from "argon2";
+import { Exclude } from "class-transformer";
 import {
   BeforeInsert,
   BeforeUpdate,
@@ -5,11 +8,8 @@ import {
   Entity,
   OneToMany,
   PrimaryGeneratedColumn,
-  type Relation,
 } from "typeorm";
 import Base from "./base";
-import { Exclude } from "class-transformer";
-import { hash } from "argon2";
 import UserToken from "./user-token";
 
 @Entity()
@@ -29,6 +29,12 @@ export default class User extends Base {
   })
   public email!: string;
 
+  @Column({
+    type: "jsonb",
+    nullable: true,
+  })
+  public controls!: ACLAllowed | null;
+
   @Exclude({
     toPlainOnly: true,
   })
@@ -43,5 +49,5 @@ export default class User extends Base {
   }
 
   @OneToMany(() => UserToken, (token) => token.user)
-  public tokens!: User[];
+  public tokens?: User[];
 }

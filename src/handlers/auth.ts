@@ -29,13 +29,13 @@ auth.post("/", validator("json", createTokenValidation), async (c) => {
 });
 
 auth.get("/", authMiddleware("user"), (c) => {
-  return c.json(c.var.auth.user.serialize());
+  return c.json(c.var.auth.user?.serialize());
 });
 
 auth.delete("/", authMiddleware("user"), async (c) => {
   await c.var.auth.remove();
 
-  return c.json(c.var.auth.user.serialize());
+  return c.json(c.var.auth.user?.serialize());
 });
 
 export default auth;

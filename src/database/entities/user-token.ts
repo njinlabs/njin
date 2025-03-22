@@ -29,5 +29,5 @@ export default class UserToken extends Base {
   public expiredAt!: Moment;
 
   @ManyToOne(() => User, (user) => user.tokens, { cascade: true })
-  public user!: Relation<User>;
+  public user?: Relation<User>;
 }

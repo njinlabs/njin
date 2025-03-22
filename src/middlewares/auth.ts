@@ -1,6 +1,5 @@
 import authLib from "@njin-modules/auth";
 import { Njin } from "@njin-types/njin";
-import { response } from "@njin-utils/response";
 import { Context } from "hono";
 import { bearerAuth } from "hono/bearer-auth";
 
