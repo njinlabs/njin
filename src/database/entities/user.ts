@@ -2,15 +2,19 @@ import { type ACLAllowed } from "@njin-types/acl";
 import { hash } from "argon2";
 import { Exclude } from "class-transformer";
 import {
+  AfterLoad,
   BeforeInsert,
   BeforeUpdate,
   Column,
   Entity,
+  ManyToOne,
   OneToMany,
   PrimaryGeneratedColumn,
+  type Relation,
 } from "typeorm";
 import Base from "./base";
 import UserToken from "./user-token";
+import Group from "./group";
 
 @Entity()
 export default class User extends Base {
@@ -33,7 +37,7 @@ export default class User extends Base {
     type: "jsonb",
     nullable: true,
   })
-  public controls!: ACLAllowed | null;
+  public controls!: Partial<ACLAllowed> | null;
 
   @Exclude({
     toPlainOnly: true,
@@ -48,6 +52,21 @@ export default class User extends Base {
     }
   }
 
+  @AfterLoad()
+  public setControls() {
+    if (this.group) {
+      this.controls = this.group.controls;
+    }
+  }
+
   @OneToMany(() => UserToken, (token) => token.user)
   public tokens?: User[];
+
+  @Exclude({ toPlainOnly: true })
+  @ManyToOne(() => Group, (group) => group.users, {
+    eager: true,
+    nullable: true,
+    onDelete: "SET NULL",
+  })
+  public group?: Relation<Group>;
 }
