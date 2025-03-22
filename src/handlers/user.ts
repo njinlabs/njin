@@ -38,10 +38,11 @@ user.put(
   async (c) => {
     const user = await User.findOneByOrFail({ id: c.req.param("id") });
 
-    const { fullname, password, email } = await c.req.valid("json");
+    const { fullname, password, email, controls } = await c.req.valid("json");
 
     user.fullname = fullname;
-    user.plainPassword = password;
+    if (password) user.plainPassword = password;
+    if (controls) user.controls = controls;
     if (user.email.toLowerCase() !== email.toLowerCase()) user.email = email;
 
     await user.save();

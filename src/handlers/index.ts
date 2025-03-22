@@ -2,6 +2,7 @@ import { Handler } from "@njin-types/handler";
 import hello from "./hello";
 import user from "./user";
 import auth from "./auth";
+import setup from "./setup";
 
 const handlers: Handler[] = [
   {
@@ -11,6 +12,10 @@ const handlers: Handler[] = [
   {
     path: "/api/user",
     action: user,
+  },
+  {
+    path: "/api/setup",
+    action: setup,
   },
   {
     path: "/",

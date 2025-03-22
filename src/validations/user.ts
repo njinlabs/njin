@@ -19,7 +19,7 @@ const controlValidation = Object.keys(aclConfig).reduce(
 export const updateUserValidation = z.object({
   fullname: z.string().nonempty(),
   email: z.string().email().nonempty(),
-  password: z.coerce.string(),
+  password: z.string().optional(),
   controls: z.object(controlValidation).optional(),
 });
 
