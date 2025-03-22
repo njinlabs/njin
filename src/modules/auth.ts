@@ -1,21 +1,16 @@
-import User from "@njin-entities/user";
-import UserToken from "@njin-entities/user-token";
+import authConfig from "@njin-config/auth.config";
+import { AuthGuard } from "@njin-types/auth";
 import { Module } from "@njin-types/module";
 import { createId } from "@paralleldrive/cuid2";
 import { hash, verify } from "argon2";
 import { type Moment } from "moment";
 
 class Auth implements Module {
-  public guards = {
-    user: {
-      User,
-      Token: UserToken,
-    },
-  };
+  public guards = authConfig.guards;
 
   public boot() {}
 
-  public use(guard: keyof typeof this.guards = "user") {
+  public use(guard: keyof typeof this.guards = authConfig.defaultGuard) {
     return {
       generate: this.generate(guard),
       validate: this.validate(guard),
@@ -26,13 +21,13 @@ class Auth implements Module {
     const guardUsed = this.guards[guard];
 
     return async (
-      user: InstanceType<(typeof guardUsed)["User"]>,
+      user: InstanceType<(typeof guardUsed)["user"]>,
       name: string = "",
       expiredAt?: Moment
     ) => {
       const plainToken = createId();
 
-      const token = new guardUsed.Token();
+      const token = new guardUsed.token();
       token.name = name;
       if (expiredAt) token.expiredAt = expiredAt;
       token.hashed = await hash(plainToken);
@@ -49,10 +44,10 @@ class Auth implements Module {
 
     return async (
       plainToken: string
-    ): Promise<InstanceType<(typeof guardUsed)["Token"]>> => {
+    ): Promise<InstanceType<(typeof guardUsed)["token"]>> => {
       const [id, hashed = ""] = plainToken.split("_");
 
-      const token = await guardUsed.Token.findOneOrFail({
+      const token = await guardUsed.token.findOneOrFail({
         where: { id: Number(id) },
         relations: {
           user: true,
@@ -66,6 +61,13 @@ class Auth implements Module {
       return token;
     };
   }
+}
+
+export function makeConfig<
+  Keys extends string,
+  Guards extends Record<Keys, AuthGuard>
+>(config: { guards: Guards; defaultGuard: keyof Guards }) {
+  return config;
 }
 
 export default new Auth();

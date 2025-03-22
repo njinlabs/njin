@@ -6,6 +6,7 @@ import { Hono } from "hono";
 import authLib from "@njin-modules/auth";
 import { response } from "@njin-utils/response";
 import { Njin } from "@njin-types/njin";
+import authMiddleware from "@njin-middlewares/auth";
 
 const auth = new Hono<Njin>();
 
@@ -23,9 +24,18 @@ auth.post("/", validator("json", createTokenValidation), async (c) => {
 
     return c.json(response("Token created", { ...user.serialize(), token }));
   } catch (e) {
-    console.log(e);
     return c.json(response("Unauthorized"), 401);
   }
+});
+
+auth.get("/", authMiddleware("user"), (c) => {
+  return c.json(c.var.auth.user.serialize());
+});
+
+auth.delete("/", authMiddleware("user"), async (c) => {
+  await c.var.auth.remove();
+
+  return c.json(c.var.auth.user.serialize());
 });
 
 export default auth;
