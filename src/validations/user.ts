@@ -1,5 +1,7 @@
 import aclConfig from "@njin-config/acl.config";
 import z from "zod";
+import { unique } from "./general";
+import User from "@njin-entities/user";
 
 export const controlValidation = Object.keys(aclConfig).reduce(
   (carry, key) => {
@@ -18,7 +20,12 @@ export const controlValidation = Object.keys(aclConfig).reduce(
 
 export const updateUserValidation = z.object({
   fullname: z.string().nonempty(),
-  email: z.string().email().nonempty(),
+  email: unique(
+    z.string().email().nonempty(),
+    User,
+    "email",
+    (value, res) => res.email === value
+  ),
   password: z.string().optional(),
   controls: z.object(controlValidation).optional(),
 });

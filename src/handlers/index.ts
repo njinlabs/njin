@@ -4,8 +4,13 @@ import user from "./user";
 import auth from "./auth";
 import setup from "./setup";
 import accessGroup from "./access-group";
+import product from "./product";
 
 const handlers: Handler[] = [
+  {
+    path: "/api/product",
+    action: product,
+  },
   {
     path: "/api/access-group",
     action: accessGroup,

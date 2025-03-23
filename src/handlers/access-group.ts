@@ -93,9 +93,7 @@ accessGroup.get(
   acl("accessGroup", "read"),
   validator("query", metaDataValidation),
   async (c) => {
-    const meta = await c.req.valid("query");
-
-    const result = await withMeta(AccessGroup, { meta });
+    const result = await withMeta(AccessGroup, await c.req.valid("query"));
 
     return c.json(response("Access group result", result.data, result.meta));
   }

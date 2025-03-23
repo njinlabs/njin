@@ -23,6 +23,11 @@ export default class Base extends BaseEntity {
   @Transform(({ value }) => (value ? moment(value) : null), {
     toClassOnly: true,
   })
+  @Transform(
+    ({ value }) =>
+      (moment.isMoment(value) ? value : moment(value)).toISOString(true),
+    { toPlainOnly: true }
+  )
   public createdAt!: Moment;
 
   @UpdateDateColumn({
@@ -33,5 +38,10 @@ export default class Base extends BaseEntity {
   @Transform(({ value }) => (value ? moment(value) : null), {
     toClassOnly: true,
   })
+  @Transform(
+    ({ value }) =>
+      (moment.isMoment(value) ? value : moment(value)).toISOString(true),
+    { toPlainOnly: true }
+  )
   public updatedAt!: Moment;
 }

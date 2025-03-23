@@ -14,6 +14,7 @@ import {
   updateUserValidation,
 } from "@njin-validations/user";
 import { Hono } from "hono";
+import { ILike } from "typeorm";
 
 const user = new Hono<Njin>();
 
@@ -84,9 +85,18 @@ user.get(
   acl("user", "read"),
   validator("query", metaDataValidation),
   async (c) => {
-    const meta = await c.req.valid("query");
-
-    const result = await withMeta(User, { meta });
+    const result = await withMeta(
+      User,
+      await c.req.valid("query"),
+      ({ search }) =>
+        search
+          ? {
+              where: {
+                fullname: ILike(`%${search}%`),
+              },
+            }
+          : {}
+    );
 
     return c.json(response("User result", result.data, result.meta));
   }

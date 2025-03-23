@@ -2,6 +2,8 @@ import { DataSource } from "typeorm";
 import User from "./entities/user";
 import UserToken from "@njin-entities/user-token";
 import Group from "@njin-entities/access-group";
+import ProductCategory from "@njin-entities/product-category";
+import Product from "@njin-entities/product";
 
 export const AppDataSource = new DataSource({
   type: "postgres",
@@ -12,7 +14,7 @@ export const AppDataSource = new DataSource({
   database: process.env.DB_NAME,
   synchronize: process.env.NODE_ENV === "production" ? false : true,
   logging: false,
-  entities: [User, UserToken, Group],
+  entities: [User, UserToken, Group, ProductCategory, Product],
   subscribers: [],
   migrations: [],
 });
