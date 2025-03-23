@@ -6,4 +6,5 @@ export default makeConfig({
   product: ["write", "read"],
   transaction: ["makeAdjustment"],
   customer: ["write", "read"],
+  supplier: ["write", "read"],
 } as const);

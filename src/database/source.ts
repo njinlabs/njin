@@ -8,6 +8,7 @@ import StockAdjustment from "@njin-entities/stock-adjustment";
 import StockLedger from "@njin-entities/stock-ledger";
 import StockBatch from "@njin-entities/stock-batch";
 import Customer from "@njin-entities/customer";
+import Supplier from "@njin-entities/supplier";
 
 export const AppDataSource = new DataSource({
   type: "postgres",
@@ -28,6 +29,7 @@ export const AppDataSource = new DataSource({
     StockLedger,
     StockBatch,
     Customer,
+    Supplier,
   ],
   subscribers: [],
   migrations: [],
