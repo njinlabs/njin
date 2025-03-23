@@ -70,6 +70,9 @@ export default class User extends Base {
   @OneToMany(() => StockAdjustment, (adjustment) => adjustment.user)
   public stockAdjustments?: User[];
 
+  @Column({ nullable: true })
+  public accessGroupId!: string;
+
   @Exclude({ toPlainOnly: true })
   @ManyToOne(() => AccessGroup, (group) => group.users, {
     eager: true,

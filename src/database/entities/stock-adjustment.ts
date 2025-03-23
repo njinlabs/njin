@@ -15,6 +15,9 @@ export default class StockAdjustment extends Base {
   @PrimaryGeneratedColumn("uuid")
   public id!: string;
 
+  @Column()
+  public productId!: string;
+
   @ManyToOne(() => Product, (product) => product.adjustments, {
     eager: true,
     onDelete: "CASCADE",
@@ -24,7 +27,10 @@ export default class StockAdjustment extends Base {
 
   @Column({ type: "bigint" })
   @Type(() => Number)
-  public amount!: number;
+  public quantity!: number;
+
+  @Column()
+  public userId!: string;
 
   @ManyToOne(() => User, (user) => user.stockAdjustments, {
     nullable: true,

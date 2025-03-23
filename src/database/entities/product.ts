@@ -1,4 +1,4 @@
-import { Type } from "class-transformer";
+import { Exclude, Type } from "class-transformer";
 import {
   Column,
   Entity,
@@ -11,6 +11,7 @@ import Base from "./base";
 import ProductCategory from "./product-category";
 import StockLedger from "./stock-ledger";
 import StockAdjustment from "./stock-adjustment";
+import StockBatch from "./stock-batch";
 
 @Entity()
 export default class Product extends Base {
@@ -39,6 +40,14 @@ export default class Product extends Base {
   @Type(() => Number)
   public stock!: number;
 
+  @Exclude({ toPlainOnly: true })
+  @Column({
+    type: "bigint",
+    default: 0,
+  })
+  @Type(() => Number)
+  public defaultBasePrice!: number;
+
   @Column({
     type: "jsonb",
     nullable: true,
@@ -49,6 +58,9 @@ export default class Product extends Base {
       [key: string]: number;
     };
   } | null;
+
+  @Column({ nullable: true })
+  public categoryId!: string;
 
   @ManyToOne(() => ProductCategory, (category) => category.products, {
     eager: true,
@@ -63,4 +75,7 @@ export default class Product extends Base {
 
   @OneToMany(() => StockAdjustment, (adjustment) => adjustment.product)
   public adjustments!: StockLedger[];
+
+  @OneToMany(() => StockBatch, (adjustment) => adjustment.product)
+  public batches!: StockBatch[];
 }

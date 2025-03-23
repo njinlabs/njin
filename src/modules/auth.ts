@@ -3,7 +3,7 @@ import { AuthGuard } from "@njin-types/auth";
 import { Module } from "@njin-types/module";
 import { createId } from "@paralleldrive/cuid2";
 import { hash, verify } from "argon2";
-import { type Moment } from "moment";
+import { DateTime } from "luxon";
 
 class Auth implements Module {
   public guards = authConfig.guards;
@@ -23,7 +23,7 @@ class Auth implements Module {
     return async (
       user: InstanceType<(typeof guardUsed)["user"]>,
       name: string = "",
-      expiredAt?: Moment
+      expiredAt?: DateTime
     ) => {
       const plainToken = createId();
 

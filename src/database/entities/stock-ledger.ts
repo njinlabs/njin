@@ -17,6 +17,9 @@ export default class StockLedger extends Base {
   @PrimaryGeneratedColumn("uuid")
   public id!: string;
 
+  @Column()
+  public productId!: string;
+
   @ManyToOne(() => Product, (product) => product.ledgers, {
     eager: true,
     onDelete: "CASCADE",
@@ -35,6 +38,9 @@ export default class StockLedger extends Base {
   @Column({ type: "bigint" })
   @Type(() => Number)
   public result!: number;
+
+  @Column({ nullable: true })
+  public adjustmentId!: string;
 
   @OneToOne(() => StockAdjustment, { eager: true, nullable: true })
   @JoinColumn()

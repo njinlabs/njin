@@ -1,5 +1,6 @@
 import Product from "@njin-entities/product";
 import StockAdjustment from "@njin-entities/stock-adjustment";
+import StockBatch from "@njin-entities/stock-batch";
 import StockLedger from "@njin-entities/stock-ledger";
 import acl from "@njin-middlewares/acl";
 import auth from "@njin-middlewares/auth";
@@ -36,23 +37,23 @@ transaction.post(
         ledger: StockLedger;
       }[] = [];
 
-      for (const { productId, amount } of adjustments) {
+      for (const { productId, quantity } of adjustments) {
         const product = products.find((el) => el.id === productId);
         if (!product) continue;
 
         const adjustment = new StockAdjustment();
         adjustment.product = product;
-        adjustment.amount = amount;
+        adjustment.quantity = quantity;
         adjustment.user = c.var.auth.user;
 
         const ledger = new StockLedger();
-        ledger.add = amount - product.stock;
+        ledger.add = quantity - product.stock;
         ledger.adjustment = adjustment;
         ledger.current = product.stock;
         ledger.product = product;
-        ledger.result = amount;
+        ledger.result = quantity;
 
-        product.stock = amount;
+        product.stock = quantity;
 
         pairRecords.push({ adjustment, ledger });
       }
@@ -64,6 +65,24 @@ transaction.post(
         .getRepository(StockLedger)
         .save(pairRecords.map((item) => item.ledger));
       await em.getRepository(Product).upsert(products, ["id"]);
+
+      const addBatches = pairRecords
+        .map((item) => item.ledger)
+        .filter((item) => item.add >= 0)
+        .map((item) => ({
+          product: item.product,
+          quantity: item.add,
+        }));
+      const subBatches = pairRecords
+        .map((item) => item.ledger)
+        .filter((item) => item.add < 0)
+        .map((item) => ({
+          product: item.product,
+          quantity: Math.abs(item.add),
+        }));
+
+      if (addBatches.length) await StockBatch.add(addBatches, em, true);
+      if (subBatches.length) await StockBatch.sub(subBatches, "FIFO", em);
 
       return pairRecords.map((item) => item.adjustment);
     });

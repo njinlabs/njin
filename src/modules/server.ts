@@ -33,7 +33,7 @@ class Server implements Module {
           err.status
         );
 
-      cli.ui.logger.error(err);
+      console.error(err);
       if (err instanceof TypeORMError) {
         return c.json(
           response(err.message),

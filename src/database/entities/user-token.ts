@@ -1,5 +1,5 @@
 import { Exclude, Transform, Type } from "class-transformer";
-import moment, { type Moment } from "moment";
+import { DateTime } from "luxon";
 import {
   Column,
   Entity,
@@ -9,6 +9,7 @@ import {
 } from "typeorm";
 import Base from "./base";
 import User from "./user";
+import { TransformDate } from "@njin-utils/transform-date";
 
 @Entity()
 export default class UserToken extends Base {
@@ -23,10 +24,11 @@ export default class UserToken extends Base {
   public hashed!: string;
 
   @Column({ type: "timestamptz", nullable: true })
-  @Transform(({ value }) => (value ? moment(value) : null), {
-    toClassOnly: true,
-  })
-  public expiredAt!: Moment;
+  @TransformDate()
+  public expiredAt!: DateTime;
+
+  @Column()
+  public userId!: string;
 
   @ManyToOne(() => User, (user) => user.tokens, { cascade: true })
   public user?: Relation<User>;

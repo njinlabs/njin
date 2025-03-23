@@ -1,11 +1,16 @@
+import { TransformDate } from "@njin-utils/transform-date";
 import {
+  instanceToInstance,
   instanceToPlain,
   plainToInstance,
-  Transform,
-  Type,
 } from "class-transformer";
-import moment, { type Moment } from "moment";
-import { BaseEntity, CreateDateColumn, UpdateDateColumn } from "typeorm";
+import { DateTime } from "luxon";
+import {
+  AfterLoad,
+  BaseEntity,
+  CreateDateColumn,
+  UpdateDateColumn,
+} from "typeorm";
 
 export default class Base extends BaseEntity {
   public static fromPlain<T>(this: new () => T, data: object) {
@@ -16,32 +21,23 @@ export default class Base extends BaseEntity {
     return instanceToPlain(this);
   }
 
+  @AfterLoad()
+  public transform() {
+    Object.assign(this, instanceToInstance(this));
+  }
+
   @CreateDateColumn({
     type: "timestamptz",
     default: () => "CURRENT_TIMESTAMP(6)",
   })
-  @Transform(({ value }) => (value ? moment(value) : null), {
-    toClassOnly: true,
-  })
-  @Transform(
-    ({ value }) =>
-      (moment.isMoment(value) ? value : moment(value)).toISOString(true),
-    { toPlainOnly: true }
-  )
-  public createdAt!: Moment;
+  @TransformDate()
+  public createdAt!: DateTime;
 
   @UpdateDateColumn({
     type: "timestamptz",
     default: () => "CURRENT_TIMESTAMP(6)",
     onUpdate: "CURRENT_TIMESTAMP(6)",
   })
-  @Transform(({ value }) => (value ? moment(value) : null), {
-    toClassOnly: true,
-  })
-  @Transform(
-    ({ value }) =>
-      (moment.isMoment(value) ? value : moment(value)).toISOString(true),
-    { toPlainOnly: true }
-  )
-  public updatedAt!: Moment;
+  @TransformDate()
+  public updatedAt!: DateTime;
 }

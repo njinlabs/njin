@@ -14,13 +14,14 @@
     "class-transformer": "^0.5.1",
     "commander": "^13.1.0",
     "hono": "^4.7.4",
-    "moment": "^2.30.1",
+    "luxon": "^3.5.0",
     "pg": "^8.14.1",
     "reflect-metadata": "^0.2.2",
     "typeorm": "^0.3.21",
     "zod": "^3.24.2"
   },
   "devDependencies": {
-    "@types/bun": "latest"
+    "@types/bun": "latest",
+    "@types/luxon": "^3.4.2"
   }
 }

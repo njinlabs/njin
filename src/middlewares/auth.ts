@@ -11,6 +11,7 @@ export default function auth(guard: keyof (typeof authLib)["guards"]) {
         c.set("auth", valid);
         return true;
       } catch (e) {
+        console.log(e);
         return false;
       }
     },

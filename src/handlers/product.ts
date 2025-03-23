@@ -2,6 +2,7 @@ import Product from "@njin-entities/product";
 import acl from "@njin-middlewares/acl";
 import auth from "@njin-middlewares/auth";
 import validator from "@njin-middlewares/validator";
+import database from "@njin-modules/database";
 import { Njin } from "@njin-types/njin";
 import { response } from "@njin-utils/response";
 import { withMeta } from "@njin-utils/with-meta";
