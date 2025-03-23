@@ -16,6 +16,7 @@ import {
 import { default as AccessGroup } from "./access-group";
 import Base from "./base";
 import UserToken from "./user-token";
+import StockAdjustment from "./stock-adjustment";
 
 @Entity()
 export default class User extends Base {
@@ -65,6 +66,9 @@ export default class User extends Base {
 
   @OneToMany(() => UserToken, (token) => token.user)
   public tokens?: User[];
+
+  @OneToMany(() => StockAdjustment, (adjustment) => adjustment.user)
+  public stockAdjustments?: User[];
 
   @Exclude({ toPlainOnly: true })
   @ManyToOne(() => AccessGroup, (group) => group.users, {

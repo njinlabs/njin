@@ -5,7 +5,7 @@ import User from "@njin-entities/user";
 
 export const controlValidation = Object.keys(aclConfig).reduce(
   (carry, key) => {
-    carry[key as keyof typeof carry] = z
+    (carry as Record<string, unknown>)[key as keyof typeof carry] = z
       .array(z.enum(aclConfig[key as keyof typeof aclConfig]))
       .optional();
 

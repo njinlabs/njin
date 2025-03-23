@@ -3,11 +3,14 @@ import {
   Column,
   Entity,
   ManyToOne,
+  OneToMany,
   PrimaryGeneratedColumn,
   type Relation,
 } from "typeorm";
 import Base from "./base";
 import ProductCategory from "./product-category";
+import StockLedger from "./stock-ledger";
+import StockAdjustment from "./stock-adjustment";
 
 @Entity()
 export default class Product extends Base {
@@ -54,4 +57,10 @@ export default class Product extends Base {
   })
   @Type(() => ProductCategory)
   public category?: Relation<ProductCategory> | null;
+
+  @OneToMany(() => StockLedger, (ledger) => ledger.product)
+  public ledgers!: StockLedger[];
+
+  @OneToMany(() => StockAdjustment, (adjustment) => adjustment.product)
+  public adjustments!: StockLedger[];
 }

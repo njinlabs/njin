@@ -4,6 +4,8 @@ import UserToken from "@njin-entities/user-token";
 import Group from "@njin-entities/access-group";
 import ProductCategory from "@njin-entities/product-category";
 import Product from "@njin-entities/product";
+import StockAdjustment from "@njin-entities/stock-adjustment";
+import StockLedger from "@njin-entities/stock-ledger";
 
 export const AppDataSource = new DataSource({
   type: "postgres",
@@ -14,7 +16,15 @@ export const AppDataSource = new DataSource({
   database: process.env.DB_NAME,
   synchronize: process.env.NODE_ENV === "production" ? false : true,
   logging: false,
-  entities: [User, UserToken, Group, ProductCategory, Product],
+  entities: [
+    User,
+    UserToken,
+    Group,
+    ProductCategory,
+    Product,
+    StockAdjustment,
+    StockLedger,
+  ],
   subscribers: [],
   migrations: [],
 });
