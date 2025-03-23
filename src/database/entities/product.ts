@@ -40,7 +40,6 @@ export default class Product extends Base {
   @Type(() => Number)
   public stock!: number;
 
-  @Exclude({ toPlainOnly: true })
   @Column({
     type: "bigint",
     default: 0,
@@ -67,7 +66,6 @@ export default class Product extends Base {
     nullable: true,
     onDelete: "SET NULL",
   })
-  @Type(() => ProductCategory)
   public category?: Relation<ProductCategory> | null;
 
   @OneToMany(() => StockLedger, (ledger) => ledger.product)

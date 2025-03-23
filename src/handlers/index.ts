@@ -6,8 +6,13 @@ import setup from "./setup";
 import accessGroup from "./access-group";
 import product from "./product";
 import transaction from "./transaction";
+import customer from "./customer";
 
 const handlers: Handler[] = [
+  {
+    path: "/api/customer",
+    action: customer,
+  },
   {
     path: "/api/transaction",
     action: transaction,

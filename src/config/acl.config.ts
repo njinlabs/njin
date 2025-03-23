@@ -5,4 +5,5 @@ export default makeConfig({
   accessGroup: ["write", "read"],
   product: ["write", "read"],
   transaction: ["makeAdjustment"],
+  customer: ["write", "read"],
 } as const);

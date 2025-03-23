@@ -51,10 +51,11 @@ export default class User extends Base {
 
   @BeforeInsert()
   @BeforeUpdate()
-  public async hashPassword() {
+  public async sanitize() {
     if (this.plainPassword) {
       this.password = await hash(this.plainPassword);
     }
+    if (this.email) this.email = this.email.toLowerCase();
   }
 
   @AfterLoad()
