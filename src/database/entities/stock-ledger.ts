@@ -1,5 +1,6 @@
 import { Type } from "class-transformer";
 import {
+  BeforeInsert,
   Column,
   Entity,
   JoinColumn,
@@ -39,10 +40,8 @@ export default class StockLedger extends Base {
   @Type(() => Number)
   public result!: number;
 
-  @Column({ nullable: true })
-  public adjustmentId!: string;
-
-  @OneToOne(() => StockAdjustment, { eager: true, nullable: true })
-  @JoinColumn()
-  public adjustment!: Relation<StockAdjustment>;
+  @BeforeInsert()
+  public setResult() {
+    this.result = this.current + this.add;
+  }
 }

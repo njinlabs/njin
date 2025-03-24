@@ -41,13 +41,6 @@ export default class Product extends Base {
   public stock!: number;
 
   @Column({
-    type: "bigint",
-    default: 0,
-  })
-  @Type(() => Number)
-  public defaultBasePrice!: number;
-
-  @Column({
     type: "jsonb",
     nullable: true,
   })

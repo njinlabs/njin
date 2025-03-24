@@ -7,6 +7,7 @@ import auth from "@njin-middlewares/auth";
 import validator from "@njin-middlewares/validator";
 import database from "@njin-modules/database";
 import { Njin } from "@njin-types/njin";
+import { minus, plus } from "@njin-utils/inventory";
 import { response } from "@njin-utils/response";
 import { makeAdjustmentValidation } from "@njin-validations/transaction";
 import { Hono } from "hono";
@@ -20,7 +21,7 @@ transaction.post(
   acl("transaction", "makeAdjustment"),
   validator("json", makeAdjustmentValidation),
   async (c) => {
-    const { adjustments } = await c.req.valid("json");
+    const { adjustments, profitLedgerRecord } = await c.req.valid("json");
 
     const result = await database.source.transaction(async (em) => {
       const products = await em
@@ -32,59 +33,46 @@ transaction.post(
         .setLock("pessimistic_write")
         .getMany();
 
-      const pairRecords: {
-        adjustment: StockAdjustment;
-        ledger: StockLedger;
-      }[] = [];
+      const records = adjustments.reduce(
+        (carry, { productId, quantity, price }) => {
+          const product = products.find((el) => el.id === productId);
+          if (!product) return carry;
 
-      for (const { productId, quantity } of adjustments) {
-        const product = products.find((el) => el.id === productId);
-        if (!product) continue;
+          const adjustment = new StockAdjustment();
+          adjustment.product = product;
+          adjustment.quantity = quantity;
+          adjustment.user = c.var.auth.user;
 
-        const adjustment = new StockAdjustment();
-        adjustment.product = product;
-        adjustment.quantity = quantity;
-        adjustment.user = c.var.auth.user;
+          carry.push(Object.assign(adjustment, { price }));
 
-        const ledger = new StockLedger();
-        ledger.add = quantity - product.stock;
-        ledger.adjustment = adjustment;
-        ledger.current = product.stock;
-        ledger.product = product;
-        ledger.result = quantity;
+          return carry;
+        },
+        [] as (StockAdjustment & { price?: number })[]
+      );
 
-        product.stock = quantity;
+      await em.getRepository(StockAdjustment).save(records);
 
-        pairRecords.push({ adjustment, ledger });
-      }
+      const rawRecords = records.map((item) => ({
+        product: item.product,
+        quantity: item.quantity - item.product.stock,
+        price: item.price,
+      }));
 
-      await em
-        .getRepository(StockAdjustment)
-        .save(pairRecords.map((item) => item.adjustment));
-      await em
-        .getRepository(StockLedger)
-        .save(pairRecords.map((item) => item.ledger));
-      await em.getRepository(Product).upsert(products, ["id"]);
+      const addBatches = rawRecords.filter((item) => item.quantity >= 0);
 
-      const addBatches = pairRecords
-        .map((item) => item.ledger)
-        .filter((item) => item.add >= 0)
+      const subBatches = rawRecords
+        .filter((item) => item.quantity < 0)
         .map((item) => ({
           product: item.product,
-          quantity: item.add,
-        }));
-      const subBatches = pairRecords
-        .map((item) => item.ledger)
-        .filter((item) => item.add < 0)
-        .map((item) => ({
-          product: item.product,
-          quantity: Math.abs(item.add),
+          quantity: Math.abs(item.quantity),
         }));
 
-      if (addBatches.length) await StockBatch.add(addBatches, em, true);
-      if (subBatches.length) await StockBatch.sub(subBatches, "FIFO", em);
+      if (addBatches.length)
+        await plus(em, addBatches, { batchMode: "update" });
+      if (subBatches.length)
+        await minus(em, subBatches, { mode: "FIFO", profitLedgerRecord });
 
-      return pairRecords.map((item) => item.adjustment);
+      return records;
     });
 
     return c.json(
