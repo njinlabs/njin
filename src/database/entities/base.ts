@@ -6,7 +6,9 @@ import {
 } from "class-transformer";
 import { DateTime } from "luxon";
 import {
+  AfterInsert,
   AfterLoad,
+  AfterUpdate,
   BaseEntity,
   CreateDateColumn,
   UpdateDateColumn,
@@ -21,6 +23,8 @@ export default class Base extends BaseEntity {
     return instanceToPlain(this);
   }
 
+  @AfterInsert()
+  @AfterUpdate()
   @AfterLoad()
   public transform() {
     Object.assign(this, instanceToInstance(this));

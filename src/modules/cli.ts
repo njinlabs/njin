@@ -14,8 +14,6 @@ class CLI implements Module {
     commands.forEach((command) => {
       command();
     });
-
-    this.program.parse();
   }
 }
 

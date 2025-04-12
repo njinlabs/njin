@@ -32,7 +32,6 @@ export const composeProductValidation = unique(
     price: z.number(),
     code: z.string().optional(),
     barcode: z.string().optional(),
-    defaultBasePrice: z.number().optional(),
     stockSetting: z
       .object({
         default: z.string(),

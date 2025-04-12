@@ -1,8 +1,10 @@
-import "reflect-metadata";
-import modules from "./modules";
+import { Command } from "commander";
+import bootstrap from "./utils/bootstrap";
 
-(async () => {
-  for (const module of modules) {
-    await module.boot();
-  }
-})();
+bootstrap().then((modules) =>
+  (
+    modules.pop() as {
+      program: Command;
+    }
+  ).program.parse()
+);

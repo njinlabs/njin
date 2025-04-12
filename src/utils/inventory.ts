@@ -67,6 +67,8 @@ export const plus = async (
   await em.getRepository(StockLedger).save(ledgers);
   await em.getRepository(StockBatch).upsert(batches, ["id"]);
   await em.getRepository(Product).upsert(products, ["id"]);
+
+  return [ledgers, batches] as [StockLedger[], StockBatch[]];
 };
 
 export const minus = async (
@@ -82,7 +84,7 @@ export const minus = async (
     mode: "FIFO" | "LIFO";
     profitLedgerRecord?: boolean;
   }
-) => {
+): Promise<[StockLedger[], StockBatch[], ProfitLedger | null]> => {
   const oldBatchesQuery = em
     .getRepository(StockBatch)
     .createQueryBuilder("batch")
@@ -94,9 +96,9 @@ export const minus = async (
     .orderBy("batch.productId", "ASC");
 
   if (mode === "FIFO") {
-    oldBatchesQuery.addOrderBy("batch.receivedAt", "DESC");
-  } else {
     oldBatchesQuery.addOrderBy("batch.receivedAt", "ASC");
+  } else {
+    oldBatchesQuery.addOrderBy("batch.receivedAt", "DESC");
   }
 
   const oldBatches = await oldBatchesQuery.getMany();
@@ -169,5 +171,9 @@ export const minus = async (
     profit.current = oldProfitRecord?.result || 0;
 
     await em.getRepository(ProfitLedger).save(profit);
+
+    return [ledgers, batches.data, profit];
   }
+
+  return [ledgers, batches.data, null];
 };
