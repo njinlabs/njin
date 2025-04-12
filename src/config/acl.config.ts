@@ -7,4 +7,5 @@ export default makeConfig({
   transaction: ["makeAdjustment"],
   customer: ["write", "read"],
   supplier: ["write", "read"],
+  paymentMethod: ["write", "read"],
 } as const);

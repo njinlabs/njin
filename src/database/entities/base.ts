@@ -11,12 +11,24 @@ import {
   AfterUpdate,
   BaseEntity,
   CreateDateColumn,
+  FindOptionsWhere,
   UpdateDateColumn,
 } from "typeorm";
 
 export default class Base extends BaseEntity {
   public static fromPlain<T>(this: new () => T, data: object) {
     return plainToInstance(this, data);
+  }
+
+  public static async findOneAndAssign<T>(
+    this: new () => T,
+    where: FindOptionsWhere<T>,
+    data: object
+  ): Promise<T> {
+    return Object.assign(
+      await (this as unknown as typeof BaseEntity).findOneByOrFail(where),
+      data
+    ) as T;
   }
 
   public serialize() {
