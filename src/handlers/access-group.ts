@@ -13,90 +13,82 @@ import { controlValidation } from "@njin-validations/user";
 import { Hono } from "hono";
 import z from "zod";
 
-const accessGroup = new Hono<Njin>();
+const accessGroup = new Hono<Njin>()
+  .use(auth("user"))
+  .delete(
+    "/:id",
+    acl("accessGroup", "write"),
+    validator("param", uuidParamValidation),
+    async (c) => {
+      const { id } = await c.req.valid("param");
 
-accessGroup.use(auth("user"));
+      const group = await AccessGroup.findOneByOrFail({ id });
+      await group.remove();
 
-accessGroup.delete(
-  "/:id",
-  acl("accessGroup", "write"),
-  validator("param", uuidParamValidation),
-  async (c) => {
-    const { id } = await c.req.valid("param");
+      return c.json(response("Access group deleted", group.serialize()));
+    }
+  )
+  .put(
+    "/:id",
+    acl("accessGroup", "write"),
+    validator("param", uuidParamValidation),
+    validator(
+      "json",
+      z.object({
+        name: z.string(),
+        controls: z.object(controlValidation),
+      })
+    ),
+    async (c) => {
+      const group = await AccessGroup.findOneAndAssign(
+        await c.req.valid("param"),
+        await c.req.valid("json")
+      );
+      await group.save();
 
-    const group = await AccessGroup.findOneByOrFail({ id });
-    await group.remove();
+      return c.json(response("Access group updated", group.serialize()));
+    }
+  )
+  .get(
+    "/:id",
+    acl("accessGroup", "read"),
+    validator("param", uuidParamValidation),
+    async (c) => {
+      const { id } = await c.req.valid("param");
 
-    return c.json(response("Access group deleted", group.serialize()));
-  }
-);
+      const group = await AccessGroup.findOneByOrFail({ id });
 
-accessGroup.put(
-  "/:id",
-  acl("accessGroup", "write"),
-  validator("param", uuidParamValidation),
-  validator(
-    "json",
-    z.object({
-      name: z.string(),
-      controls: z.object(controlValidation),
-    })
-  ),
-  async (c) => {
-    const { id } = await c.req.valid("param");
-    const { name, controls } = await c.req.valid("json");
+      return c.json(response("Access group result", group.serialize()));
+    }
+  )
+  .post(
+    "/",
+    acl("accessGroup", "write"),
+    validator(
+      "json",
+      z.object({
+        name: z.string(),
+        controls: z.object(controlValidation),
+      })
+    ),
+    async (c) => {
+      const data = await c.req.valid("json");
 
-    const group = await AccessGroup.findOneByOrFail({ id });
-    group.name = name;
-    group.controls = controls;
-    await group.save();
+      const group = AccessGroup.fromPlain(data);
+      await group.save();
 
-    return c.json(response("Access group updated", group.serialize()));
-  }
-);
+      return c.json(response("Access group created", group.serialize()));
+    }
+  )
+  .get(
+    "/",
+    acl("accessGroup", "read"),
+    validator("query", metaDataValidation),
+    async (c) => {
+      const result = await withMeta(AccessGroup, await c.req.valid("query"));
 
-accessGroup.get(
-  "/:id",
-  acl("accessGroup", "read"),
-  validator("param", uuidParamValidation),
-  async (c) => {
-    const { id } = await c.req.valid("param");
-
-    const group = await AccessGroup.findOneByOrFail({ id });
-
-    return c.json(response("Access group result", group.serialize()));
-  }
-);
-
-accessGroup.post(
-  "/",
-  acl("accessGroup", "write"),
-  validator(
-    "json",
-    z.object({
-      name: z.string(),
-      controls: z.object(controlValidation),
-    })
-  ),
-  async (c) => {
-    const data = await c.req.valid("json");
-
-    const group = AccessGroup.fromPlain(data);
-    await group.save();
-
-    return c.json(response("Access group created", group.serialize()));
-  }
-);
-
-accessGroup.get(
-  "/",
-  acl("accessGroup", "read"),
-  validator("query", metaDataValidation),
-  async (c) => {
-    const result = await withMeta(AccessGroup, await c.req.valid("query"));
-
-    return c.json(response("Access group result", result.data, result.meta));
-  }
-);
+      return c.json(response("Access group result", result.data, result.meta));
+    }
+  );
 
 export default accessGroup;

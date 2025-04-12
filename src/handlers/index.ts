@@ -8,8 +8,13 @@ import product from "./product";
 import transaction from "./transaction";
 import customer from "./customer";
 import supplier from "./supplier";
+import paymentMethod from "./payment-method";
 
 const handlers: Handler[] = [
+  {
+    path: "/api/payment-method",
+    action: paymentMethod,
+  },
   {
     path: "/api/supplier",
     action: supplier,

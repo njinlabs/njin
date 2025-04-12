@@ -12,76 +12,74 @@ import { response } from "@njin-utils/response";
 import { makeAdjustmentValidation } from "@njin-validations/transaction";
 import { Hono } from "hono";
 
-const transaction = new Hono<Njin>();
+const transaction = new Hono<Njin>()
+  .use(auth("user"))
+  .post(
+    "/adjustment",
+    acl("transaction", "makeAdjustment"),
+    validator("json", makeAdjustmentValidation),
+    async (c) => {
+      const { adjustments, profitLedgerRecord } = await c.req.valid("json");
 
-transaction.use(auth("user"));
+      const result = await database.source.transaction(async (em) => {
+        const products = await em
+          .getRepository(Product)
+          .createQueryBuilder("product")
+          .where("product.id IN (:...ids)", {
+            ids: adjustments.map((adj) => adj.productId),
+          })
+          .setLock("pessimistic_write")
+          .getMany();
 
-transaction.post(
-  "/adjustment",
-  acl("transaction", "makeAdjustment"),
-  validator("json", makeAdjustmentValidation),
-  async (c) => {
-    const { adjustments, profitLedgerRecord } = await c.req.valid("json");
+        const records = adjustments.reduce(
+          (carry, { productId, quantity, price }) => {
+            const product = products.find((el) => el.id === productId);
+            if (!product) return carry;
 
-    const result = await database.source.transaction(async (em) => {
-      const products = await em
-        .getRepository(Product)
-        .createQueryBuilder("product")
-        .where("product.id IN (:...ids)", {
-          ids: adjustments.map((adj) => adj.productId),
-        })
-        .setLock("pessimistic_write")
-        .getMany();
+            const adjustment = new StockAdjustment();
+            adjustment.product = product;
+            adjustment.quantity = quantity;
+            adjustment.user = c.var.auth.user;
 
-      const records = adjustments.reduce(
-        (carry, { productId, quantity, price }) => {
-          const product = products.find((el) => el.id === productId);
-          if (!product) return carry;
+            carry.push(Object.assign(adjustment, { price }));
 
-          const adjustment = new StockAdjustment();
-          adjustment.product = product;
-          adjustment.quantity = quantity;
-          adjustment.user = c.var.auth.user;
+            return carry;
+          },
+          [] as (StockAdjustment & { price?: number })[]
+        );
 
-          carry.push(Object.assign(adjustment, { price }));
+        await em.getRepository(StockAdjustment).save(records);
 
-          return carry;
-        },
-        [] as (StockAdjustment & { price?: number })[]
-      );
-
-      await em.getRepository(StockAdjustment).save(records);
-
-      const rawRecords = records.map((item) => ({
-        product: item.product,
-        quantity: item.quantity - item.product.stock,
-        price: item.price,
-      }));
-
-      const addBatches = rawRecords.filter((item) => item.quantity >= 0);
-
-      const subBatches = rawRecords
-        .filter((item) => item.quantity < 0)
-        .map((item) => ({
+        const rawRecords = records.map((item) => ({
           product: item.product,
-          quantity: Math.abs(item.quantity),
+          quantity: item.quantity - item.product.stock,
+          price: item.price,
         }));
 
-      if (addBatches.length)
-        await plus(em, addBatches, { batchMode: "update" });
-      if (subBatches.length)
-        await minus(em, subBatches, { mode: "FIFO", profitLedgerRecord });
+        const addBatches = rawRecords.filter((item) => item.quantity >= 0);
 
-      return records;
-    });
+        const subBatches = rawRecords
+          .filter((item) => item.quantity < 0)
+          .map((item) => ({
+            product: item.product,
+            quantity: Math.abs(item.quantity),
+          }));
 
-    return c.json(
-      response(
-        "Stock adjustment created",
-        result.map((item) => item.serialize())
-      )
-    );
-  }
-);
+        if (addBatches.length)
+          await plus(em, addBatches, { batchMode: "update" });
+        if (subBatches.length)
+          await minus(em, subBatches, { mode: "FIFO", profitLedgerRecord });
+
+        return records;
+      });
+
+      return c.json(
+        response(
+          "Stock adjustment created",
+          result.map((item) => item.serialize())
+        )
+      );
+    }
+  );
 
 export default transaction;

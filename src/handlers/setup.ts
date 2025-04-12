@@ -7,46 +7,43 @@ import { initialSetupValidation } from "@njin-validations/setup";
 import { Hono } from "hono";
 import { HTTPException } from "hono/http-exception";
 
-const setup = new Hono<Njin>();
+const setup = new Hono<Njin>()
+  .use(async (_c, next) => {
+    const validator: (() => Promise<boolean>)[] = [];
 
-setup.use(async (_c, next) => {
-  const validator: (() => Promise<boolean>)[] = [];
+    validator.push(async () => {
+      return Boolean(await User.count());
+    });
 
-  validator.push(async () => {
-    return Boolean(await User.count());
-  });
+    const result = await Promise.all(validator.map((call) => call()));
 
-  const result = await Promise.all(validator.map((call) => call()));
-
-  for (const status of result) {
-    if (status) {
-      throw new HTTPException(403, {
-        message: "Initial setup is not allowed",
-      });
+    for (const status of result) {
+      if (status) {
+        throw new HTTPException(403, {
+          message: "Initial setup is not allowed",
+        });
+      }
     }
-  }
 
-  await next();
-});
+    await next();
+  })
+  .get("/", (c) => c.json(response("Setup allowed")))
+  .post("/", validator("json", initialSetupValidation), async (c) => {
+    const {
+      superuser: { password, controls: _control, ...data },
+    } = await c.req.valid("json");
 
-setup.get("/", (c) => c.json(response("Setup allowed")));
+    const user = User.fromPlain(data);
+    user.plainPassword = password;
+    user.controls = aclConfig;
 
-setup.post("/", validator("json", initialSetupValidation), async (c) => {
-  const {
-    superuser: { password, controls: _control, ...data },
-  } = await c.req.valid("json");
+    await user.save();
 
-  const user = User.fromPlain(data);
-  user.plainPassword = password;
-  user.controls = aclConfig;
-
-  await user.save();
-
-  return c.json(
-    response("Initial setup succeed", {
-      user: user.serialize(),
-    })
-  );
-});
+    return c.json(
+      response("Initial setup succeed", {
+        user: user.serialize(),
+      })
+    );
+  });
 
 export default setup;
