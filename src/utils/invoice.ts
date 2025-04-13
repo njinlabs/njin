@@ -5,5 +5,8 @@ export function generateInvoice(format: string, number: number) {
     .replace(/%date:([^%]+)%/g, (_, format) => {
       return DateTime.now().toFormat(format);
     })
-    .replace("%number%", `${number}`);
+    .replace(/%0+%/g, (match) => {
+      const zeroCount = match.length - 2;
+      return number.toString().padStart(zeroCount, "0");
+    });
 }

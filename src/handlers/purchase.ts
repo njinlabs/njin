@@ -40,6 +40,7 @@ const purchase = new Hono<Njin>()
               name: product.name,
               price: product.price,
               total: product.price.multiply(item.quantity),
+              quantity: item.quantity,
               product,
             });
           })

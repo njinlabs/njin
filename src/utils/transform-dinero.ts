@@ -4,7 +4,6 @@ import { ValueTransformer } from "typeorm";
 
 export const transformDinero: ValueTransformer = {
   to(value: Dinero) {
-    if (typeof value === "string") console.log(value);
     return value.toUnit().toFixed(2);
   },
   from(value: string) {

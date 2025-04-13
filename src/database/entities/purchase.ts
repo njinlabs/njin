@@ -1,7 +1,7 @@
 import config from "@njin-modules/config";
 import { type Fee } from "@njin-types/fee";
 import { calculateFee } from "@njin-utils/fee";
-import { generateInvoice } from "@njin-validations/invoice";
+import { generateInvoice } from "@njin-utils/invoice";
 import DineroFactory, { type Dinero } from "dinero.js";
 import { DateTime } from "luxon";
 import {
@@ -17,7 +17,7 @@ import PurchaseItem from "./purchase-item";
 import Supplier from "./supplier";
 import User from "./user";
 import { TransformDinero, transformDinero } from "@njin-utils/transform-dinero";
-import { Exclude, Type } from "class-transformer";
+import { Exclude, Transform, Type } from "class-transformer";
 
 @Entity()
 export default class Purchase extends Base {
@@ -35,6 +35,43 @@ export default class Purchase extends Base {
   public status!: "PAID" | "PENDING";
 
   @Column({ type: "jsonb" })
+  @Transform(
+    ({ value }) =>
+      (value as Fee[]).map((item) => {
+        console.log(
+          item.amount && (item.amount as unknown as { amount?: number }).amount
+            ? DineroFactory({
+                amount: Math.round(
+                  (item.amount as unknown as { amount: number }).amount
+                ),
+              })
+            : item.amount
+        );
+        return {
+          ...item,
+          amount:
+            item.amount &&
+            (item.amount as unknown as { amount?: number }).amount
+              ? DineroFactory({
+                  amount: Math.round(
+                    (item.amount as unknown as { amount: number }).amount
+                  ),
+                })
+              : item.amount,
+        };
+      }),
+    { toClassOnly: true }
+  )
+  @Transform(
+    ({ value }) =>
+      (value as Fee[]).map((item) => {
+        return {
+          ...item,
+          amount: item.amount?.getAmount(),
+        };
+      }),
+    { toPlainOnly: true }
+  )
   public fees!: Fee[];
 
   @Column({ nullable: true })
@@ -72,7 +109,7 @@ export default class Purchase extends Base {
 
     const format =
       config.njin.invoiceNumberFormats?.purchase ||
-      "PUR/%date:yyyy/LL/dd%/%number%";
+      "PUR/%date:yyyy/LL/dd%/%000000%";
     let number =
       (await Purchase.count({
         where: {
