@@ -58,7 +58,5 @@ describe("Purchase API", async () => {
     );
 
     expect(purchase.status).toBe(200);
-
-    console.log(JSON.stringify(await purchase.json()));
   });
 });

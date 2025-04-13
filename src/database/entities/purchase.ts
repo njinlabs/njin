@@ -38,15 +38,6 @@ export default class Purchase extends Base {
   @Transform(
     ({ value }) =>
       (value as Fee[]).map((item) => {
-        console.log(
-          item.amount && (item.amount as unknown as { amount?: number }).amount
-            ? DineroFactory({
-                amount: Math.round(
-                  (item.amount as unknown as { amount: number }).amount
-                ),
-              })
-            : item.amount
-        );
         return {
           ...item,
           amount:
