@@ -2,6 +2,7 @@ import Product from "@njin-entities/product";
 import ProfitLedger from "@njin-entities/profit-ledger";
 import StockBatch from "@njin-entities/stock-batch";
 import StockLedger from "@njin-entities/stock-ledger";
+import DineroFactory, { type Dinero } from "dinero.js";
 import { DateTime } from "luxon";
 import { EntityManager } from "typeorm";
 
@@ -11,7 +12,7 @@ export const plus = async (
     product: Product;
     quantity: number;
     receivedAt?: DateTime;
-    price?: number;
+    price?: Dinero;
   }[],
   {
     batchMode,
@@ -35,7 +36,12 @@ export const plus = async (
       : [];
 
   const batches = records.map(
-    ({ product, quantity, receivedAt, price = 0 }) => {
+    ({
+      product,
+      quantity,
+      receivedAt,
+      price = DineroFactory({ amount: 0 }),
+    }) => {
       let batch =
         oldBatches.find((el) => el.productId === product.id) ||
         new StockBatch();
@@ -117,12 +123,12 @@ export const minus = async (
         const amountAfter = batch.quantity - diffs;
 
         if (amountAfter >= 0) {
-          carry.cost += diffs * batch.price;
+          carry.cost = carry.cost.add(batch.price.multiply(diffs));
           batch.quantity = amountAfter;
 
           diffs = 0;
         } else {
-          carry.cost += batch.quantity * batch.price;
+          carry.cost = carry.cost.add(batch.price.multiply(batch.quantity));
           batch.quantity = 0;
 
           diffs = Math.abs(amountAfter);
@@ -135,7 +141,7 @@ export const minus = async (
     },
     {
       data: [] as StockBatch[],
-      cost: 0,
+      cost: DineroFactory({ amount: 0 }),
     }
   );
 
@@ -167,8 +173,8 @@ export const minus = async (
       .getOne();
 
     const profit = new ProfitLedger();
-    profit.add = 0 - batches.cost;
-    profit.current = oldProfitRecord?.result || 0;
+    profit.add = DineroFactory({ amount: 0 }).subtract(batches.cost);
+    profit.current = oldProfitRecord?.result || DineroFactory({ amount: 0 });
 
     await em.getRepository(ProfitLedger).save(profit);
 

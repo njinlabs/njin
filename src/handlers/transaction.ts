@@ -1,7 +1,5 @@
 import Product from "@njin-entities/product";
 import StockAdjustment from "@njin-entities/stock-adjustment";
-import StockBatch from "@njin-entities/stock-batch";
-import StockLedger from "@njin-entities/stock-ledger";
 import acl from "@njin-middlewares/acl";
 import auth from "@njin-middlewares/auth";
 import validator from "@njin-middlewares/validator";
@@ -10,6 +8,7 @@ import { Njin } from "@njin-types/njin";
 import { minus, plus } from "@njin-utils/inventory";
 import { response } from "@njin-utils/response";
 import { makeAdjustmentValidation } from "@njin-validations/transaction";
+import { type Dinero } from "dinero.js";
 import { Hono } from "hono";
 
 const transaction = new Hono<Njin>()
@@ -36,23 +35,29 @@ const transaction = new Hono<Njin>()
             const product = products.find((el) => el.id === productId);
             if (!product) return carry;
 
-            const adjustment = new StockAdjustment();
-            adjustment.product = product;
-            adjustment.quantity = quantity;
-            adjustment.user = c.var.auth.user;
+            const adjustment = StockAdjustment.fromPlain({
+              product,
+              quantity,
+              user: c.var.auth.user,
+            });
 
-            carry.push(Object.assign(adjustment, { price }));
+            carry.push({
+              price,
+              adjustment,
+            });
 
             return carry;
           },
-          [] as (StockAdjustment & { price?: number })[]
+          [] as { price?: Dinero; adjustment: StockAdjustment }[]
         );
 
-        await em.getRepository(StockAdjustment).save(records);
+        await em
+          .getRepository(StockAdjustment)
+          .save(records.map((item) => item.adjustment));
 
         const rawRecords = records.map((item) => ({
-          product: item.product,
-          quantity: item.quantity - item.product.stock,
+          product: item.adjustment.product,
+          quantity: item.adjustment.quantity - item.adjustment.product.stock,
           price: item.price,
         }));
 
@@ -76,7 +81,7 @@ const transaction = new Hono<Njin>()
       return c.json(
         response(
           "Stock adjustment created",
-          result.map((item) => item.serialize())
+          result.map((item) => item.adjustment.serialize())
         )
       );
     }

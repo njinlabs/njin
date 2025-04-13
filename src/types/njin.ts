@@ -5,3 +5,9 @@ export type Njin = {
     auth: Awaited<ReturnType<ReturnType<typeof auth.use>["validate"]>>;
   };
 };
+
+export type NjinConfig = {
+  invoiceNumberFormats?: {
+    purchase?: string;
+  };
+};

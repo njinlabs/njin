@@ -16,5 +16,5 @@ export default class PaymentMethod extends Base {
   public accountNumber!: string;
 
   @Column()
-  public isActive!: string;
+  public isActive!: boolean;
 }

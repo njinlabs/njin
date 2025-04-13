@@ -1,4 +1,5 @@
 import Base from "@njin-entities/base";
+import DineroFactory from "dinero.js";
 import { FindOneOptions, FindOptionsWhere } from "typeorm";
 import z, { ZodType } from "zod";
 
@@ -11,6 +12,10 @@ export const metaDataValidation = z.object({
 export const uuidParamValidation = z.object({
   id: z.coerce.string().uuid(),
 });
+
+export const dineroValidation = z
+  .number()
+  .transform((value) => DineroFactory({ amount: value }));
 
 export const unique = <Entity extends typeof Base, T>(
   validation: ZodType<T>,

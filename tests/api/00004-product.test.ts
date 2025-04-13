@@ -4,6 +4,7 @@ import product from "@njin-handlers/product";
 import { describe, expect, test } from "bun:test";
 import { testClient } from "hono/testing";
 import { defaultTestData } from "../bootstrap";
+import DineroFactory from "dinero.js";
 
 describe("Product API", async () => {
   const token = (await defaultTestData()).tokens.superuser;
@@ -72,7 +73,9 @@ describe("Product API", async () => {
     expect(source.name).toBe(json.name);
     expect(source.barcode).toBe(json.barcode);
     expect(source.code).toBe(json.code);
-    expect(source.price).toBe(json.price);
+    expect(source.price.equalsTo(DineroFactory({ amount: json.price }))).toBe(
+      true
+    );
   });
 
   test("Get product", async () => {

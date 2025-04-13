@@ -1,7 +1,7 @@
 import { type ACLAllowed } from "@njin-types/acl";
 import { toList } from "@njin-utils/acl";
 import { hash } from "argon2";
-import { Exclude, Transform } from "class-transformer";
+import { Exclude, Transform, Type } from "class-transformer";
 import {
   AfterLoad,
   BeforeInsert,
@@ -17,6 +17,7 @@ import { default as AccessGroup } from "./access-group";
 import Base from "./base";
 import UserToken from "./user-token";
 import StockAdjustment from "./stock-adjustment";
+import Purchase from "./purchase";
 
 @Entity()
 export default class User extends Base {
@@ -66,10 +67,16 @@ export default class User extends Base {
   }
 
   @OneToMany(() => UserToken, (token) => token.user)
-  public tokens?: User[];
+  @Type(() => UserToken)
+  public tokens?: UserToken[];
 
   @OneToMany(() => StockAdjustment, (adjustment) => adjustment.user)
-  public stockAdjustments?: User[];
+  @Type(() => StockAdjustment)
+  public stockAdjustments?: StockAdjustment[];
+
+  @OneToMany(() => Purchase, (purchase) => purchase.user)
+  @Type(() => Purchase)
+  public purchases?: Purchase[];
 
   @Column({ nullable: true })
   public accessGroupId!: string;
@@ -80,5 +87,6 @@ export default class User extends Base {
     nullable: true,
     onDelete: "SET NULL",
   })
+  @Type(() => AccessGroup)
   public accessGroup?: Relation<AccessGroup>;
 }

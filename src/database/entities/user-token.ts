@@ -31,5 +31,6 @@ export default class UserToken extends Base {
   public userId!: string;
 
   @ManyToOne(() => User, (user) => user.tokens, { cascade: true })
+  @Type(() => User)
   public user?: Relation<User>;
 }

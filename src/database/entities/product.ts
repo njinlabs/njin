@@ -1,4 +1,6 @@
-import { Exclude, Type } from "class-transformer";
+import { TransformDinero, transformDinero } from "@njin-utils/transform-dinero";
+import { Type } from "class-transformer";
+import { type Dinero } from "dinero.js";
 import {
   Column,
   Entity,
@@ -9,9 +11,10 @@ import {
 } from "typeorm";
 import Base from "./base";
 import ProductCategory from "./product-category";
-import StockLedger from "./stock-ledger";
+import PurchaseItem from "./purchase-item";
 import StockAdjustment from "./stock-adjustment";
 import StockBatch from "./stock-batch";
+import StockLedger from "./stock-ledger";
 
 @Entity()
 export default class Product extends Base {
@@ -21,11 +24,9 @@ export default class Product extends Base {
   @Column()
   public name!: string;
 
-  @Column({
-    type: "bigint",
-  })
-  @Type(() => Number)
-  public price!: number;
+  @Column("numeric", { precision: 12, scale: 2, transformer: transformDinero })
+  @TransformDinero()
+  public price!: Dinero;
 
   @Column({ nullable: true, unique: true })
   public code?: string | null;
@@ -59,14 +60,22 @@ export default class Product extends Base {
     nullable: true,
     onDelete: "SET NULL",
   })
+  @Type(() => ProductCategory)
   public category?: Relation<ProductCategory> | null;
 
   @OneToMany(() => StockLedger, (ledger) => ledger.product)
+  @Type(() => StockLedger)
   public ledgers!: StockLedger[];
 
   @OneToMany(() => StockAdjustment, (adjustment) => adjustment.product)
+  @Type(() => StockAdjustment)
   public adjustments!: StockLedger[];
 
-  @OneToMany(() => StockBatch, (adjustment) => adjustment.product)
+  @OneToMany(() => StockBatch, (batch) => batch.product)
+  @Type(() => StockBatch)
   public batches!: StockBatch[];
+
+  @OneToMany(() => PurchaseItem, (purchaseItem) => purchaseItem.product)
+  @Type(() => PurchaseItem)
+  public purchases!: PurchaseItem[];
 }

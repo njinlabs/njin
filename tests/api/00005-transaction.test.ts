@@ -48,7 +48,7 @@ describe("Transaction API", async () => {
             {
               productId: product.id,
               quantity: 50,
-              price: product.price,
+              price: product.price.getAmount(),
             },
           ],
         },

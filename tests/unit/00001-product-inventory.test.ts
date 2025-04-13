@@ -6,11 +6,12 @@ import Product from "@njin-entities/product";
 import StockBatch from "@njin-entities/stock-batch";
 import database from "@njin-modules/database";
 import { minus, plus } from "@njin-utils/inventory";
+import DineroFactory, { type Dinero } from "dinero.js";
 
 type InventoryMovementTest = {
   product: Product;
   quantity: number;
-  price?: number;
+  price?: Dinero;
 };
 
 function inventoryMovementTest(
@@ -33,7 +34,11 @@ function inventoryMovementTest(
     expect(stock.current).toBe(0);
     expect(stock.add).toBe(firstRecord.quantity);
     expect(stock.result).toBe(firstRecord.quantity);
-    expect(firstBatch.price).toBe(firstRecord.price ?? 0);
+    expect(
+      firstBatch.price.equalsTo(
+        firstRecord.price ?? DineroFactory({ amount: 0 })
+      )
+    ).toBe(true);
     expect(firstBatch.quantity).toBe(firstRecord.quantity);
 
     const [[plusStock], [plusBatch]] = await database.source.transaction(
@@ -46,7 +51,9 @@ function inventoryMovementTest(
     expect(plusStock.current).toBe(stock.result);
     expect(plusStock.add).toBe(plusRecord.quantity);
     expect(plusStock.result).toBe(currentStock);
-    expect(plusBatch.price).toBe(plusRecord.price ?? 0);
+    expect(
+      plusBatch.price.equalsTo(plusRecord.price ?? DineroFactory({ amount: 0 }))
+    ).toBe(true);
     expect(plusBatch.quantity).toBe(plusRecord.quantity);
 
     const [[minusStock], minusBatches, profit] =
@@ -104,7 +111,9 @@ describe("Product & Inventory", async () => {
   const products = new Array(2).fill(null).map((_, key) =>
     Product.fromPlain({
       name: faker.commerce.productName(),
-      price: faker.number.int({ min: 15000, max: 100000 }),
+      price: DineroFactory({
+        amount: 12500,
+      }),
       barcode: `${key}${faker.string.numeric(12)}`,
       category,
       code: `FAKE-${key}-${faker.string.alphanumeric(12).toUpperCase()}`,
@@ -117,13 +126,13 @@ describe("Product & Inventory", async () => {
   const [firstRecordFIFO, firstRecordLIFO] = products.map((item) => ({
     product: item,
     quantity: faker.number.int({ min: 5, max: 50 }),
-    price: item.price - Math.ceil(item.price * 0.1),
+    price: item.price.subtract(item.price.percentage(10)),
   }));
 
   const [plusRecordFIFO, plusRecordLIFO] = products.map((item) => ({
     product: item,
     quantity: faker.number.int({ min: 500, max: 1000000 }),
-    price: item.price - Math.ceil(item.price * 0.5),
+    price: item.price.subtract(item.price.percentage(50)),
   }));
 
   const minusRecordFIFO = {

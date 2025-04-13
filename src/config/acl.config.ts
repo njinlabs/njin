@@ -1,3 +1,4 @@
+import purchase from "@njin-handlers/purchase";
 import { makeConfig } from "@njin-utils/acl";
 
 export default makeConfig({
@@ -8,4 +9,5 @@ export default makeConfig({
   customer: ["write", "read"],
   supplier: ["write", "read"],
   paymentMethod: ["write", "read"],
+  purchase: ["write", "read"],
 } as const);

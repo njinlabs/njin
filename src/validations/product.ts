@@ -1,5 +1,5 @@
 import z from "zod";
-import { unique } from "./general";
+import { dineroValidation, unique } from "./general";
 import Product from "@njin-entities/product";
 import ProductCategory from "@njin-entities/product-category";
 import { FindOneOptions } from "typeorm";
@@ -29,7 +29,6 @@ const categoryValidation = z
 export const composeProductValidation = unique(
   z.object({
     name: z.string(),
-    price: z.number(),
     code: z.string().optional(),
     barcode: z.string().optional(),
     stockSetting: z
@@ -62,4 +61,6 @@ export const composeProductValidation = unique(
 
     return true;
   }
-).and(z.object({ category: categoryValidation.optional() }));
+).and(
+  z.object({ category: categoryValidation.optional(), price: dineroValidation })
+);

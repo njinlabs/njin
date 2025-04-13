@@ -11,6 +11,8 @@ import Customer from "@njin-entities/customer";
 import Supplier from "@njin-entities/supplier";
 import ProfitLedger from "@njin-entities/profit-ledger";
 import PaymentMethod from "@njin-entities/payment-method";
+import Purchase from "@njin-entities/purchase";
+import PurchaseItem from "@njin-entities/purchase-item";
 
 export const AppDataSource = new DataSource({
   type: "postgres",
@@ -34,6 +36,8 @@ export const AppDataSource = new DataSource({
     Customer,
     Supplier,
     PaymentMethod,
+    Purchase,
+    PurchaseItem,
   ],
   subscribers: [],
   migrations: [],

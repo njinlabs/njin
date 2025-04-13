@@ -3,15 +3,12 @@ import {
   BeforeInsert,
   Column,
   Entity,
-  JoinColumn,
   ManyToOne,
-  OneToOne,
   PrimaryGeneratedColumn,
   type Relation,
 } from "typeorm";
 import Base from "./base";
 import Product from "./product";
-import StockAdjustment from "./stock-adjustment";
 
 @Entity()
 export default class StockLedger extends Base {
@@ -26,6 +23,7 @@ export default class StockLedger extends Base {
     onDelete: "CASCADE",
     nullable: false,
   })
+  @Type(() => Product)
   public product!: Relation<Product>;
 
   @Column({ type: "bigint" })

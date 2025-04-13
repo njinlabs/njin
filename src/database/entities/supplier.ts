@@ -3,9 +3,12 @@ import {
   BeforeUpdate,
   Column,
   Entity,
+  OneToMany,
   PrimaryGeneratedColumn,
 } from "typeorm";
 import Base from "./base";
+import Purchase from "./purchase";
+import { Type } from "class-transformer";
 
 @Entity()
 export default class Supplier extends Base {
@@ -28,4 +31,8 @@ export default class Supplier extends Base {
       this.phone = this.phone.replace(/\D/g, "").replace(/^0/, "62");
     if (this.email) this.email = this.email.toLowerCase();
   }
+
+  @OneToMany(() => Purchase, (purchase) => purchase.supplier)
+  @Type(() => Purchase)
+  public purchases!: Purchase[];
 }

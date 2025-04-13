@@ -1,9 +1,5 @@
 import { TransformDate } from "@njin-utils/transform-date";
-import {
-  instanceToInstance,
-  instanceToPlain,
-  plainToInstance,
-} from "class-transformer";
+import { instanceToPlain, plainToInstance } from "class-transformer";
 import { DateTime } from "luxon";
 import {
   AfterInsert,
@@ -16,7 +12,12 @@ import {
 } from "typeorm";
 
 export default class Base extends BaseEntity {
-  public static fromPlain<T>(this: new () => T, data: object) {
+  public static fromPlain<T>(
+    this: new () => T,
+    data: Partial<{
+      [K in keyof T as T[K] extends (...args: any[]) => any ? never : K]: T[K];
+    }>
+  ) {
     return plainToInstance(this, data);
   }
 
@@ -39,7 +40,9 @@ export default class Base extends BaseEntity {
   @AfterUpdate()
   @AfterLoad()
   public transform() {
-    Object.assign(this, instanceToInstance(this));
+    const ctor = this.constructor as { new (): any };
+    const transformed = plainToInstance(ctor, JSON.parse(JSON.stringify(this)));
+    Object.assign(this, transformed);
   }
 
   @CreateDateColumn({

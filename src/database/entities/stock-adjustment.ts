@@ -23,6 +23,7 @@ export default class StockAdjustment extends Base {
     onDelete: "CASCADE",
     nullable: false,
   })
+  @Type(() => Product)
   public product!: Relation<Product>;
 
   @Column({ type: "bigint" })
@@ -37,5 +38,6 @@ export default class StockAdjustment extends Base {
     eager: true,
     onDelete: "SET NULL",
   })
+  @Type(() => User)
   public user?: Relation<User>;
 }

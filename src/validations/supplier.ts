@@ -33,3 +33,22 @@ export const composeSupplierValidation = unique(
     return true;
   }
 );
+
+export const supplierValidation = async (
+  value: string | { id: string },
+  ctx: z.RefinementCtx
+) => {
+  const id = typeof value === "string" ? value : value.id;
+  const supplier = await Supplier.findOneBy({ id });
+
+  if (!supplier) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Not Found",
+    });
+
+    return z.NEVER;
+  }
+
+  return supplier;
+};
