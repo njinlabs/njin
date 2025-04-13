@@ -1,9 +1,9 @@
-import { describe, expect, test } from "bun:test";
-import { defaultTestData } from "../bootstrap";
-import { testClient } from "hono/testing";
-import product from "../../src/handlers/product";
 import { faker } from "@faker-js/faker";
 import Product from "@njin-entities/product";
+import product from "@njin-handlers/product";
+import { describe, expect, test } from "bun:test";
+import { testClient } from "hono/testing";
+import { defaultTestData } from "../bootstrap";
 
 describe("Product API", async () => {
   const token = (await defaultTestData()).tokens.superuser;

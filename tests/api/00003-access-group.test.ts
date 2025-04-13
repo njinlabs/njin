@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { testClient } from "hono/testing";
-import accessGroup from "../../src/handlers/access-group";
 import { defaultTestData } from "../bootstrap";
 import aclConfig from "@njin-config/acl.config";
 import AccessGroup from "@njin-entities/access-group";
+import accessGroup from "@njin-handlers/access-group";
 
 describe("Access Group API", async () => {
   const token = (await defaultTestData()).tokens.superuser;

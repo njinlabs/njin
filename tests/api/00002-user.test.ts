@@ -1,8 +1,8 @@
 import { faker } from "@faker-js/faker";
 import User from "@njin-entities/user";
+import user from "@njin-handlers/user";
 import { describe, expect, test } from "bun:test";
 import { testClient } from "hono/testing";
-import user from "../../src/handlers/user";
 import { defaultTestData } from "../bootstrap";
 
 describe("User API", async () => {

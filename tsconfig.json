@@ -12,7 +12,8 @@
       "@njin-utils/*": ["./src/utils/*"],
       "@njin-validations/*": ["./src/validations/*"],
       "@njin-entities/*": ["./src/database/entities/*"],
-      "@njin-config/*": ["./src/config/*"]
+      "@njin-config/*": ["./src/config/*"],
+      "@njin-handlers/*": ["./src/handlers/*"]
     },
     "moduleResolution": "nodenext",
     "module": "NodeNext",

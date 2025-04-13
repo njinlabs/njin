@@ -1,8 +1,8 @@
 import { faker } from "@faker-js/faker";
 import PaymentMethod from "@njin-entities/payment-method";
+import paymentMethod from "@njin-handlers/payment-method";
 import { describe, expect, test } from "bun:test";
 import { testClient } from "hono/testing";
-import paymentMethod from "../../src/handlers/payment-method";
 import { defaultTestData } from "../bootstrap";
 
 describe("Payment Method API", async () => {

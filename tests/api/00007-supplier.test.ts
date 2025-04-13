@@ -1,8 +1,8 @@
 import { faker } from "@faker-js/faker";
 import Supplier from "@njin-entities/supplier";
+import supplier from "@njin-handlers/supplier";
 import { describe, expect, test } from "bun:test";
 import { testClient } from "hono/testing";
-import supplier from "../../src/handlers/supplier";
 import { defaultTestData } from "../bootstrap";
 
 describe("Supplier API", async () => {

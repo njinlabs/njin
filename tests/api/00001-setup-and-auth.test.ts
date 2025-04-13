@@ -1,9 +1,9 @@
 import { faker } from "@faker-js/faker";
 import aclConfig from "@njin-config/acl.config";
+import auth from "@njin-handlers/auth";
+import setup from "@njin-handlers/setup";
 import { describe, expect, test } from "bun:test";
 import { testClient } from "hono/testing";
-import auth from "../../src/handlers/auth";
-import setup from "../../src/handlers/setup";
 
 const email = faker.internet.email();
 const password = faker.internet.password();
