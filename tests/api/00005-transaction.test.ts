@@ -16,7 +16,9 @@ describe("Transaction API", async () => {
       {
         json: {
           name: faker.commerce.productName(),
-          price: faker.number.int({ min: 15000, max: 100000 }),
+          price: {
+            value: faker.number.int({ min: 15000, max: 100000 }),
+          },
           barcode: `${faker.string.numeric(12)}`,
           category: {
             name: faker.commerce.department(),
@@ -48,7 +50,9 @@ describe("Transaction API", async () => {
             {
               productId: product.id,
               quantity: 50,
-              price: product.price.getAmount(),
+              price: {
+                value: product.price.getAmount(),
+              },
             },
           ],
         },

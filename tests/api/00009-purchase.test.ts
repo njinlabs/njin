@@ -32,7 +32,9 @@ describe("Purchase API", async () => {
           fees: [
             {
               name: "Ongkos Kirim",
-              amount: 25000,
+              amount: {
+                value: 25000,
+              },
             },
             {
               name: "Biaya Admin",

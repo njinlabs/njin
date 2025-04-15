@@ -1,5 +1,7 @@
 import Base from "@njin-entities/base";
+import config from "@njin-modules/config";
 import { currency } from "@njin-utils/currency";
+import { Currency } from "dinero.js";
 import { FindOneOptions, FindOptionsWhere } from "typeorm";
 import z, { ZodType } from "zod";
 
@@ -14,8 +16,22 @@ export const uuidParamValidation = z.object({
 });
 
 export const dineroValidation = z
-  .number()
-  .transform((value) => currency(value));
+  .object({
+    value: z.number(),
+    currency: z.string().optional(),
+  })
+  .transform(
+    async ({
+      value,
+      currency: currencySource = config.njin.currency.default,
+    }) => {
+      const dinero = currency(value, currencySource as Currency);
+
+      return currencySource === config.njin.currency.default
+        ? dinero
+        : await dinero.convert(config.njin.currency.default as Currency);
+    }
+  );
 
 export const unique = <Entity extends typeof Base, T>(
   validation: ZodType<T>,

@@ -15,7 +15,9 @@ describe("Product API", async () => {
       {
         json: {
           name: faker.commerce.productName(),
-          price: faker.number.int({ min: 15000, max: 100000 }),
+          price: {
+            value: faker.number.int({ min: 15000, max: 100000 }),
+          },
           barcode: `${faker.string.numeric(12)}`,
           category: {
             name: faker.commerce.department(),
@@ -42,7 +44,9 @@ describe("Product API", async () => {
 
     const json = {
       name: faker.commerce.productName(),
-      price: faker.number.int({ min: 15000, max: 100000 }),
+      price: {
+        value: faker.number.int({ min: 15000, max: 100000 }),
+      },
       barcode: `${faker.string.numeric(12)}`,
       category: {
         name: faker.commerce.department(),
@@ -73,7 +77,7 @@ describe("Product API", async () => {
     expect(source.name).toBe(json.name);
     expect(source.barcode).toBe(json.barcode);
     expect(source.code).toBe(json.code);
-    expect(source.price.equalsTo(currency(json.price))).toBe(true);
+    expect(source.price.equalsTo(currency(json.price.value))).toBe(true);
   });
 
   test("Get product", async () => {
