@@ -1,4 +1,5 @@
 import auth from "@njin-modules/auth";
+import config from "@njin-modules/config";
 
 export type Njin = {
   Variables: {
@@ -6,8 +7,4 @@ export type Njin = {
   };
 };
 
-export type NjinConfig = {
-  invoiceNumberFormats?: {
-    purchase?: string;
-  };
-};
+export type NjinConfig = typeof config.njin;

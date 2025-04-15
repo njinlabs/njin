@@ -1,6 +1,7 @@
 import { Transform } from "class-transformer";
-import DineroFactory, { type Dinero } from "dinero.js";
+import { type Dinero } from "dinero.js";
 import { ValueTransformer } from "typeorm";
+import { currency } from "./currency";
 
 export const transformDinero: ValueTransformer = {
   to(value: Dinero) {
@@ -16,11 +17,9 @@ export function TransformDinero() {
     Transform(
       ({ value }: { value: string | { amount: number } | Dinero }) => {
         return typeof value === "string"
-          ? DineroFactory({ amount: Math.round(parseFloat(value) * 100) })
+          ? currency(Math.round(parseFloat(value) * 100))
           : (value as { amount: number }).amount
-          ? DineroFactory({
-              amount: (value as { amount: number }).amount,
-            })
+          ? currency((value as { amount: number }).amount)
           : value;
       },
       { toClassOnly: true }

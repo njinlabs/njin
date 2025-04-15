@@ -1,9 +1,9 @@
 import User from "@njin-entities/user";
-import cli from "@njin-modules/cli";
-import { afterAll, beforeAll } from "bun:test";
-import { AppDataSource } from "../src/database/source";
-import bootstrap from "../src/utils/bootstrap";
 import auth from "@njin-modules/auth";
+import cli from "@njin-modules/cli";
+import database from "@njin-modules/database";
+import { afterAll, beforeAll } from "bun:test";
+import bootstrap from "../src/utils/bootstrap";
 
 beforeAll(async () => {
   cli.ui.logger.info(`Start test`);
@@ -11,8 +11,8 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await AppDataSource.dropDatabase();
-  await AppDataSource.destroy();
+  await database.source.dropDatabase();
+  await database.source.destroy();
 
   cli.ui.logger.info(`Clearing database`);
 });

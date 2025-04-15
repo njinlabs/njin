@@ -1,8 +1,11 @@
 import config from "@njin-modules/config";
 import { type Fee } from "@njin-types/fee";
+import { currency } from "@njin-utils/currency";
 import { calculateFee } from "@njin-utils/fee";
 import { generateInvoice } from "@njin-utils/invoice";
-import DineroFactory, { type Dinero } from "dinero.js";
+import { TransformDinero, transformDinero } from "@njin-utils/transform-dinero";
+import { Transform, Type } from "class-transformer";
+import { type Dinero } from "dinero.js";
 import { DateTime } from "luxon";
 import {
   BeforeInsert,
@@ -16,8 +19,6 @@ import Base from "./base";
 import PurchaseItem from "./purchase-item";
 import Supplier from "./supplier";
 import User from "./user";
-import { TransformDinero, transformDinero } from "@njin-utils/transform-dinero";
-import { Exclude, Transform, Type } from "class-transformer";
 
 @Entity()
 export default class Purchase extends Base {
@@ -43,11 +44,7 @@ export default class Purchase extends Base {
           amount:
             item.amount &&
             (item.amount as unknown as { amount?: number }).amount
-              ? DineroFactory({
-                  amount: Math.round(
-                    (item.amount as unknown as { amount: number }).amount
-                  ),
-                })
+              ? currency((item.amount as unknown as { amount: number }).amount)
               : item.amount,
         };
       }),
@@ -91,16 +88,10 @@ export default class Purchase extends Base {
   @BeforeInsert()
   public async prependData() {
     const { result: fees, total } = calculateFee(
-      this.items.reduce(
-        (carry, item) => carry.add(item.total),
-        DineroFactory({ amount: 0 })
-      ),
+      this.items.reduce((carry, item) => carry.add(item.total), currency(0)),
       this.fees
     );
 
-    const format =
-      config.njin.invoiceNumberFormats?.purchase ||
-      "PUR/%date:yyyy/LL/dd%/%000000%";
     let number =
       (await Purchase.count({
         where: {
@@ -109,7 +100,10 @@ export default class Purchase extends Base {
       })) + 1;
 
     this.fees = fees;
-    this.invoiceNumber = generateInvoice(format, number);
+    this.invoiceNumber = generateInvoice(
+      config.njin.invoiceNumberFormats.purchase,
+      number
+    );
     this.total = total;
 
     while (
@@ -122,7 +116,10 @@ export default class Purchase extends Base {
       )
     ) {
       number++;
-      this.invoiceNumber = generateInvoice(format, number);
+      this.invoiceNumber = generateInvoice(
+        config.njin.invoiceNumberFormats.purchase,
+        number
+      );
     }
   }
 }

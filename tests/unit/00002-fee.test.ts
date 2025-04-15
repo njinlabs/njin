@@ -1,24 +1,14 @@
 import { faker } from "@faker-js/faker";
+import { currency } from "@njin-utils/currency";
 import { calculateFee } from "@njin-utils/fee";
 import { expect, test } from "bun:test";
-import DineroFactory, { Currency } from "dinero.js";
 
 test("Calculate fee", () => {
   const data = Array(50)
     .fill(faker.number.int({ min: 1 }))
     .map((value: number) => {
-      const currency = faker.finance.currencyCode() as Currency;
-
-      const total = DineroFactory({
-        amount: value,
-        currency,
-        precision: 0,
-      });
-      const shipping = DineroFactory({
-        amount: faker.number.int({ min: 1 }),
-        currency,
-        precision: 0,
-      });
+      const total = currency(value);
+      const shipping = currency(faker.number.int({ min: 1 }));
       const all = total.add(shipping).add(total.percentage(5));
 
       return {

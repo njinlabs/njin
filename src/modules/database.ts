@@ -7,10 +7,12 @@ class Database implements Module {
   public source!: DataSource;
 
   async boot() {
-    this.source = await AppDataSource.initialize().catch((e) => {
-      cli.ui.logger.error(e);
-      process.exit();
-    });
+    this.source = await AppDataSource()
+      .initialize()
+      .catch((e) => {
+        cli.ui.logger.error(e);
+        process.exit();
+      });
   }
 }
 

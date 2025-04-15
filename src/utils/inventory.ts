@@ -2,9 +2,10 @@ import Product from "@njin-entities/product";
 import ProfitLedger from "@njin-entities/profit-ledger";
 import StockBatch from "@njin-entities/stock-batch";
 import StockLedger from "@njin-entities/stock-ledger";
-import DineroFactory, { type Dinero } from "dinero.js";
+import { type Dinero } from "dinero.js";
 import { DateTime } from "luxon";
 import { EntityManager } from "typeorm";
+import { currency } from "./currency";
 
 export const plus = async (
   em: EntityManager,
@@ -36,12 +37,7 @@ export const plus = async (
       : [];
 
   const batches = records.map(
-    ({
-      product,
-      quantity,
-      receivedAt,
-      price = DineroFactory({ amount: 0 }),
-    }) => {
+    ({ product, quantity, receivedAt, price = currency(0) }) => {
       let batch =
         oldBatches.find((el) => el.productId === product.id) ||
         new StockBatch();
@@ -141,7 +137,7 @@ export const minus = async (
     },
     {
       data: [] as StockBatch[],
-      cost: DineroFactory({ amount: 0 }),
+      cost: currency(0),
     }
   );
 
@@ -173,8 +169,8 @@ export const minus = async (
       .getOne();
 
     const profit = new ProfitLedger();
-    profit.add = DineroFactory({ amount: 0 }).subtract(batches.cost);
-    profit.current = oldProfitRecord?.result || DineroFactory({ amount: 0 });
+    profit.add = currency(0).subtract(batches.cost);
+    profit.current = oldProfitRecord?.result || currency(0);
 
     await em.getRepository(ProfitLedger).save(profit);
 

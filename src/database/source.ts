@@ -13,32 +13,34 @@ import ProfitLedger from "@njin-entities/profit-ledger";
 import PaymentMethod from "@njin-entities/payment-method";
 import Purchase from "@njin-entities/purchase";
 import PurchaseItem from "@njin-entities/purchase-item";
+import config from "@njin-modules/config";
 
-export const AppDataSource = new DataSource({
-  type: "postgres",
-  host: process.env.DB_HOST,
-  port: Number(process.env.DB_PORT),
-  username: process.env.DB_USER,
-  password: process.env.DB_PASS,
-  database: process.env.DB_NAME,
-  synchronize: process.env.NODE_ENV === "production" ? false : true,
-  logging: false,
-  entities: [
-    User,
-    UserToken,
-    Group,
-    ProductCategory,
-    Product,
-    StockAdjustment,
-    StockLedger,
-    StockBatch,
-    ProfitLedger,
-    Customer,
-    Supplier,
-    PaymentMethod,
-    Purchase,
-    PurchaseItem,
-  ],
-  subscribers: [],
-  migrations: [],
-});
+export const AppDataSource = () =>
+  new DataSource({
+    type: "postgres",
+    host: config.njin.database.host,
+    port: config.njin.database.port,
+    username: config.njin.database.user,
+    password: config.njin.database.password,
+    database: config.njin.database.name,
+    synchronize: process.env.NODE_ENV === "production" ? false : true,
+    logging: false,
+    entities: [
+      User,
+      UserToken,
+      Group,
+      ProductCategory,
+      Product,
+      StockAdjustment,
+      StockLedger,
+      StockBatch,
+      ProfitLedger,
+      Customer,
+      Supplier,
+      PaymentMethod,
+      Purchase,
+      PurchaseItem,
+    ],
+    subscribers: [],
+    migrations: [],
+  });

@@ -5,8 +5,9 @@ import { faker } from "@faker-js/faker";
 import Product from "@njin-entities/product";
 import StockBatch from "@njin-entities/stock-batch";
 import database from "@njin-modules/database";
+import { currency } from "@njin-utils/currency";
 import { minus, plus } from "@njin-utils/inventory";
-import DineroFactory, { type Dinero } from "dinero.js";
+import { type Dinero } from "dinero.js";
 
 type InventoryMovementTest = {
   product: Product;
@@ -34,11 +35,9 @@ function inventoryMovementTest(
     expect(stock.current).toBe(0);
     expect(stock.add).toBe(firstRecord.quantity);
     expect(stock.result).toBe(firstRecord.quantity);
-    expect(
-      firstBatch.price.equalsTo(
-        firstRecord.price ?? DineroFactory({ amount: 0 })
-      )
-    ).toBe(true);
+    expect(firstBatch.price.equalsTo(firstRecord.price ?? currency(0))).toBe(
+      true
+    );
     expect(firstBatch.quantity).toBe(firstRecord.quantity);
 
     const [[plusStock], [plusBatch]] = await database.source.transaction(
@@ -51,9 +50,9 @@ function inventoryMovementTest(
     expect(plusStock.current).toBe(stock.result);
     expect(plusStock.add).toBe(plusRecord.quantity);
     expect(plusStock.result).toBe(currentStock);
-    expect(
-      plusBatch.price.equalsTo(plusRecord.price ?? DineroFactory({ amount: 0 }))
-    ).toBe(true);
+    expect(plusBatch.price.equalsTo(plusRecord.price ?? currency(0))).toBe(
+      true
+    );
     expect(plusBatch.quantity).toBe(plusRecord.quantity);
 
     const [[minusStock], minusBatches, profit] =
@@ -111,9 +110,7 @@ describe("Product & Inventory", async () => {
   const products = new Array(2).fill(null).map((_, key) =>
     Product.fromPlain({
       name: faker.commerce.productName(),
-      price: DineroFactory({
-        amount: 12500,
-      }),
+      price: currency(12500),
       barcode: `${key}${faker.string.numeric(12)}`,
       category,
       code: `FAKE-${key}-${faker.string.alphanumeric(12).toUpperCase()}`,
