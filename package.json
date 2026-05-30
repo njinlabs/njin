@@ -11,6 +11,7 @@
   },
   "homepage": "https://github.com/njinlabs/njin",
   "scripts": {
+    "create": "bun create.ts",
     "dev": "bun run src/spin.ts",
     "build": "vite build",
     "start": "NODE_ENV=production bun run src/spin.ts"
