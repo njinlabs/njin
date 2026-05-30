@@ -1,0 +1,26 @@
+# dependencies
+node_modules/
+
+# environment
+.env
+.env.*.local
+
+# database
+mydb/
+
+# build output
+public/
+
+# uploads
+uploads/
+
+# typescript
+*.tsbuildinfo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
