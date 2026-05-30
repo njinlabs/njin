@@ -17,7 +17,7 @@ A modern framework for building company profiles, landing pages, and content-dri
 ```bash
 bun create njinlabs/njin my-project
 cd my-project
-cp .env.example .env
+cp .env.example .env   # configure your environment
 bun dev
 ```
 
