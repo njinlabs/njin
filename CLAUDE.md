@@ -4,7 +4,35 @@ njin generates a full REST API, admin panel schema, and SSR website from a singl
 
 ---
 
+## IMPORTANT — Read this before doing anything
+
+**Do NOT read any files in these directories. Everything you need is in this file.**
+
+- `src/core/` — do not read
+- `src/modules/` — do not read
+- `src/config/module.ts` — do not read
+- `src/models/user.ts`, `src/models/file.ts` — do not read
+
+**When asked to add a feature, only ever create/edit:**
+
+1. `src/models/*.ts` — new model files
+2. `src/config/api.ts` — register models
+3. `src/views/pages/*.edge` — new pages
+4. `src/views/layouts/*.edge` — layouts
+5. `src/views/components/*.edge` — components
+6. `src/client/main.ts`, `src/client/app.css` — frontend
+
+**Path aliases (already configured in tsconfig, use as-is):**
+
+- `@njin/core/model` → `src/core/model/index.ts`
+- `@njin/models/name` → `src/models/name.ts`
+- `@njin/modules/name` → `src/modules/name.ts`
+- `@njin/config/api` → `src/config/api.ts`
+
+---
+
 ## NEVER modify these
+
 - `src/core/` — framework internals
 - `src/modules/` — framework services
 - `src/config/module.ts` — module registry
@@ -12,11 +40,13 @@ njin generates a full REST API, admin panel schema, and SSR website from a singl
 - `src/models/user.ts`, `src/models/file.ts` — framework-managed models
 
 ## Your working directories
+
 - `src/models/` — data models
 - `src/config/api.ts` — model registry
 - `src/views/pages/` — page templates (file-based routing)
 - `src/views/layouts/` — layout templates
 - `src/views/components/` — reusable EdgeJS components
+- `src/views/errors/` — optional custom error pages (`404.edge`, `403.edge`, `500.edge`, etc.)
 - `src/client/main.ts` — frontend entry point
 - `src/client/app.css` — Tailwind CSS (already set up)
 
@@ -32,22 +62,25 @@ import { makeModel, text, date, email, numeric, select, object, array, file, mul
 import z from "zod";
 
 const post = makeModel("post", {
-  name: "Post",           // display name for admin panel
-  searchFields: ["title", "body"],  // fields used for fuzzy search
+  name: "Post", // display name for admin panel
+  searchFields: ["title", "body"], // fields used for fuzzy search
   schema: z.object({
     // --- Data types ---
-    title:    text({ label: "Title" }),
-    body:     text({ label: "Body" }),
-    date:     date({ label: "Date" }),
-    email:    email({ label: "Email" }),
-    price:    numeric({ label: "Price" }),
-    status:   select({ label: "Status" }, ["DRAFT", "PUBLISH"]),
+    title: text({ label: "Title" }),
+    body: text({ label: "Body" }),
+    date: date({ label: "Date" }),
+    email: email({ label: "Email" }),
+    price: numeric({ label: "Price" }),
+    status: select({ label: "Status" }, ["DRAFT", "PUBLISH"]),
 
     // Nested object
-    seo: object({ label: "SEO" }, {
-      metaTitle:       text({ label: "Meta Title" }),
-      metaDescription: text({ label: "Meta Description" }),
-    }),
+    seo: object(
+      { label: "SEO" },
+      {
+        metaTitle: text({ label: "Meta Title" }),
+        metaDescription: text({ label: "Meta Description" }),
+      },
+    ),
 
     // Array of primitives
     tags: array({ label: "Tags" }, text({ label: "Tag" })),
@@ -83,16 +116,48 @@ import type { makeModel } from "@njin/core/model";
 
 type ModelFactory = () => Promise<{ default: ReturnType<typeof makeModel> }>;
 
-const api: ModelFactory[] = [
-  () => import("@njin/models/post"),
-  () => import("@njin/models/category"),
-  () => import("@njin/models/product"),
-];
+const api: ModelFactory[] = [() => import("@njin/models/post"), () => import("@njin/models/category"), () => import("@njin/models/product")];
 
 export default api;
 ```
 
 > Registering a model auto-generates: `GET/POST /api/{prefix}`, `GET/PUT/DELETE /api/{prefix}/:id`, and its schema in `GET /api/schema`.
+
+### Complete working example — copy and adapt
+
+```ts
+// src/models/article.ts  ← create this file
+import { makeModel, text, date, select, file, relation } from "@njin/core/model";
+import z from "zod";
+import category from "./category";
+
+const article = makeModel("article", {
+  name: "Article",
+  searchFields: ["title"],
+  schema: z.object({
+    title: text({ label: "Title" }),
+    body: text({ label: "Body" }),
+    slug: text({ label: "Slug" }),
+    status: select({ label: "Status" }, ["DRAFT", "PUBLISH"]),
+    thumbnail: file({ label: "Thumbnail" }),
+    publishedAt: date({ label: "Published At" }),
+    category: relation({ label: "Category", labelKey: "title" }, category),
+  }),
+});
+
+export default article;
+```
+
+```ts
+// src/config/api.ts  ← edit this file, add your model
+import type { makeModel } from "@njin/core/model";
+
+type ModelFactory = () => Promise<{ default: ReturnType<typeof makeModel> }>;
+
+const api: ModelFactory[] = [() => import("@njin/models/article"), () => import("@njin/models/category")];
+
+export default api;
+```
 
 ---
 
@@ -130,38 +195,74 @@ pages/portfolio/[id]/index.edge  → GET /portfolio/:id
 </html>
 ```
 
-### Page template
+### Complete page templates — copy and adapt
 
 ```edge
+{{-- src/views/pages/blog/index.edge — list page --}}
 @component('layouts/main')
   @slot('title') Blog @end
 
   @slot('main')
-    @let(result = await post.read({ filters: { status: { $eq: 'PUBLISH' } }, sort: 'createdAt', order: 'desc', limit: 10 }))
+    @let(page = Number(query.page || 1))
+    @let(result = await article.read({
+      filters: { status: { $eq: 'PUBLISH' } },
+      sort: 'publishedAt',
+      order: 'desc',
+      limit: 12,
+      page: page,
+    }))
 
-    @each(item in result.data)
-      <article>
-        <h2>{{ item.title }}</h2>
-        <time>{{ item.createdAt }}</time>
-      </article>
-    @end
+    <div class="max-w-6xl mx-auto px-6 py-16">
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-8">
+        @each(item in result.data)
+          <a href="/blog/{{ item.id.id }}" class="group block">
+            <h2 class="font-semibold group-hover:text-violet-600 transition-colors">{{ item.title }}</h2>
+            <time class="text-sm text-slate-400">{{ item.publishedAt }}</time>
+          </a>
+        @end
+      </div>
 
-    {{-- Pagination --}}
-    <p>Page {{ result.meta.page }} of {{ result.meta.pageCount }}</p>
+      {{-- Pagination --}}
+      @if(result.meta.pageCount > 1)
+        <div class="flex gap-2 mt-12">
+          @each(p in Array.from({ length: result.meta.pageCount }, (_, i) => i + 1))
+            <a href="?page={{ p }}" class="{{ p === result.meta.page ? 'bg-violet-600 text-white' : 'text-slate-600' }} px-3 py-1 rounded">{{ p }}</a>
+          @end
+        </div>
+      @end
+    </div>
+  @end
+@end
+```
+
+```edge
+{{-- src/views/pages/blog/[slug].edge — detail page --}}
+@component('layouts/main')
+  @slot('title') {{ item.title }} @end
+
+  @slot('main')
+    @let(item = await article.show(params.slug))
+
+    <article class="max-w-3xl mx-auto px-6 py-16">
+      <h1 class="text-4xl font-bold mb-4">{{ item.title }}</h1>
+      <time class="text-slate-400">{{ item.publishedAt }}</time>
+      <div class="mt-8 prose">{{{ item.body }}}</div>
+    </article>
   @end
 @end
 ```
 
 ### Template globals (available in every template)
 
-| Global | Type | Description |
-|--------|------|-------------|
-| `params` | `Record<string, string>` | URL params — `params.slug` |
-| `query` | `Record<string, string>` | Query string — `query.page` |
-| `request.path` | `string` | Current path — `/blog` |
-| `request.url` | `string` | Full URL |
-| `vite` | object | Asset injection — `vite.asset('src/client/main.ts')` |
-| Each registered model | async functions | `post`, `category`, etc. |
+| Global                | Type                     | Description                                                |
+| --------------------- | ------------------------ | ---------------------------------------------------------- |
+| `params`              | `Record<string, string>` | URL params — `params.slug`                                 |
+| `query`               | `Record<string, string>` | Query string — `query.page`                                |
+| `request.path`        | `string`                 | Current path — `/blog`                                     |
+| `request.url`         | `string`                 | Full URL                                                   |
+| `vite`                | object                   | Asset injection — `vite.asset('src/client/main.ts')`       |
+| `abort`               | function                 | Throw HTTP error — `abort(404)`, `abort(404, 'Not found')` |
+| Each registered model | async functions          | `post`, `category`, etc.                                   |
 
 ### Model methods in templates (all async, use await)
 
@@ -172,6 +273,7 @@ pages/portfolio/[id]/index.edge  → GET /portfolio/:id
 
 {{-- Single record (auto-fetches relations) --}}
 @let(item = await post.show(params.id))
+@if(!item){{ abort(404) }}@end
 
 {{-- With search --}}
 @let(result = await post.read({ search: query.q }))
@@ -181,26 +283,26 @@ pages/portfolio/[id]/index.edge  → GET /portfolio/:id
 
 ```ts
 post.read({
-  page: 1,          // default: 1
-  limit: 20,        // default: 20, max: 100
-  sort: 'title',    // field name (must exist in schema)
-  order: 'asc',     // 'asc' | 'desc'
-  search: 'hello',  // fuzzy search on searchFields
-  populate: ['author', 'thumbnail'],  // relation fields to fetch
-  populate: 'none', // skip all relation fetching
+  page: 1, // default: 1
+  limit: 20, // default: 20, max: 100
+  sort: "title", // field name (must exist in schema)
+  order: "asc", // 'asc' | 'desc'
+  search: "hello", // fuzzy search on searchFields
+  populate: ["author", "thumbnail"], // relation fields to fetch
+  populate: "none", // skip all relation fetching
   filters: {
-    status: 'PUBLISH',                    // shorthand equality
-    status: { $eq: 'PUBLISH' },           // explicit equality
-    title:  { $contains: 'hello' },       // case-insensitive contains
-    title:  { $startsWith: 'intro' },     // starts with
-    price:  { $gt: '100' },               // greater than
-    price:  { $gte: '100' },              // greater than or equal
-    price:  { $lt: '1000' },              // less than
-    price:  { $lte: '1000' },             // less than or equal
-    status: { $ne: 'DRAFT' },             // not equal
-    tags:   { $in: 'javascript' },        // array contains value
+    status: "PUBLISH", // shorthand equality
+    status: { $eq: "PUBLISH" }, // explicit equality
+    title: { $contains: "hello" }, // case-insensitive contains
+    title: { $startsWith: "intro" }, // starts with
+    price: { $gt: "100" }, // greater than
+    price: { $gte: "100" }, // greater than or equal
+    price: { $lt: "1000" }, // less than
+    price: { $lte: "1000" }, // less than or equal
+    status: { $ne: "DRAFT" }, // not equal
+    tags: { $in: "javascript" }, // array contains value
   },
-})
+});
 ```
 
 ### EdgeJS syntax reference
