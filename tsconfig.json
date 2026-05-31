@@ -29,6 +29,7 @@
     "paths": {
       "@njin/config/*": ["./src/config/*"],
       "@njin/core/*": ["./src/core/*"],
+      "@njin/core/http_error": ["./src/core/http_error.ts"],
       "@njin/models/*": ["./src/models/*"],
       "@njin/modules/*": ["./src/modules/*"]
     }

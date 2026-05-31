@@ -1,4 +1,5 @@
 import models from "@njin/config/api";
+import { HttpError } from "@njin/core/http_error";
 import { makeModule } from "@njin/core/module";
 import { Edge } from "edge.js";
 import Elysia from "elysia";
@@ -68,6 +69,11 @@ const view = makeModule(() => {
     edge.mount(viewsDir);
 
     edge.global("vite", await buildViteGlobal());
+    // Fallback abort for non-page contexts (components, error templates).
+    // Pages get a per-request override that saves the error before EdgeJS wraps it.
+    edge.global("abort", (statusCode: number, message?: string) => {
+      throw new HttpError(statusCode, message);
+    });
 
     for (const modelPromise of models) {
       const { default: model } = await modelPromise();
@@ -101,19 +107,46 @@ const view = makeModule(() => {
       const template = `pages/${file.replace(/\\/g, "/").replace(/\.edge$/, "")}`;
 
       controller.get(route, async ({ params, query, path, request }) => {
-        return new Response(
-          await edge.render(template, {
-            params,
-            query,
-            request: {
-              path,
-              url: request.url,
-            },
-          }),
-          { headers: { "Content-Type": "text/html; charset=utf-8" } },
-        );
+        // Object property — avoids TypeScript's overly-aggressive narrowing of
+        // closure-assigned variables to `never`.
+        const ctx: { abortErr: HttpError | null } = { abortErr: null };
+
+        try {
+          return new Response(
+            await edge.render(template, {
+              params,
+              query,
+              request: { path, url: request.url },
+              abort: (statusCode: number, message?: string) => {
+                ctx.abortErr = new HttpError(statusCode, message);
+                throw ctx.abortErr;
+              },
+            }),
+            { headers: { "Content-Type": "text/html; charset=utf-8" } },
+          );
+        } catch (err) {
+          if (ctx.abortErr) {
+            return new Response(await renderHttpError(edge, viewsDir, ctx.abortErr), {
+              status: ctx.abortErr.statusCode,
+              headers: { "Content-Type": "text/html; charset=utf-8" },
+            });
+          }
+          if (!isDev) throw err;
+          return new Response(renderErrorPage(err as Error, template, path), {
+            status: 500,
+            headers: { "Content-Type": "text/html; charset=utf-8" },
+          });
+        }
       });
     }
+
+    // Catch-all — must be registered last so specific routes take priority
+    controller.get("/*", async () => {
+      return new Response(await renderHttpError(edge, viewsDir, new HttpError(404)), {
+        status: 404,
+        headers: { "Content-Type": "text/html; charset=utf-8" },
+      });
+    });
 
     elysia().use(controller);
 
@@ -122,6 +155,55 @@ const view = makeModule(() => {
 
   return fn;
 });
+
+async function renderHttpError(edge: Edge, viewsDir: string, error: HttpError): Promise<string> {
+  const templateFile = Bun.file(join(viewsDir, `errors/${error.statusCode}.edge`));
+  if (await templateFile.exists()) {
+    try {
+      return await edge.render(`errors/${error.statusCode}`, {
+        statusCode: error.statusCode,
+        message: error.message,
+      });
+    } catch (e) {
+      console.error(`[view] failed to render errors/${error.statusCode}.edge:`, e);
+    }
+  }
+  const code = error.statusCode;
+  return `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>${code} — ${error.message}</title>
+<style>*{margin:0;padding:0;box-sizing:border-box}body{background:#0f172a;color:#e2e8f0;font-family:system-ui,sans-serif;min-height:100vh;display:flex;align-items:center;justify-content:center}
+.c{text-align:center}.n{font-size:6rem;font-weight:700;color:#1e293b;line-height:1}.m{color:#64748b;margin-top:.5rem}a{color:#818cf8;text-decoration:none;margin-top:1.5rem;display:inline-block}</style>
+</head><body><div class="c"><div class="n">${code}</div><p class="m">${error.message}</p><a href="/">← Back to home</a></div></body></html>`;
+}
+
+function renderErrorPage(error: Error, template: string, path: string): string {
+  const stack = (error.stack ?? "").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const message = error.message.replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Error — ${path}</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: #0f172a; color: #e2e8f0; font-family: ui-monospace, monospace; padding: 2rem; min-height: 100vh; }
+    .badge { display: inline-block; background: #ef4444; color: #fff; font-size: .7rem; font-weight: 700; padding: .2rem .5rem; border-radius: .25rem; letter-spacing: .05em; margin-bottom: 1.5rem; }
+    h1 { font-size: 1.25rem; color: #f87171; margin-bottom: .5rem; word-break: break-word; }
+    .meta { font-size: .8rem; color: #64748b; margin-bottom: 2rem; }
+    .meta span { color: #94a3b8; }
+    pre { background: #1e293b; border: 1px solid #334155; border-radius: .5rem; padding: 1.5rem; font-size: .8rem; line-height: 1.7; overflow-x: auto; white-space: pre-wrap; word-break: break-word; }
+    .label { font-size: .7rem; color: #64748b; text-transform: uppercase; letter-spacing: .1em; margin-bottom: .5rem; }
+  </style>
+</head>
+<body>
+  <div class="badge">500 — DEV MODE</div>
+  <h1>${message}</h1>
+  <p class="meta">Template: <span>${template}</span> &nbsp;·&nbsp; Route: <span>${path}</span></p>
+  <p class="label">Stack trace</p>
+  <pre>${stack}</pre>
+</body>
+</html>`;
+}
 
 function fileToRoute(file: string): string {
   let route = file.replace(/\\/g, "/").replace(/\.edge$/, "");
