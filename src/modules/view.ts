@@ -17,6 +17,7 @@ type ViteManifestChunk = {
 
 type ViteGlobal = {
   asset: (entry: string) => string;
+  static: (path: string) => string;
 };
 
 const buildViteGlobal = async (): Promise<ViteGlobal> => {
@@ -32,16 +33,26 @@ const buildViteGlobal = async (): Promise<ViteGlobal> => {
     process.once("SIGTERM", () => server.close());
 
     return {
-      asset: (entry) =>
-        `<script type="module" src="${url}/@vite/client"></script>\n` +
-        `<script type="module" src="${url}/${entry}"></script>`,
+      asset: (entry) => {
+        if (entry.endsWith(".css")) {
+          return `<link rel="stylesheet" href="${url}/${entry}">`;
+        }
+        return (
+          `<script type="module" src="${url}/@vite/client"></script>\n` +
+          `<script type="module" src="${url}/${entry}"></script>`
+        );
+      },
+      static: (path) => `${url}/${path.replace(/^\//, "")}`,
     };
   }
 
   const manifestFile = Bun.file(join(publicDir, "manifest.json"));
 
   if (!(await manifestFile.exists())) {
-    return { asset: () => "<!-- vite manifest not found, run: bun run build -->" };
+    return {
+      asset: () => "<!-- vite manifest not found, run: bun run build -->",
+      static: (path) => `/${path.replace(/^\//, "")}`,
+    };
   }
 
   const manifest = (await manifestFile.json()) as Record<string, ViteManifestChunk>;
@@ -50,10 +61,14 @@ const buildViteGlobal = async (): Promise<ViteGlobal> => {
     asset: (entry) => {
       const chunk = manifest[entry];
       if (!chunk) return `<!-- vite entry "${entry}" not found in manifest -->`;
+      if (entry.endsWith(".css")) {
+        return `<link rel="stylesheet" href="/${chunk.file}">`;
+      }
       const styles = chunk.css?.map((f) => `<link rel="stylesheet" href="/${f}">`).join("\n") ?? "";
       const script = `<script type="module" src="/${chunk.file}"></script>`;
       return [styles, script].filter(Boolean).join("\n");
     },
+    static: (path) => `/${path.replace(/^\//, "")}`,
   };
 };
 
@@ -141,7 +156,12 @@ const view = makeModule(() => {
     }
 
     // Catch-all — must be registered last so specific routes take priority
-    controller.get("/*", async () => {
+    controller.get("/*", async ({ path }) => {
+      if (!isDev) {
+        const staticFile = Bun.file(join(publicDir, path));
+        if (await staticFile.exists()) return staticFile;
+      }
+
       return new Response(await renderHttpError(edge, viewsDir, new HttpError(404)), {
         status: 404,
         headers: { "Content-Type": "text/html; charset=utf-8" },

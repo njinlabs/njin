@@ -1,4 +1,3 @@
-import "./app.css";
 import Alpine from "alpinejs";
 
 declare global {

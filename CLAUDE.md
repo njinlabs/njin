@@ -254,15 +254,17 @@ pages/portfolio/[id]/index.edge  → GET /portfolio/:id
 
 ### Template globals (available in every template)
 
-| Global                | Type                     | Description                                                |
-| --------------------- | ------------------------ | ---------------------------------------------------------- |
-| `params`              | `Record<string, string>` | URL params — `params.slug`                                 |
-| `query`               | `Record<string, string>` | Query string — `query.page`                                |
-| `request.path`        | `string`                 | Current path — `/blog`                                     |
-| `request.url`         | `string`                 | Full URL                                                   |
-| `vite`                | object                   | Asset injection — `vite.asset('src/client/main.ts')`       |
-| `abort`               | function                 | Throw HTTP error — `abort(404)`, `abort(404, 'Not found')` |
-| Each registered model | async functions          | `post`, `category`, etc.                                   |
+| Global                    | Type                     | Description                                                         |
+| ------------------------- | ------------------------ | ------------------------------------------------------------------- |
+| `params`                  | `Record<string, string>` | URL params — `params.slug`                                          |
+| `query`                   | `Record<string, string>` | Query string — `query.page`                                         |
+| `request.path`            | `string`                 | Current path — `/blog`                                              |
+| `request.url`             | `string`                 | Full URL                                                            |
+| `vite.asset(entry)`       | `string`                 | Inject Vite JS/CSS — `{{{ vite.asset('src/client/main.ts') }}}`     |
+| `vite.static(path)`       | `string`                 | URL to file in `/static` — `vite.static('logo.png')`               |
+| `imgOptimize(url, opts?)` | `string`                 | Optimized WebP URL — `imgOptimize(item.thumbnail.url, { w: 800 })`  |
+| `abort`                   | function                 | Throw HTTP error — `abort(404)`, `abort(404, 'Not found')`          |
+| Each registered model     | async functions          | `post`, `category`, etc.                                            |
 
 ### Model methods in templates (all async, use await)
 
@@ -341,6 +343,56 @@ post.read({
 
 ---
 
+## Static assets
+
+Put files in `/static`. In dev they are served by Vite at their original URL. On `bun build` Vite copies them to `/public`.
+
+Use `vite.static()` in templates — never hardcode paths or ports:
+
+```edge
+<img src="{{ vite.static('logo.png') }}" />
+<link rel="icon" href="{{ vite.static('favicon.ico') }}" />
+```
+
+---
+
+## Image optimization
+
+Endpoint `GET /img` converts any image to WebP on-the-fly. Output is cached by the browser via `Cache-Control: immutable`.
+
+| Param | Required | Default | Description       |
+| ----- | -------- | ------- | ----------------- |
+| `url` | ✓        | —       | Source image URL  |
+| `w`   |          | original | Width in px      |
+| `h`   |          | original | Height in px     |
+| `q`   |          | `80`    | Quality 1–100     |
+
+Resize preserves aspect ratio (`fit: inside`) and never upscales.
+
+**Allowed sources:**
+- Relative paths (`/api/file/...`) — always allowed
+- Same hostname as the request — always allowed (works in dev and production automatically)
+- `localhost` / `127.0.0.1` — always allowed (covers Vite dev server on port 5173)
+- Other external hosts — must be listed in `IMG_HOSTS` env var
+
+Use `imgOptimize()` in templates:
+
+```edge
+{{-- Resize only --}}
+<img src="{{ imgOptimize(item.thumbnail.url, { w: 800 }) }}" />
+
+{{-- Resize + quality --}}
+<img src="{{ imgOptimize(item.thumbnail.url, { w: 800, q: 85 }) }}" />
+
+{{-- OG image with fixed dimensions --}}
+<meta property="og:image" content="{{ imgOptimize(item.thumbnail.url, { w: 1200, h: 630 }) }}" />
+
+{{-- WebP-only, no resize --}}
+<img src="{{ imgOptimize(item.thumbnail.url) }}" />
+```
+
+---
+
 ## Frontend (Tailwind + Alpine.js)
 
 Tailwind v4 — utility classes, no config file. Alpine.js v3 — inline directives.
@@ -369,6 +421,8 @@ Add custom JavaScript/CSS in `src/client/main.ts` and `src/client/app.css`.
 All endpoints require `Authorization: Bearer <token>` header.
 
 ```
+GET    /img?url=&w=&h=&q=         → image/webp  (no auth required, browser-cached)
+
 GET    /api/setup/status          → { needsSetup: bool }
 POST   /api/setup                 → { data: { token, user } }   first-run only
 
@@ -398,6 +452,7 @@ DB_PATH=rocksdb://mydb
 DB_NAMESPACE=general
 DB_DATABASE=general
 FILE_DIR=./uploads
+IMG_HOSTS=example.com,cdn.mysite.com
 ```
 
 ---

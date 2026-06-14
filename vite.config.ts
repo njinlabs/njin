@@ -3,13 +3,13 @@ import { defineConfig } from "vite";
 
 export default defineConfig({
   plugins: [tailwindcss()],
-  publicDir: false,
+  publicDir: "static",
   build: {
     outDir: "public",
     emptyOutDir: true,
     manifest: "manifest.json",
     rollupOptions: {
-      input: "src/client/main.ts",
+      input: ["src/client/main.ts", "src/client/app.css"],
     },
   },
 });
