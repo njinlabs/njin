@@ -121,7 +121,7 @@ const auth = makeModule(() => {
             return {
               data: {
                 ...safeData,
-                token: `${token?.id.toString()}:${plainToken}`,
+                token: `${table.toString()}:${token?.id.id}:${plainToken}`,
               },
             };
           } catch (e) {

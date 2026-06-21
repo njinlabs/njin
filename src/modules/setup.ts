@@ -43,7 +43,10 @@ const setup = makeModule(() => {
             return status(403, { message: "Setup already completed" });
           }
 
-          const created = await user.create(body);
+          const created = await user.create({
+            ...body,
+            password: Bun.password.hashSync(body.password),
+          });
 
           const plainToken = Uuid.v7().toString();
           const [token] = await surreal()
@@ -61,7 +64,7 @@ const setup = makeModule(() => {
 
           return {
             data: {
-              token: `${token!.id.toString()}:${plainToken}`,
+              token: `${tokenTable.toString()}:${token!.id.id}:${plainToken}`,
               user: safeUser,
             },
           };
