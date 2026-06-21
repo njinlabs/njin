@@ -2,8 +2,10 @@ import adapters from "@njin/config/adapter";
 import type { makeModel } from "@njin/core/model";
 import { makeModule } from "@njin/core/module";
 import Elysia from "elysia";
+import { join, normalize } from "node:path";
 import { RecordId } from "surrealdb";
 import z from "zod";
+import env from "@njin/config/env";
 import auth from "./auth";
 import elysia from "./elysia";
 import surreal from "./surreal";
@@ -37,6 +39,22 @@ const file = makeModule(() => {
 
     const controller = new Elysia({ prefix: "/api/file" })
       .use((await auth()).plugin)
+      .get(
+        "/",
+        async ({ query: { search, page, limit, sort, order } }) => {
+          return baseModel.read({ search, page, limit, sort, order });
+        },
+        {
+          auth: true,
+          query: z.object({
+            search: z.coerce.string().optional(),
+            page: z.coerce.number().int().positive().default(1),
+            limit: z.coerce.number().int().positive().max(100).default(20),
+            sort: z.coerce.string().optional(),
+            order: z.enum(["asc", "desc"]).default("asc"),
+          }),
+        },
+      )
       .delete(
         "/:id",
         async ({ params }) => {
@@ -70,7 +88,31 @@ const file = makeModule(() => {
         },
       );
 
-    elysia().use(controller);
+    const uploadsDir = join(process.cwd(), env.file.dir);
+
+    const uploadsController = new Elysia().get("/uploads/*", async ({ params }) => {
+      // Elysia leaves wildcard params percent-encoded — decode before touching the filesystem.
+      let decoded: string;
+      try {
+        decoded = decodeURIComponent(params["*"]);
+      } catch {
+        return new Response("Not Found", { status: 404 });
+      }
+
+      const requested = normalize(join(uploadsDir, decoded));
+
+      // Stay inside uploadsDir — block path traversal via "..".
+      if (!requested.startsWith(uploadsDir)) {
+        return new Response("Not Found", { status: 404 });
+      }
+
+      const file = Bun.file(requested);
+      if (!(await file.exists())) return new Response("Not Found", { status: 404 });
+
+      return file;
+    });
+
+    elysia().use(controller).use(uploadsController);
 
     model = baseModel;
 
