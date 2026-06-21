@@ -5,7 +5,7 @@ const user = makeModel("user", {
   name: "Pengguna",
   schema: z.object({
     name: text({ label: "Name" }),
-    email: email({ label: "Email" }),
+    email: email({ label: "Email", unique: true }),
     password: text({ label: "Password" }, (z) =>
       z.transform((value) => {
         return Bun.password.hashSync(value);

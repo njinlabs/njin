@@ -5,7 +5,17 @@ import { z } from "zod";
 
 export type FormMeta = {
   label: string;
+  unique?: boolean;
 };
+
+export class UniqueConstraintError extends Error {
+  constructor(
+    public readonly field: string,
+    public readonly value: unknown,
+  ) {
+    super(`Field "${field}" must be unique — value already exists`);
+  }
+}
 
 export type ReadMeta = {
   total: number;
@@ -36,6 +46,7 @@ export type ReadOptions = {
   populate?: string[] | "none";
   filters?: Record<string, FilterValue>;
 };
+
 
 // Whitelist of operators — unknown operators are silently dropped, never interpolated.
 const OPERATORS: Record<FilterOperator, (field: string, param: string) => string> = {
@@ -76,7 +87,39 @@ export const makeModel = <Rules extends z.ZodObject>(
 
   const relationFieldSet = new Set(relationFields);
 
-  const create = (data: Values<Data>) => {
+  const uniqueFields = Object.entries(config.schema.shape)
+    .filter(([, v]) => (v as z.ZodType).meta()?.unique === true)
+    .map(([k]) => k);
+
+  const uniqueFieldSet = new Set(uniqueFields);
+
+  // field must be a known unique field — prevents arbitrary field injection
+  const isDuplicate = async (field: string, value: unknown, excludeId?: string) => {
+    if (!uniqueFieldSet.has(field)) return false;
+
+    const excludeClause = excludeId ? "AND id != $excludeId" : "";
+    const [[row]] = await surreal().query<[{ count: number }[]]>(
+      `SELECT count() AS count FROM ${prefix} WHERE ${field} = $value ${excludeClause} GROUP ALL`,
+      { value, excludeId: excludeId ? new RecordId(table, excludeId) : undefined },
+    );
+
+    return (row?.count ?? 0) > 0;
+  };
+
+  const assertUnique = async (data: Record<string, unknown>, excludeId?: string) => {
+    for (const field of uniqueFields) {
+      const value = data[field];
+      if (value === undefined) continue; // partial update without this field — nothing to check
+
+      if (await isDuplicate(field, value, excludeId)) {
+        throw new UniqueConstraintError(field, value);
+      }
+    }
+  };
+
+  const create = async (data: Values<Data>) => {
+    await assertUnique(data);
+
     return surreal()
       .create<Data>(table)
       .content({ ...data, createdAt: moment().toISOString(), updatedAt: moment().toISOString() })
@@ -99,7 +142,7 @@ export const makeModel = <Rules extends z.ZodObject>(
     if (search && config.searchFields.length) {
       params.search = search.toLowerCase();
       whereParts.push(
-        `(${config.searchFields.map((f) => `string::similarity::jaro_winkler(string::lowercase(${f}), $search) > 0.7`).join(" OR ")})`,
+        `(${config.searchFields.map((f) => `string::similarity::jaro_winkler(string::lowercase(${f}), $search) > 0.4`).join(" OR ")})`,
       );
     }
 
@@ -130,7 +173,10 @@ export const makeModel = <Rules extends z.ZodObject>(
     }
 
     const where = whereParts.length ? `WHERE ${whereParts.join(" AND ")}` : "";
-    const orderBy = sort && sort in config.schema.shape ? `ORDER BY ${sort} ${order === "desc" ? "DESC" : "ASC"}` : "";
+    // id/createdAt/updatedAt are always present on every record but aren't part of the
+    // user-defined schema shape (they're injected in create()/update()) — allow sorting by them too.
+    const sortableFields = new Set([...Object.keys(config.schema.shape), "id", "createdAt", "updatedAt"]);
+    const orderBy = sort && sortableFields.has(sort) ? `ORDER BY ${sort} ${order === "desc" ? "DESC" : "ASC"}` : "";
 
     // Validate populate against known relation fields — prevents FETCH injection
     const fetchFields =
@@ -168,6 +214,8 @@ export const makeModel = <Rules extends z.ZodObject>(
   };
 
   const update = async (id: string, data: Values<Partial<Data>>) => {
+    await assertUnique(data, id);
+
     return surreal()
       .update<Data>(new RecordId(table, id))
       .merge({
