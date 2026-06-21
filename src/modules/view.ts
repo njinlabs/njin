@@ -121,24 +121,34 @@ const view = makeModule(() => {
       const route = fileToRoute(file);
       const template = `pages/${file.replace(/\\/g, "/").replace(/\.edge$/, "")}`;
 
-      controller.get(route, async ({ params, query, path, request }) => {
+      controller.get(route, async ({ params, query, path, request, server }) => {
         // Object property — avoids TypeScript's overly-aggressive narrowing of
         // closure-assigned variables to `never`.
         const ctx: { abortErr: HttpError | null } = { abortErr: null };
 
         try {
-          return new Response(
-            await edge.render(template, {
-              params,
-              query,
-              request: { path, url: request.url },
-              abort: (statusCode: number, message?: string) => {
-                ctx.abortErr = new HttpError(statusCode, message);
-                throw ctx.abortErr;
-              },
+          const html = await edge.render(template, {
+            params,
+            query,
+            request: { path, url: request.url },
+            abort: (statusCode: number, message?: string) => {
+              ctx.abortErr = new HttpError(statusCode, message);
+              throw ctx.abortErr;
+            },
+          });
+
+          // Fire-and-forget — never awaited, so it can't add latency to the response.
+          import("@njin/modules/analytics").then(({ default: analytics, resolveClientIp }) =>
+            analytics().track({
+              path,
+              referrer: request.headers.get("referer"),
+              userAgent: request.headers.get("user-agent"),
+              ip: resolveClientIp(request, server),
+              requestUrl: request.url,
             }),
-            { headers: { "Content-Type": "text/html; charset=utf-8" } },
           );
+
+          return new Response(html, { headers: { "Content-Type": "text/html; charset=utf-8" } });
         } catch (err) {
           if (ctx.abortErr) {
             return new Response(await renderHttpError(edge, viewsDir, ctx.abortErr), {

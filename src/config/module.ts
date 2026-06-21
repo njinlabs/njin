@@ -1,3 +1,4 @@
+import analytics from "../modules/analytics";
 import api from "../modules/api";
 import auth from "../modules/auth";
 import elysia from "../modules/elysia";
@@ -6,6 +7,7 @@ import img from "../modules/img";
 import logger from "../modules/logger";
 import setup from "../modules/setup";
 import surreal from "../modules/surreal";
+import users from "../modules/users";
 import view from "../modules/view";
 
 const modules = [
@@ -17,6 +19,8 @@ const modules = [
   await setup.init(),
   await api.init(),
   await img.init(),
+  await analytics.init(),
+  await users.init(),
   await view.init(),
 ] as const;
 
