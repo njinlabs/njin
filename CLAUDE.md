@@ -58,7 +58,7 @@ njin generates a full REST API, admin panel schema, and SSR website from a singl
 
 ```ts
 // src/models/post.ts
-import { makeModel, text, date, email, numeric, select, object, array, file, multiFile, relation, relationMany } from "@njin/core/model";
+import { makeModel, text, richtext, date, email, numeric, boolean, select, object, array, file, multiFile, relation, relationMany } from "@njin/core/model";
 import z from "zod";
 
 const post = makeModel("post", {
@@ -67,11 +67,17 @@ const post = makeModel("post", {
   schema: z.object({
     // --- Data types ---
     title: text({ label: "Title" }),
-    body: text({ label: "Body" }),
+    slug: text({ label: "Slug", unique: true }), // unique: true → rejects duplicates with 409 before insert
+    body: richtext({ label: "Body" }), // rich text editor, stores raw HTML — render with {{{ }}}, not {{ }}
     date: date({ label: "Date" }),
     email: email({ label: "Email" }),
     price: numeric({ label: "Price" }),
+    isFeatured: boolean({ label: "Featured?" }, (z) => z.default(false)),
     status: select({ label: "Status" }, ["DRAFT", "PUBLISH"]),
+
+    // Chained validators work on text/email/date/richtext too — the rule callback
+    // receives the underlying Zod type (ZodString, ZodEmail, ...), not a wrapper:
+    // title: text({ label: "Title" }, (z) => z.min(3).max(100)),
 
     // Nested object
     seo: object(
@@ -107,6 +113,14 @@ const post = makeModel("post", {
 
 export default post;
 ```
+
+### Data types
+
+`text`, `email`, `richtext`, `numeric`, `boolean`, `date`, `select`, `array`, `object`, `relation`, `relationMany`, `file`, `multiFile`.
+
+- `richtext` is a plain string field (HTML) under the hood — identical contract to `text`, just a different `renderAs` for the admin panel's editor widget. Render with `{{{ item.body }}}` (unescaped), same as any other trusted HTML field.
+- `boolean` maps straight to a JSON boolean — no coercion from `"true"`/`"on"` strings, the API expects a real `true`/`false` in the request body.
+- Any field can take `unique: true` in its meta (e.g. `text({ label: "Slug", unique: true })`). Enforced in application code (a pre-insert check), not a DB-level index. Violating it returns `409` with `{ message, field }` from both `POST` and `PUT`. There's a small race-condition window between two concurrent requests — acceptable trade-off, not closed by design.
 
 ### Registering a model
 
@@ -287,7 +301,7 @@ pages/portfolio/[id]/index.edge  → GET /portfolio/:id
 post.read({
   page: 1, // default: 1
   limit: 20, // default: 20, max: 100
-  sort: "title", // field name (must exist in schema)
+  sort: "title", // field name in schema, or "id" / "createdAt" / "updatedAt"
   order: "asc", // 'asc' | 'desc'
   search: "hello", // fuzzy search on searchFields
   populate: ["author", "thumbnail"], // relation fields to fetch
@@ -305,6 +319,14 @@ post.read({
     tags: { $in: "javascript" }, // array contains value
   },
 });
+```
+
+Over HTTP, `filters`/`populate` are query params using standard bracket notation (works out of the box with Axios, `qs`, jQuery, etc. — no JSON-encoding needed):
+
+```
+GET /api/post?filters[status]=PUBLISH
+GET /api/post?filters[price][$gte]=100&filters[status][$ne]=DRAFT
+GET /api/post?sort=createdAt&order=desc
 ```
 
 ### EdgeJS syntax reference
@@ -437,9 +459,28 @@ POST   /api/{prefix}              → { data: {...} }
 GET    /api/{prefix}/:id          → { data: {...} }   (relations auto-fetched)
 PUT    /api/{prefix}/:id          → { data: {...} }
 DELETE /api/{prefix}/:id          → { data: {...} }
+                                     422 on validation error, 409 if a `unique: true` field collides
 
-POST   /api/file                  → { data: { id, url, name, size, type } }
+GET    /api/file                  → { data: [...], meta: {...} }   (search/page/limit/sort/order — no filters)
+POST   /api/file                  → { data: { id, url, name, size, type } }   (multipart, field name "file")
 DELETE /api/file/:id
+GET    /uploads/*                 → uploaded file bytes (no auth — public URLs, served from FILE_DIR)
+
+GET    /api/user                  → { data: [...], meta: {...} }   (same shape as /api/{prefix}, password always stripped)
+POST   /api/user                  → { data: {...} }   body: { name, email, password } — password is hashed server-side
+GET    /api/user/:id              → { data: {...} | null }
+PUT    /api/user/:id              → { data: {...} }
+DELETE /api/user/:id              → { data: {...} }   400 if deleting your own account (setup is permanently locked after first user)
+
+GET    /api/analytics/summary     → { data: { totalPageviews, uniqueVisitors } }
+GET    /api/analytics/by-country  → { data: [{ country, count }] }
+GET    /api/analytics/by-referrer → { data: [{ referrer, count }] }
+GET    /api/analytics/by-page     → { data: [{ path, count }] }
+GET    /api/analytics/timeseries  → { data: [{ date, count }] }
+                                     query: from, to (full ISO datetime, required if filtering — date-only strings are rejected),
+                                     path, interval ("day" | "hour", default "day")
+                                     Pageviews are tracked automatically for every rendered .edge page — no setup needed.
+                                     Visitor IP is never stored; only the resolved country + a daily-rotating hash for uniqueVisitors.
 ```
 
 ---
