@@ -1,3 +1,4 @@
+import admin from "../modules/admin";
 import analytics from "../modules/analytics";
 import api from "../modules/api";
 import auth from "../modules/auth";
@@ -21,6 +22,7 @@ const modules = [
   await img.init(),
   await analytics.init(),
   await users.init(),
+  await admin.init(),
   await view.init(),
 ] as const;
 
