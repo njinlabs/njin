@@ -13,5 +13,6 @@ export function multiFile(meta: FormMeta, rule?: (z: any) => any) {
   return relationMany(meta, fileModule().model, rule ? rule : (z) => z).meta({
     ...meta,
     renderAs: "multi_file",
+    model: fileModule().model.prefix,
   });
 }

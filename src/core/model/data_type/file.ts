@@ -10,5 +10,6 @@ export function file(meta: FormMeta) {
   return relation(meta, fileModule().model, (z) => z).meta({
     ...meta,
     renderAs: "file",
+    model: fileModule().model.prefix,
   });
 }

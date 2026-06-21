@@ -50,5 +50,6 @@ export function relationMany(meta: FormMeta, model: ReturnType<typeof makeModel>
     .meta({
       ...meta,
       renderAs: "multi_relation",
+      model: model.prefix,
     });
 }
