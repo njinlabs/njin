@@ -1,4 +1,5 @@
 export * from "./array";
+export * from "./boolean";
 export * from "./date";
 export * from "./email";
 export * from "./file";
@@ -7,5 +8,6 @@ export * from "./numeric";
 export * from "./object";
 export * from "./relation";
 export * from "./relation_many";
+export * from "./richtext";
 export * from "./select";
 export * from "./text";
