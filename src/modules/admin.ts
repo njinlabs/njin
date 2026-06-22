@@ -1,6 +1,7 @@
 import { makeModule } from "@njin/core/module";
+import { resolveSafePath } from "@njin/core/path_guard";
 import Elysia from "elysia";
-import { join, normalize } from "node:path";
+import { join } from "node:path";
 import elysia from "./elysia";
 
 const adminDir = join(process.cwd(), "_admin");
@@ -21,12 +22,8 @@ const admin = makeModule(() => {
           return indexFile();
         }
 
-        const requested = normalize(join(adminDir, decoded));
-
-        // Stay inside adminDir — block path traversal via "..".
-        if (!requested.startsWith(adminDir)) {
-          return indexFile();
-        }
+        const requested = resolveSafePath(adminDir, decoded);
+        if (!requested) return indexFile();
 
         const file = Bun.file(requested);
         if (await file.exists()) return file;

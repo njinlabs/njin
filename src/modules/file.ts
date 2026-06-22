@@ -1,8 +1,9 @@
 import adapters from "@njin/config/adapter";
 import type { makeModel } from "@njin/core/model";
 import { makeModule } from "@njin/core/module";
+import { resolveSafePath } from "@njin/core/path_guard";
 import Elysia from "elysia";
-import { join, normalize } from "node:path";
+import { join } from "node:path";
 import { RecordId } from "surrealdb";
 import z from "zod";
 import env from "@njin/config/env";
@@ -99,12 +100,8 @@ const file = makeModule(() => {
         return new Response("Not Found", { status: 404 });
       }
 
-      const requested = normalize(join(uploadsDir, decoded));
-
-      // Stay inside uploadsDir — block path traversal via "..".
-      if (!requested.startsWith(uploadsDir)) {
-        return new Response("Not Found", { status: 404 });
-      }
+      const requested = resolveSafePath(uploadsDir, decoded);
+      if (!requested) return new Response("Not Found", { status: 404 });
 
       const file = Bun.file(requested);
       if (!(await file.exists())) return new Response("Not Found", { status: 404 });

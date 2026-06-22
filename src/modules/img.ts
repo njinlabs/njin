@@ -4,7 +4,7 @@ import Elysia from "elysia";
 import elysia from "./elysia";
 import view from "./view";
 
-function isAllowed(imageUrl: string, requestHost: string): boolean {
+export function isAllowed(imageUrl: string, requestHost: string, allowedHosts: string[] = env.img.hosts): boolean {
   if (imageUrl.startsWith("/")) return true;
 
   let parsed: URL;
@@ -25,10 +25,10 @@ function isAllowed(imageUrl: string, requestHost: string): boolean {
   if (imageHostname === "localhost" || imageHostname === "127.0.0.1") return true;
 
   // Truly external hosts: require explicit whitelist
-  return env.img.hosts.includes(imageHostname);
+  return allowedHosts.includes(imageHostname);
 }
 
-function extractFilename(url: string): string {
+export function extractFilename(url: string): string {
   try {
     const pathname = url.startsWith("/") ? url : new URL(url).pathname;
     const last = pathname.split("/").filter(Boolean).pop() ?? "image";

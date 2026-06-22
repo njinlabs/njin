@@ -12,7 +12,7 @@ import logger from "./logger";
 // without any per-route setup.
 const BRACKET_KEY_RE = /^([^[\]]+)\[([^\]]+)\](?:\[([^\]]+)\])?$/;
 
-const injectBracketQuery = ({ query, request }: { query: Record<string, unknown>; request: Request }) => {
+export const injectBracketQuery = ({ query, request }: { query: Record<string, unknown>; request: Request }) => {
   const params = new URL(request.url).searchParams;
 
   for (const [key, value] of params) {

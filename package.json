@@ -13,7 +13,8 @@
   "scripts": {
     "dev": "bun run src/spin.ts",
     "build": "vite build",
-    "start": "NODE_ENV=production bun run src/spin.ts"
+    "start": "NODE_ENV=production bun run src/spin.ts",
+    "test": "bun test"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.3.0",

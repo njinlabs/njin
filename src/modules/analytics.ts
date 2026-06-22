@@ -21,7 +21,7 @@ type TrackInput = {
 
 // Same-origin referrer just means "navigated from another page on this site" —
 // not an actual external traffic source, so it shouldn't be counted as one.
-const isSameOrigin = (referrer: string | null, requestUrl: string) => {
+export const isSameOrigin = (referrer: string | null, requestUrl: string) => {
   if (!referrer) return false;
   try {
     return new URL(referrer).origin === new URL(requestUrl).origin;
