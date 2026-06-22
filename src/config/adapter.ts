@@ -1,8 +1,7 @@
-import bunFilesystemAdapter from "@njin/core/adapters/bun_filesystem";
-import env from "./env";
+import s3Adapter from "@njin/core/adapters/s3";
 
 const adapters = {
-  file: bunFilesystemAdapter({ dir: env.file.dir }),
+  file: s3Adapter(),
 };
 
 export default adapters;
