@@ -1,4 +1,4 @@
-import surreal from "@njin/modules/surreal";
+import surreal from "../../modules/surreal";
 import moment from "moment";
 import { RecordId, Table, type Values } from "surrealdb";
 import { z } from "zod";

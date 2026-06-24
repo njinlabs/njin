@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { isSameOrigin } from "@njin/modules/analytics";
+import { isSameOrigin } from "../../src/modules/analytics";
 
 describe("isSameOrigin", () => {
   it("returns true when the referrer matches the request's origin", () => {

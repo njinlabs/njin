@@ -1,4 +1,4 @@
-import { email, makeModel, text } from "@njin/core/model";
+import { email, makeModel, text } from "../core/model";
 import z from "zod";
 
 const user = makeModel("user", {

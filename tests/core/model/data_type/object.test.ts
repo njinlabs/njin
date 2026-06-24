@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
-import { object } from "@njin/core/model/data_type/object";
-import { text } from "@njin/core/model/data_type/text";
+import { object } from "../../../../src/core/model/data_type/object";
+import { text } from "../../../../src/core/model/data_type/text";
 
 describe("object", () => {
   it("accepts an object matching the shape", () => {

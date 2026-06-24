@@ -1,12 +1,11 @@
-import adapters from "@njin/config/adapter";
-import type { makeModel } from "@njin/core/model";
-import { makeModule } from "@njin/core/module";
-import { resolveSafePath } from "@njin/core/path_guard";
+import { getConfig } from "../core/config";
+import type { makeModel } from "../core/model";
+import { makeModule } from "../core/module";
+import { resolveSafePath } from "../core/path_guard";
 import Elysia from "elysia";
 import { join } from "node:path";
 import { RecordId } from "surrealdb";
 import z from "zod";
-import env from "@njin/config/env";
 import auth from "./auth";
 import elysia from "./elysia";
 import surreal from "./surreal";
@@ -26,6 +25,10 @@ export interface FileAdapter<Meta> {
   write: (file: File) => Promise<Omit<FileUpload<Meta>, "id" | "createdAt" | "updatedAt">>;
   unlink: (file: FileUpload<Meta>) => Promise<void>;
   meta: Meta;
+  // Only set by filesystem-backed adapters — tells this module where to serve
+  // /uploads/* from. Adapters like S3 serve files from their own public URL instead,
+  // so they omit this and the static route below never gets mounted.
+  dir?: string;
 }
 
 const file = makeModule(() => {
@@ -34,7 +37,7 @@ const file = makeModule(() => {
   const fn = () => ({ model });
 
   fn.init = async () => {
-    const { default: baseModel } = await import("@njin/models/file");
+    const { default: baseModel } = await import("../models/file");
 
     type FileUploadCurrent = Awaited<ReturnType<typeof baseModel.create>>;
 
@@ -61,7 +64,7 @@ const file = makeModule(() => {
         async ({ params }) => {
           const data = await surreal().delete<FileUploadCurrent>(new RecordId(baseModel.table, params.id));
 
-          await adapters.file.unlink(data);
+          await getConfig().adapters.file.unlink(data);
 
           return { data };
         },
@@ -77,7 +80,7 @@ const file = makeModule(() => {
         async ({ body }) => {
           const data = await surreal()
             .create<Omit<FileUploadCurrent, "id">>(baseModel.table)
-            .content(await adapters.file.write(body.file));
+            .content(await getConfig().adapters.file.write(body.file));
 
           return { data };
         },
@@ -89,27 +92,33 @@ const file = makeModule(() => {
         },
       );
 
-    const uploadsDir = join(process.cwd(), env.file.dir);
+    const adapterDir = getConfig().adapters.file.dir;
 
-    const uploadsController = new Elysia().get("/uploads/*", async ({ params }) => {
-      // Elysia leaves wildcard params percent-encoded — decode before touching the filesystem.
-      let decoded: string;
-      try {
-        decoded = decodeURIComponent(params["*"]);
-      } catch {
-        return new Response("Not Found", { status: 404 });
-      }
+    if (adapterDir) {
+      const uploadsDir = join(process.cwd(), adapterDir);
 
-      const requested = resolveSafePath(uploadsDir, decoded);
-      if (!requested) return new Response("Not Found", { status: 404 });
+      const uploadsController = new Elysia().get("/uploads/*", async ({ params }) => {
+        // Elysia leaves wildcard params percent-encoded — decode before touching the filesystem.
+        let decoded: string;
+        try {
+          decoded = decodeURIComponent(params["*"]);
+        } catch {
+          return new Response("Not Found", { status: 404 });
+        }
 
-      const file = Bun.file(requested);
-      if (!(await file.exists())) return new Response("Not Found", { status: 404 });
+        const requested = resolveSafePath(uploadsDir, decoded);
+        if (!requested) return new Response("Not Found", { status: 404 });
 
-      return file;
-    });
+        const file = Bun.file(requested);
+        if (!(await file.exists())) return new Response("Not Found", { status: 404 });
 
-    elysia().use(controller).use(uploadsController);
+        return file;
+      });
+
+      elysia().use(controller).use(uploadsController);
+    } else {
+      elysia().use(controller);
+    }
 
     model = baseModel;
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { select } from "@njin/core/model/data_type/select";
+import { select } from "../../../../src/core/model/data_type/select";
 
 describe("select", () => {
   it("accepts one of the given options", () => {

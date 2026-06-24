@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { boolean } from "@njin/core/model/data_type/boolean";
+import { boolean } from "../../../../src/core/model/data_type/boolean";
 
 describe("boolean", () => {
   it("accepts a real boolean", () => {

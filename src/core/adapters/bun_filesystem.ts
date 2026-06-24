@@ -1,4 +1,4 @@
-import type { FileAdapter } from "@njin/modules/file";
+import type { FileAdapter } from "../../modules/file";
 import { init } from "@paralleldrive/cuid2";
 import { join } from "node:path";
 import z from "zod";
@@ -11,9 +11,10 @@ const createId = init({
 
 const meta = z.null();
 
-const bunFilesystemAdapter = ({ dir }: { dir: string }): FileAdapter<typeof meta> => {
+const bunFilesystemAdapter = ({ dir = "./uploads" }: { dir?: string } = {}): FileAdapter<typeof meta> => {
   return {
     meta,
+    dir,
     write: async (file) => {
       const [fileName, ...exts] = file.name.split(".");
 

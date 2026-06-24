@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { email } from "@njin/core/model/data_type/email";
+import { email } from "../../../../src/core/model/data_type/email";
 
 describe("email", () => {
   it("accepts a valid email", () => {

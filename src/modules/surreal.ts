@@ -1,5 +1,5 @@
-import env from "@njin/config/env";
-import { makeModule } from "@njin/core/module";
+import { getConfig } from "../core/config";
+import { makeModule } from "../core/module";
 import { createNodeEngines } from "@surrealdb/node";
 import { Surreal } from "surrealdb";
 
@@ -7,13 +7,12 @@ import { Surreal } from "surrealdb";
 // on a table that has never had a row created, unlike plain SELECT. Defining every
 // table up front avoids that first-run failure (e.g. /api/setup/status before any user exists).
 const ensureTables = async (db: Surreal) => {
-  const { default: apiModels } = await import("@njin/config/api");
-  const { default: userModel } = await import("@njin/models/user");
-  const { default: fileModel } = await import("@njin/models/file");
+  const { default: userModel } = await import("../models/user");
+  const { default: fileModel } = await import("../models/file");
 
   const prefixes = new Set<string>([userModel.prefix, fileModel.prefix]);
 
-  for (const factory of apiModels) {
+  for (const factory of getConfig().models) {
     const { default: model } = await factory();
     prefixes.add(model.prefix);
   }
@@ -37,8 +36,9 @@ const surreal = makeModule(() => {
 
     return {
       spin: async () => {
-        await db.connect(env.db.path);
-        await db.use({ namespace: env.db.namespace, database: env.db.database });
+        const { db: dbConfig } = getConfig();
+        await db.connect(dbConfig.path);
+        await db.use({ namespace: dbConfig.namespace, database: dbConfig.database });
         await ensureTables(db);
 
         const shutdown = async () => {

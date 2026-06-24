@@ -1,13 +1,16 @@
 import { beforeAll, describe, expect, it } from "bun:test";
-import { file } from "@njin/core/model/data_type/file";
-import elysia from "@njin/modules/elysia";
-import fileModule from "@njin/modules/file";
+import { loadConfig } from "../../../../src/core/config";
+import { file } from "../../../../src/core/model/data_type/file";
+import elysia from "../../../../src/modules/elysia";
+import fileModule from "../../../../src/modules/file";
 import { RecordId } from "surrealdb";
 
 // file() reads the file module's internal model lazily, so the module must be
 // initialized first — registering routes here has no network/DB side effects
-// (no .listen(), no surreal connection).
+// (no .listen(), no surreal connection). models/file.ts reads the configured
+// adapter via getConfig(), so config must be loaded first too.
 beforeAll(async () => {
+  await loadConfig();
   elysia.init();
   await fileModule.init();
 });

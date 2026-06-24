@@ -1,4 +1,4 @@
-import fileModule from "@njin/modules/file";
+import fileModule from "../../../modules/file";
 import type z from "zod";
 import { type FormMeta, type RelationType } from "..";
 import { relationMany } from "./relation_many";

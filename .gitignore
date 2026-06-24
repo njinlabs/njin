@@ -1,19 +1,10 @@
 # dependencies
 node_modules/
 
-# environment
-.env
-.env.*.local
-
-# database
-mydb/
-data/
-
-# build output
-public/
-
-# uploads
-uploads/
+# sandbox for testing the package split (bun link) — not shipped.
+# All project-specific runtime state (db data, uploads, .env, build output) lives
+# inside playground/ now, not at the package root, so it's covered by this alone.
+playground/
 
 # typescript
 *.tsbuildinfo

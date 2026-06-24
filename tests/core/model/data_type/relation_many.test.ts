@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
-import { makeModel } from "@njin/core/model";
-import { relationMany } from "@njin/core/model/data_type/relation_many";
-import { text } from "@njin/core/model/data_type/text";
+import { makeModel } from "../../../../src/core/model";
+import { relationMany } from "../../../../src/core/model/data_type/relation_many";
+import { text } from "../../../../src/core/model/data_type/text";
 import { RecordId } from "surrealdb";
 import z from "zod";
 

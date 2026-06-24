@@ -1,5 +1,5 @@
 import bearer from "@elysia/bearer";
-import { makeModule } from "@njin/core/module";
+import { makeModule } from "../core/module";
 import Elysia, { status } from "elysia";
 import moment from "moment";
 import { eq, RecordId, Table, Uuid } from "surrealdb";
@@ -66,7 +66,7 @@ const auth = makeModule(() => {
   };
 
   fn.init = async () => {
-    const { default: user } = await import("@njin/models/user");
+    const { default: user } = await import("../models/user");
 
     type Token = {
       hash: string;

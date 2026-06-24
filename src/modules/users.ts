@@ -1,4 +1,4 @@
-import { makeModule } from "@njin/core/module";
+import { makeModule } from "../core/module";
 import Elysia, { status } from "elysia";
 import z from "zod";
 import auth from "./auth";
@@ -10,7 +10,7 @@ const users = makeModule(() => {
   const fn = () => {};
 
   fn.init = async () => {
-    const { default: user } = await import("@njin/models/user");
+    const { default: user } = await import("../models/user");
     const authPlugin = (await auth()).plugin;
 
     const controller = new Elysia({ prefix: "/api/user" })

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { richtext } from "@njin/core/model/data_type/richtext";
+import { richtext } from "../../../../src/core/model/data_type/richtext";
 
 describe("richtext", () => {
   it("accepts an HTML string", () => {

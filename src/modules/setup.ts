@@ -1,4 +1,4 @@
-import { makeModule } from "@njin/core/module";
+import { makeModule } from "../core/module";
 import Elysia, { status } from "elysia";
 import moment from "moment";
 import { RecordId, Table, Uuid } from "surrealdb";
@@ -12,7 +12,7 @@ const setup = makeModule(() => {
   const fn = () => {};
 
   fn.init = async () => {
-    const { default: user } = await import("@njin/models/user");
+    const { default: user } = await import("../models/user");
 
     type Token = {
       hash: string;

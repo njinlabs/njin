@@ -1,4 +1,4 @@
-import { makeModule } from "@njin/core/module";
+import { makeModule } from "../core/module";
 import pino from "pino";
 import pretty from "pino-pretty";
 

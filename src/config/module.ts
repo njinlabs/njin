@@ -1,3 +1,4 @@
+import { loadConfig } from "../core/config";
 import admin from "../modules/admin";
 import analytics from "../modules/analytics";
 import api from "../modules/api";
@@ -10,6 +11,10 @@ import setup from "../modules/setup";
 import surreal from "../modules/surreal";
 import users from "../modules/users";
 import view from "../modules/view";
+
+// Must resolve before anything below reads getConfig() — db path, port, file
+// adapter, and the model registry all come from the consuming project's config.ts.
+await loadConfig();
 
 const modules = [
   logger.init(),

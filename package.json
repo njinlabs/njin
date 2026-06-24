@@ -1,6 +1,6 @@
 {
   "name": "njin",
-  "version": "0.1.0-beta.1",
+  "version": "0.1.0",
   "description": "A modern framework for building company profiles, landing pages, and content-driven websites.",
   "type": "module",
   "keywords": ["bun", "elysia", "surrealdb", "edgejs", "cms", "framework"],
@@ -10,37 +10,50 @@
     "url": "https://github.com/njinlabs/njin.git"
   },
   "homepage": "https://github.com/njinlabs/njin",
+  "engines": {
+    "bun": ">=1.3.0"
+  },
+  "files": ["src", "LICENSE"],
   "scripts": {
-    "dev": "bun run src/spin.ts",
-    "build": "vite build",
-    "start": "NODE_ENV=production bun run src/spin.ts",
     "test": "bun test"
+  },
+  "bin": {
+    "njin": "./src/cli/index.ts"
+  },
+  "exports": {
+    ".": "./src/core/model/index.ts",
+    "./config": "./src/core/config.ts",
+    "./boot": "./src/core/boot.ts",
+    "./banner": "./src/core/banner.ts",
+    "./adapters/*": "./src/core/adapters/*.ts"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.3.0",
     "@types/alpinejs": "^3.13.11",
     "@types/bun": "latest",
     "@types/geoip-lite": "^1.4.4",
-    "@types/sharp": "^0.32.0",
+    "alpinejs": "^3.15.12",
     "pino-pretty": "^13.1.3",
-    "vite": "^8.0.14"
+    "vite": "^8.0.14",
+    "zod": "^4.4.3"
   },
   "peerDependencies": {
-    "typescript": "^5"
+    "@tailwindcss/vite": "^4.0.0",
+    "alpinejs": "^3.0.0",
+    "typescript": "^5",
+    "vite": "^8.0.0",
+    "zod": "^4.0.0"
   },
   "dependencies": {
     "@elysia/bearer": "^1.4.4",
     "@elysia/cors": "^1.4.2",
     "@paralleldrive/cuid2": "^3.3.0",
     "@surrealdb/node": "^3.0.3",
-    "alpinejs": "^3.15.12",
     "edge.js": "^6.5.1",
     "elysia": "^1.4.28",
     "geoip-lite": "^2.0.3",
     "moment": "^2.30.1",
     "pino": "^10.3.1",
-    "sharp": "^0.35.1",
-    "surrealdb": "^2.0.3",
-    "zod": "^4.4.3"
+    "surrealdb": "^2.0.3"
   }
 }

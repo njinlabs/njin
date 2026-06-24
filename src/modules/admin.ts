@@ -1,5 +1,5 @@
-import { makeModule } from "@njin/core/module";
-import { resolveSafePath } from "@njin/core/path_guard";
+import { makeModule } from "../core/module";
+import { resolveSafePath } from "../core/path_guard";
 import Elysia from "elysia";
 import { join } from "node:path";
 import elysia from "./elysia";

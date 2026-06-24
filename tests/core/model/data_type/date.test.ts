@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import moment from "moment";
-import { date } from "@njin/core/model/data_type/date";
+import { date } from "../../../../src/core/model/data_type/date";
 
 describe("date", () => {
   it("normalizes a date string to full ISO", () => {

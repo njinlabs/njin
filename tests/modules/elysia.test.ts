@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { injectBracketQuery } from "@njin/modules/elysia";
+import { injectBracketQuery } from "../../src/modules/elysia";
 
 describe("injectBracketQuery", () => {
   it("parses a simple bracket key into a nested object", () => {

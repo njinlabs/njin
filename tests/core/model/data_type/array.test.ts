@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
-import { array } from "@njin/core/model/data_type/array";
-import { numeric } from "@njin/core/model/data_type/numeric";
-import { text } from "@njin/core/model/data_type/text";
+import { array } from "../../../../src/core/model/data_type/array";
+import { numeric } from "../../../../src/core/model/data_type/numeric";
+import { text } from "../../../../src/core/model/data_type/text";
 
 describe("array", () => {
   it("accepts an array of the item type", () => {

@@ -1,10 +1,13 @@
 import { beforeAll, describe, expect, it } from "bun:test";
-import { multiFile } from "@njin/core/model/data_type/multi_file";
-import elysia from "@njin/modules/elysia";
-import fileModule from "@njin/modules/file";
+import { loadConfig } from "../../../../src/core/config";
+import { multiFile } from "../../../../src/core/model/data_type/multi_file";
+import elysia from "../../../../src/modules/elysia";
+import fileModule from "../../../../src/modules/file";
 import { RecordId } from "surrealdb";
 
+// models/file.ts reads the configured adapter via getConfig(), so config must load first.
 beforeAll(async () => {
+  await loadConfig();
   elysia.init();
   await fileModule.init();
 });

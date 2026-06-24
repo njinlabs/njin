@@ -2,11 +2,9 @@
 
 A modern framework for building company profiles, landing pages, and content-driven websites. Define your data model once — get a full REST API, admin panel schema, and server-rendered website out of the box.
 
-> **Beta** — functional and usable, but APIs may change before stable release.
-
 ## Stack
 
-- **[Bun](https://bun.sh)** — runtime, package manager, bundler
+- **[Bun](https://bun.sh)** — runtime, package manager, bundler (njin is Bun-only — no Node/Deno support)
 - **[Elysia](https://elysiajs.com)** — HTTP framework with type-safe CRUD generation
 - **[SurrealDB](https://surrealdb.com)** — embedded multi-model database (no separate server)
 - **[EdgeJS](https://edgejs.dev)** — server-side template engine with file-based routing
@@ -14,41 +12,57 @@ A modern framework for building company profiles, landing pages, and content-dri
 
 ## Quick start
 
+There's no project-scaffold CLI yet (a `create-njin` template is planned but not available) — set up a new project manually:
+
 ```bash
-bun create njinlabs/njin my-project
-cd my-project
-cp .env.example .env   # configure your environment
-bun dev
+mkdir my-project && cd my-project
+bun init -y
+bun add njin
+bun add @tailwindcss/vite alpinejs vite zod typescript   # peer dependencies
+```
+
+Make sure `tsconfig.json` can resolve njin's `.ts` exports directly (Bun runs TypeScript natively, but `tsc`/editors need to be told to do the same):
+
+```jsonc
+{
+  "compilerOptions": {
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "types": ["bun"]
+  }
+}
+```
+
+Then create the project structure below, add a `config.ts` at the root (see [Configuration](#configuration)), and start the dev server:
+
+```bash
+bunx njin dev
 ```
 
 ## Project structure
 
 ```
+config.ts           ← registers models, db, file adapter, etc. (see below)
 src/
-  config/
-    api.ts        ← register your models here
-    adapter.ts    ← file storage adapter
-    env.ts        ← environment variable schema & defaults
-    module.ts     ← framework module registry
-  core/           ← framework internals (do not modify)
-  models/         ← your data models
-  modules/        ← framework modules (do not modify)
+  models/            ← your data models
   views/
-    layouts/      ← base layout templates
-    pages/        ← file-based routes (.edge files)
+    layouts/         ← base layout templates
+    pages/           ← file-based routes (.edge files)
+    components/      ← reusable .edge components
   client/
-    main.ts       ← frontend entry point
-    app.css       ← Tailwind CSS
-.env              ← environment variables (git-ignored)
-.env.example      ← environment variable reference
-vite.config.ts    ← Vite config
+    main.ts          ← frontend entry point
+    app.css          ← Tailwind CSS
+_admin/              ← optional — drop a built admin panel SPA here (not bundled with njin)
+vite.config.ts       ← Vite config
 ```
+
+`njin` itself lives in `node_modules/njin` — there's no framework source to look at or modify inside your project.
 
 ## Defining a model
 
 ```ts
 // src/models/post.ts
-import { makeModel, text, date, select } from "@njin/core/model";
+import { makeModel, text, date, select } from "njin";
 import z from "zod";
 
 const post = makeModel("post", {
@@ -65,18 +79,23 @@ const post = makeModel("post", {
 export default post;
 ```
 
-Register in `src/config/api.ts`:
+Register it in `config.ts` at the project root:
 
 ```ts
-const api = [
-  () => import("@njin/models/post"),
-] as const;
+// config.ts
+import { defineConfig } from "njin/config";
+
+export default defineConfig({
+  models: [
+    () => import("./src/models/post"),
+  ],
+});
 ```
 
 This automatically generates:
 
 | Method | Endpoint | Description |
-|--------|----------|-------------|
+|--------|----------|--------------|
 | `GET` | `/api/post` | List with pagination, search, filter, sort |
 | `POST` | `/api/post` | Create |
 | `GET` | `/api/post/:id` | Show (with relations fetched) |
@@ -162,30 +181,68 @@ DELETE /api/auth/logout        # Bearer <token>
 
 All `/api/*` endpoints require `Authorization: Bearer <token>`.
 
+## Admin panel
+
+njin doesn't bundle an admin panel — `_admin/` at your project root is just a static folder the server looks for at startup (`GET /_admin`). Drop a built admin SPA's `index.html`/assets into it (your own, or one shared by the community) and it's served automatically; if it's missing, the startup banner just notes it wasn't found.
+
 ## Configuration
 
-Copy `.env.example` to `.env` and edit:
+Everything that used to be an environment variable now lives in a `config.ts` you write at the project root — njin no longer owns `.env` parsing, so reading from `process.env` (or not) is entirely your call:
 
-```env
-PORT=3000
+```ts
+// config.ts
+import { defineConfig } from "njin/config";
+import bunFilesystemAdapter from "njin/adapters/bun_filesystem";
 
-DB_PATH=rocksdb://mydb
-DB_NAMESPACE=general
-DB_DATABASE=general
+export default defineConfig({
+  port: Number(process.env.PORT ?? 3000),
+  db: {
+    path: process.env.DB_PATH ?? "rocksdb://data",
+    namespace: process.env.DB_NAMESPACE ?? "general",
+    database: process.env.DB_DATABASE ?? "general",
+  },
+  img: {
+    hosts: ["cdn.example.com"], // external hosts allowed for GET /img besides same-origin/localhost
+  },
+  adapters: {
+    file: bunFilesystemAdapter({ dir: "./uploads" }), // default — omit entirely to use this with its own default ("./uploads")
+  },
+  models: [
+    () => import("./src/models/post"),
+  ],
+});
+```
 
-FILE_DIR=./uploads
+To store uploads in S3 (or an S3-compatible service like R2/Spaces/MinIO) instead:
+
+```ts
+import s3Adapter from "njin/adapters/s3";
+
+adapters: {
+  file: s3Adapter({
+    bucket: process.env.S3_BUCKET!,
+    region: process.env.S3_REGION,
+    accessKeyId: process.env.S3_ACCESS_KEY_ID,
+    secretAccessKey: process.env.S3_SECRET_ACCESS_KEY,
+    endpoint: process.env.S3_ENDPOINT, // for R2/Spaces/MinIO
+  }),
+}
 ```
 
 ## Commands
 
 ```bash
-bun dev       # Start dev server (Elysia + Vite HMR)
-bun build     # Build frontend assets to /public
-bun start     # Start production server
+bunx njin dev       # Start dev server (Elysia + Vite HMR)
+bunx njin build     # Build for production -> ./out (public/, _admin/, views/, compiled server)
+bunx njin start     # Run from source in production mode (no compile)
 ```
 
-## Known limitations (beta)
+Wire these as `package.json` scripts (`"dev": "njin dev"`, etc.) if you'd rather run `bun run dev`.
 
+## Known limitations
+
+- No project-scaffold CLI yet — set up new projects manually (see Quick start)
+- Admin panel is not bundled — bring your own build, or wait for one to land separately
 - User model is accessible via the general CRUD API
 - No change password endpoint yet
 - No email/forgot password support

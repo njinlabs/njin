@@ -1,11 +1,11 @@
-import adapters from "@njin/config/adapter";
-import { makeModel, numeric, text } from "@njin/core/model";
+import { getConfig } from "../core/config";
+import { makeModel, numeric, text } from "../core/model";
 import z from "zod";
 
 const file = makeModel("file", {
   name: "File",
   schema: z.object({
-    meta: adapters.file.meta,
+    meta: getConfig().adapters.file.meta,
     name: text({ label: "Filename" }),
     size: numeric({ label: "Size" }),
     type: text({ label: "Mime Type" }),

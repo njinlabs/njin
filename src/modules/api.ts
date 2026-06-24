@@ -1,5 +1,5 @@
-import models from "@njin/config/api";
-import { makeModule } from "@njin/core/module";
+import { getConfig } from "../core/config";
+import { makeModule } from "../core/module";
 import Elysia from "elysia";
 import z from "zod";
 import auth from "./auth";
@@ -9,6 +9,7 @@ const api = makeModule(() => {
   const fn = () => {};
 
   fn.init = async () => {
+    const models = getConfig().models;
     const authPlugin = await auth();
 
     const controller = new Elysia({ prefix: "/api/schema" }).use(authPlugin.plugin).get(

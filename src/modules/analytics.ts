@@ -1,4 +1,4 @@
-import { makeModule } from "@njin/core/module";
+import { makeModule } from "../core/module";
 import Elysia from "elysia";
 import geoip from "geoip-lite";
 import moment from "moment";

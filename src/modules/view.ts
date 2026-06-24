@@ -1,6 +1,6 @@
-import models from "@njin/config/api";
-import { HttpError } from "@njin/core/http_error";
-import { makeModule } from "@njin/core/module";
+import { getConfig } from "../core/config";
+import { HttpError } from "../core/http_error";
+import { makeModule } from "../core/module";
 import { Edge } from "edge.js";
 import Elysia from "elysia";
 import { join } from "path";
@@ -78,7 +78,9 @@ const view = makeModule(() => {
   const fn = () => edge;
 
   fn.init = async () => {
-    const viewsDir = join(import.meta.dir, "../views");
+    // process.cwd()-based, not import.meta.dir — once view.ts lives inside node_modules/njin,
+    // import.meta.dir would point at the package's own location, not the consuming project's views.
+    const viewsDir = join(process.cwd(), "src/views");
     const pagesDir = join(viewsDir, "pages");
 
     edge.mount(viewsDir);
@@ -90,7 +92,7 @@ const view = makeModule(() => {
       throw new HttpError(statusCode, message);
     });
 
-    for (const modelPromise of models) {
+    for (const modelPromise of getConfig().models) {
       const { default: model } = await modelPromise();
       edge.global(model.prefix, model);
     }
@@ -138,7 +140,7 @@ const view = makeModule(() => {
           });
 
           // Fire-and-forget — never awaited, so it can't add latency to the response.
-          import("@njin/modules/analytics").then(({ default: analytics, resolveClientIp }) =>
+          import("./analytics").then(({ default: analytics, resolveClientIp }) =>
             analytics().track({
               path,
               referrer: request.headers.get("referer"),

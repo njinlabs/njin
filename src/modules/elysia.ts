@@ -1,7 +1,7 @@
-import env from "@njin/config/env";
 import cors from "@elysia/cors";
-import { UniqueConstraintError } from "@njin/core/model";
-import { makeModule } from "@njin/core/module";
+import { getConfig } from "../core/config";
+import { UniqueConstraintError } from "../core/model";
+import { makeModule } from "../core/module";
 import Elysia, { status, ValidationError, type AnyElysia } from "elysia";
 import logger from "./logger";
 
@@ -71,9 +71,10 @@ const elysia = makeModule(() => {
     });
 
     return {
+      // No startup log here — the CLI prints one consolidated banner after every
+      // module has finished booting (src/core/banner.ts), instead of one line per module.
       spin: () => {
-        app.listen(env.port);
-        logger().info(`🦊 Elysia is running at ${app.server?.hostname}:${app.server?.port}`);
+        app.listen(getConfig().port);
       },
     };
   };

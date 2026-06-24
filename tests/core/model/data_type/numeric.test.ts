@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { numeric } from "@njin/core/model/data_type/numeric";
+import { numeric } from "../../../../src/core/model/data_type/numeric";
 
 describe("numeric", () => {
   it("accepts a number", () => {

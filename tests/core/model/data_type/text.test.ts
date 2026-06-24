@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { text } from "@njin/core/model/data_type/text";
+import { text } from "../../../../src/core/model/data_type/text";
 
 describe("text", () => {
   it("accepts a string", () => {
