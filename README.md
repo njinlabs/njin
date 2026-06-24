@@ -12,30 +12,9 @@ A modern framework for building company profiles, landing pages, and content-dri
 
 ## Quick start
 
-There's no project-scaffold CLI yet (a `create-njin` template is planned but not available) — set up a new project manually:
-
 ```bash
-mkdir my-project && cd my-project
-bun init -y
-bun add njin
-bun add @tailwindcss/vite alpinejs vite zod typescript   # peer dependencies
-```
-
-Make sure `tsconfig.json` can resolve njin's `.ts` exports directly (Bun runs TypeScript natively, but `tsc`/editors need to be told to do the same):
-
-```jsonc
-{
-  "compilerOptions": {
-    "moduleResolution": "bundler",
-    "allowImportingTsExtensions": true,
-    "types": ["bun"]
-  }
-}
-```
-
-Then create the project structure below, add a `config.ts` at the root (see [Configuration](#configuration)), and start the dev server:
-
-```bash
+bun create njin-app my-web
+cd my-web
 bunx njin dev
 ```
 
@@ -56,13 +35,13 @@ _admin/              ← optional — drop a built admin panel SPA here (not bun
 vite.config.ts       ← Vite config
 ```
 
-`njin` itself lives in `node_modules/njin` — there's no framework source to look at or modify inside your project.
+`@njinlabs/njin` itself lives in `node_modules/@njinlabs/njin` — there's no framework source to look at or modify inside your project.
 
 ## Defining a model
 
 ```ts
 // src/models/post.ts
-import { makeModel, text, date, select } from "njin";
+import { makeModel, text, date, select } from "@njinlabs/njin";
 import z from "zod";
 
 const post = makeModel("post", {
@@ -83,7 +62,7 @@ Register it in `config.ts` at the project root:
 
 ```ts
 // config.ts
-import { defineConfig } from "njin/config";
+import { defineConfig } from "@njinlabs/njin/config";
 
 export default defineConfig({
   models: [
@@ -191,8 +170,8 @@ Everything that used to be an environment variable now lives in a `config.ts` yo
 
 ```ts
 // config.ts
-import { defineConfig } from "njin/config";
-import bunFilesystemAdapter from "njin/adapters/bun_filesystem";
+import { defineConfig } from "@njinlabs/njin/config";
+import bunFilesystemAdapter from "@njinlabs/njin/adapters/bun_filesystem";
 
 export default defineConfig({
   port: Number(process.env.PORT ?? 3000),
@@ -216,7 +195,7 @@ export default defineConfig({
 To store uploads in S3 (or an S3-compatible service like R2/Spaces/MinIO) instead:
 
 ```ts
-import s3Adapter from "njin/adapters/s3";
+import s3Adapter from "@njinlabs/njin/adapters/s3";
 
 adapters: {
   file: s3Adapter({
@@ -238,14 +217,6 @@ bunx njin start     # Run from source in production mode (no compile)
 ```
 
 Wire these as `package.json` scripts (`"dev": "njin dev"`, etc.) if you'd rather run `bun run dev`.
-
-## Known limitations
-
-- No project-scaffold CLI yet — set up new projects manually (see Quick start)
-- Admin panel is not bundled — bring your own build, or wait for one to land separately
-- User model is accessible via the general CRUD API
-- No change password endpoint yet
-- No email/forgot password support
 
 ## License
 

@@ -116,12 +116,12 @@ try {
   await Bun.write(
     entryPath,
     `import config from ${JSON.stringify(configPath)};
-import { loadConfig } from "njin/config";
+import { loadConfig } from "@njinlabs/njin/config";
 
 await loadConfig(config);
 
-const { boot } = await import("njin/boot");
-const { printBanner } = await import("njin/banner");
+const { boot } = await import("@njinlabs/njin/boot");
+const { printBanner } = await import("@njinlabs/njin/banner");
 
 await boot();
 printBanner({ mode: "production" });
