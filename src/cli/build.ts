@@ -109,6 +109,38 @@ const require = (specifier) => {
 // hoisted and evaluated before this file's own body runs, so a static `import { boot }`
 // would pull in config/module.ts (and every module's init(), which read getConfig()) before
 // loadConfig(config) below ever executes. Same reasoning as dev.ts/start.ts.
+// geoip-lite resolves its .dat files via path.resolve(__dirname, '../data/') at module-load
+// time. Bun bakes __dirname into bundled output as the literal build-time path, so a compiled
+// binary still points at node_modules/geoip-lite/data on the machine that ran `njin build` —
+// which won't exist wherever the binary is actually deployed. Same fix shape as the SurrealDB
+// native binding above: ship the data dir next to the executable and patch the lookup.
+const geoipLibDir = dirname(fileURLToPath(import.meta.resolve("geoip-lite")));
+const geoipDataDir = join(geoipLibDir, "..", "data");
+const outGeoipDataDir = join(outDir, "geoip-data");
+await cp(geoipDataDir, outGeoipDataDir, { recursive: true });
+console.log("✓ Copied geoip-lite data -> out/geoip-data");
+
+const geoipDataPlugin: BunPlugin = {
+  name: "geoip-lite-data-dir",
+  setup(build) {
+    build.onLoad({ filter: /geoip-lite[\\/]lib[\\/]geoip\.js$/ }, async (args) => {
+      const original = await Bun.file(args.path).text();
+      const marker = "global.geodatadir || process.env.GEODATADIR || '../data/'";
+      if (!original.includes(marker)) {
+        throw new Error("geoip-lite's data dir resolution changed — expected marker not found");
+      }
+      const patched = original.replace(
+        "var geodatadir = path.resolve(\n\t__dirname,\n\t" + marker + "\n);",
+        "var geodatadir = require('path').join(require('path').dirname(process.execPath), 'geoip-data');",
+      );
+      if (patched === original) {
+        throw new Error("geoip-lite's geodatadir block didn't match expected shape — patch did not apply");
+      }
+      return { contents: patched, loader: "js" };
+    });
+  },
+};
+
 const entryPath = join(root, ".njin-build-entry.ts");
 const configPath = join(root, "config.ts").replace(/\\/g, "/");
 
@@ -136,7 +168,7 @@ printBanner({ mode: "production" });
     // vite is dev-only (view.ts gates it behind `if (isDev)`, dead in production) — bundling
     // it would also drag in its own internal (not-installed) lazy `import("esbuild")`.
     external: ["vite"],
-    plugins: [surrealNativePlugin],
+    plugins: [surrealNativePlugin, geoipDataPlugin],
     // The CLI's `bun build --compile` implicitly inlines process.env.NODE_ENV as "production";
     // the Bun.build() JS API doesn't, so view.ts's top-level `isDev` check would otherwise read
     // undefined and take the dev branch (importing the externalized, not-on-disk `vite`).
@@ -153,8 +185,8 @@ printBanner({ mode: "production" });
 
   console.log(`\n✓ Compiled server -> out/${exeName}`);
   console.log(
-    "\nNote: out/bindings/ must ship alongside the executable — it holds the native SurrealDB " +
-      "binding loaded at runtime.",
+    "\nNote: out/bindings/ and out/geoip-data/ must ship alongside the executable — they hold " +
+      "the native SurrealDB binding and the geoip-lite database loaded at runtime.",
   );
   console.log(`\nRun it with:\n  cd out && ./${exeName}`);
 } finally {

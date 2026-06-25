@@ -1,6 +1,6 @@
 {
   "name": "@njinlabs/njin",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "A modern framework for building company profiles, landing pages, and content-driven websites.",
   "type": "module",
   "keywords": ["bun", "elysia", "surrealdb", "edgejs", "cms", "framework"],
