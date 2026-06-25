@@ -10,6 +10,9 @@
     "url": "https://github.com/njinlabs/njin.git"
   },
   "homepage": "https://github.com/njinlabs/njin",
+  "publishConfig": {
+    "access": "public"
+  },
   "engines": {
     "bun": ">=1.3.0"
   },
