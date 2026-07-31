@@ -1,0 +1,4 @@
+[test]
+coverage = true
+coverageReporter = ["text", "lcov"]
+coveragePathIgnorePatterns = ["src/cli/**", "src/spin.ts", "src/config/module.ts"]

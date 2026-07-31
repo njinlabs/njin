@@ -18,7 +18,8 @@
   },
   "files": ["src", "LICENSE"],
   "scripts": {
-    "test": "bun test"
+    "test": "bun test --isolate",
+    "test:coverage": "bun test --isolate --coverage"
   },
   "bin": {
     "njin": "./src/cli/index.ts"

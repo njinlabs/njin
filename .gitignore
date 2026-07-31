@@ -9,6 +9,9 @@ playground/
 # typescript
 *.tsbuildinfo
 
+# test coverage output (bun test --coverage)
+coverage/
+
 # OS
 .DS_Store
 Thumbs.db

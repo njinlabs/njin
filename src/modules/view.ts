@@ -20,7 +20,7 @@ type ViteGlobal = {
   static: (path: string) => string;
 };
 
-const buildViteGlobal = async (): Promise<ViteGlobal> => {
+export const buildViteGlobal = async (): Promise<ViteGlobal> => {
   if (isDev) {
     const { createServer } = await import("vite");
     const server = await createServer();
@@ -193,7 +193,7 @@ const view = makeModule(() => {
   return fn;
 });
 
-async function renderHttpError(edge: Edge, viewsDir: string, error: HttpError): Promise<string> {
+export async function renderHttpError(edge: Edge, viewsDir: string, error: HttpError): Promise<string> {
   const templateFile = Bun.file(join(viewsDir, `errors/${error.statusCode}.edge`));
   if (await templateFile.exists()) {
     try {
@@ -212,7 +212,7 @@ async function renderHttpError(edge: Edge, viewsDir: string, error: HttpError): 
 </head><body><div class="c"><div class="n">${code}</div><p class="m">${error.message}</p><a href="/">← Back to home</a></div></body></html>`;
 }
 
-function renderErrorPage(error: Error, template: string, path: string): string {
+export function renderErrorPage(error: Error, template: string, path: string): string {
   const stack = (error.stack ?? "").replace(/</g, "&lt;").replace(/>/g, "&gt;");
   const message = error.message.replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
@@ -242,7 +242,7 @@ function renderErrorPage(error: Error, template: string, path: string): string {
 </html>`;
 }
 
-function fileToRoute(file: string): string {
+export function fileToRoute(file: string): string {
   let route = file.replace(/\\/g, "/").replace(/\.edge$/, "");
   route = route.replace(/\[([^\]]+)\]/g, ":$1");
   route = route.replace(/\/index$|^index$/, "");
