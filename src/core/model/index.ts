@@ -94,6 +94,13 @@ export const makeModel = <Rules extends z.ZodObject>(
 
   const uniqueFieldSet = new Set(uniqueFields);
 
+  // A real Set, not `key in config.schema.shape` — `in` also matches inherited
+  // Object.prototype members (e.g. "constructor", "toString"), and JSON.parse can
+  // produce those as literal own-properties on a request body/query object, letting
+  // them slip past a schema-shape membership check and get interpolated as a field
+  // name into the raw query string built below.
+  const filterableFieldSet = new Set(Object.keys(config.schema.shape));
+
   // field must be a known unique field — prevents arbitrary field injection
   const isDuplicate = async (field: string, value: unknown, excludeId?: string) => {
     if (!uniqueFieldSet.has(field)) return false;
@@ -156,7 +163,7 @@ export const makeModel = <Rules extends z.ZodObject>(
     if (filters) {
       for (const [key, value] of Object.entries(filters)) {
         // key must exist in schema — prevents arbitrary field injection
-        if (!(key in config.schema.shape)) continue;
+        if (!filterableFieldSet.has(key)) continue;
 
         if (typeof value === "string") {
           // Shorthand: filters[field]=value → equality

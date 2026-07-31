@@ -4,7 +4,7 @@ import Elysia from "elysia";
 import elysia from "./elysia";
 import view from "./view";
 
-export function isAllowed(imageUrl: string, requestHost: string, allowedHosts: string[] = getConfig().img.hosts): boolean {
+export function isAllowed(imageUrl: string, allowedHosts: string[] = getConfig().img.hosts): boolean {
   if (imageUrl.startsWith("/")) return true;
 
   let parsed: URL;
@@ -15,16 +15,15 @@ export function isAllowed(imageUrl: string, requestHost: string, allowedHosts: s
   }
 
   const imageHostname = parsed.hostname;
-  // Strip port — host header may include it (e.g. "localhost:3000")
-  const requestHostname = requestHost.split(":")[0];
 
-  // Same host as the incoming request — works across dev, staging, and production
-  if (imageHostname === requestHostname) return true;
+  // localhost variants are only trusted outside production — covers the Vite dev
+  // server running on a different port (5173). Trusting the client-supplied `Host`
+  // header, or allowing loopback unconditionally, would turn this into an SSRF
+  // primitive (an attacker controls both the `url` query param and their own
+  // request's `Host` header), so neither is honored here.
+  if (process.env.NODE_ENV !== "production" && (imageHostname === "localhost" || imageHostname === "127.0.0.1")) return true;
 
-  // localhost variants — covers Vite dev server running on a different port (5173)
-  if (imageHostname === "localhost" || imageHostname === "127.0.0.1") return true;
-
-  // Truly external hosts: require explicit whitelist
+  // Every other host: require explicit whitelist
   return allowedHosts.includes(imageHostname);
 }
 
@@ -68,9 +67,7 @@ const img = makeModule(() => {
         return new Response("Invalid q parameter", { status: 400 });
       }
 
-      const requestHost = request.headers.get("host") ?? "";
-
-      if (!isAllowed(url, requestHost)) {
+      if (!isAllowed(url)) {
         return new Response("Host not allowed", { status: 403 });
       }
 
@@ -92,7 +89,14 @@ const img = makeModule(() => {
         if (!resp.ok) return new Response("Image not found", { status: 404 });
         imageData = await resp.arrayBuffer();
       } else {
-        const resp = await fetch(url);
+        // `redirect: "error"` — a validated host redirecting to an unvalidated
+        // (e.g. internal) one would otherwise silently defeat the isAllowed() check above.
+        let resp: Response;
+        try {
+          resp = await fetch(url, { redirect: "error" });
+        } catch {
+          return new Response("Failed to fetch image", { status: 502 });
+        }
         if (!resp.ok) return new Response("Failed to fetch image", { status: 502 });
         imageData = await resp.arrayBuffer();
       }

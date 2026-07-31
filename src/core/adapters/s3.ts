@@ -2,6 +2,7 @@ import type { FileAdapter } from "../../modules/file";
 import { init } from "@paralleldrive/cuid2";
 import type { S3Options } from "bun";
 import z from "zod";
+import { sanitizeFileName } from "../path_guard";
 
 const createId = init({
   random: Math.random,
@@ -40,7 +41,7 @@ const s3Adapter = (options: S3Options & { bucket: string; publicUrl?: string }):
   return {
     meta,
     write: async (file) => {
-      const [fileName, ...exts] = file.name.split(".");
+      const [fileName, ...exts] = sanitizeFileName(file.name).split(".");
       const key = `${fileName}_${createId()}.${exts.join(".")}`;
 
       await bucket.write(key, file, { acl: "public-read", type: file.type });

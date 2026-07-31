@@ -2,6 +2,7 @@ import type { FileAdapter } from "../../modules/file";
 import { init } from "@paralleldrive/cuid2";
 import { join } from "node:path";
 import z from "zod";
+import { sanitizeFileName } from "../path_guard";
 
 const createId = init({
   random: Math.random,
@@ -16,7 +17,7 @@ const bunFilesystemAdapter = ({ dir = "./uploads" }: { dir?: string } = {}): Fil
     meta,
     dir,
     write: async (file) => {
-      const [fileName, ...exts] = file.name.split(".");
+      const [fileName, ...exts] = sanitizeFileName(file.name).split(".");
 
       const name = `${fileName}_${createId()}.${exts.join(".")}`;
 

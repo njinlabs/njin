@@ -29,7 +29,11 @@ const fakeDb = {
     records.delete(String(id));
     return record;
   },
-  query: async () => [[{ count: 0 }]],
+  queries: [] as { sql: string; params: Record<string, unknown> }[],
+  query: async function (sql: string, params: Record<string, unknown> = {}) {
+    fakeDb.queries.push({ sql, params });
+    return [[], [{ count: 0 }]];
+  },
 };
 
 mock.module("../../../src/modules/surreal", () => ({
@@ -137,5 +141,42 @@ describe("makeModel hook wiring", () => {
     });
 
     await expect(post.create({ title: "Hello" })).rejects.toThrow("nope");
+  });
+});
+
+describe("makeModel read() filter whitelist", () => {
+  it("ignores a filter key that isn't a real schema field, even one only reachable via Object.prototype", async () => {
+    const post = makeModel(`post_${crypto.randomUUID().replace(/-/g, "")}`, {
+      name: "Post",
+      searchFields: [],
+      schema: z.object({ title: text({ label: "Title" }) }),
+    });
+
+    fakeDb.queries.length = 0;
+
+    // `"constructor" in {}` is true (inherited from Object.prototype) even though no
+    // schema field is named "constructor" — a plain `key in shape` check would let this
+    // through and interpolate "constructor" as a raw SQL field name.
+    await post.read({ filters: { constructor: "evil" } as never });
+
+    const [call] = fakeDb.queries;
+    expect(call!.sql).not.toContain("constructor");
+    expect(call!.params).not.toHaveProperty("f_constructor");
+  });
+
+  it("still applies a filter on a real schema field", async () => {
+    const post = makeModel(`post_${crypto.randomUUID().replace(/-/g, "")}`, {
+      name: "Post",
+      searchFields: [],
+      schema: z.object({ title: text({ label: "Title" }) }),
+    });
+
+    fakeDb.queries.length = 0;
+
+    await post.read({ filters: { title: "Hello" } });
+
+    const [call] = fakeDb.queries;
+    expect(call!.sql).toContain("title = $f_title");
+    expect(call!.params.f_title).toBe("Hello");
   });
 });
