@@ -6,7 +6,7 @@ A modern framework for building company profiles, landing pages, and content-dri
 
 - **[Bun](https://bun.sh)** — runtime, package manager, bundler (njin is Bun-only — no Node/Deno support)
 - **[Elysia](https://elysiajs.com)** — HTTP framework with type-safe CRUD generation
-- **[SurrealDB](https://surrealdb.com)** — embedded multi-model database (no separate server)
+- **[SurrealDB](https://surrealdb.com)** — multi-model database, embedded by default (no separate server) or pointed at a remote instance
 - **[EdgeJS](https://edgejs.dev)** — server-side template engine with file-based routing
 - **[Vite](https://vitejs.dev)** + **[Tailwind CSS v4](https://tailwindcss.com)** + **[Alpine.js](https://alpinejs.dev)** — frontend tooling
 
@@ -312,6 +312,12 @@ export default defineConfig({
     path: process.env.DB_PATH ?? "rocksdb://data",
     namespace: process.env.DB_NAMESPACE ?? "general",
     database: process.env.DB_DATABASE ?? "general",
+    // only needed for a remote db.path — username/password (root/system auth) or a token
+    auth: process.env.DB_TOKEN
+      ? process.env.DB_TOKEN
+      : process.env.DB_USERNAME && process.env.DB_PASSWORD
+        ? { username: process.env.DB_USERNAME, password: process.env.DB_PASSWORD }
+        : undefined,
   },
   img: {
     hosts: ["cdn.example.com"], // external hosts allowed for GET /img besides same-origin/localhost
@@ -330,6 +336,8 @@ export default defineConfig({
   ],
 });
 ```
+
+`db.path` accepts either an embedded scheme — `rocksdb://<dir>` (default), `mem://` (in-memory, wiped on restart), `surrealkv://<dir>` — or a remote one — `ws://`, `wss://`, `http://`, `https://` — pointed at a running `surreal start` instance or SurrealDB Cloud. `db.auth` is only needed for a remote instance that requires it, and accepts either `{ username, password }` (root/system auth) or a bearer token string. Switching between embedded and remote is just a config/env change for `njin dev`/`njin start`; a compiled `njin build` binary bakes in whichever mode was resolved at build time (see below).
 
 To store uploads in S3 (or an S3-compatible service like R2/Spaces/MinIO) instead:
 

@@ -34,6 +34,9 @@ export type NjinConfig = {
     path?: string;
     namespace?: string;
     database?: string;
+    // Root/system auth ({ username, password }) or a bearer token (string). Omit for an
+    // anonymous connection — the only mode embedded (rocksdb/mem/surrealkv) engines support.
+    auth?: { username: string; password: string } | string;
   };
   img?: {
     hosts?: string[];
@@ -52,7 +55,7 @@ export type NjinConfig = {
 
 export type ResolvedConfig = {
   port: number;
-  db: { path: string; namespace: string; database: string };
+  db: { path: string; namespace: string; database: string; auth?: { username: string; password: string } | string };
   img: { hosts: string[] };
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   adapters: { file: FileAdapter<any> };
@@ -119,6 +122,7 @@ export const loadConfig = async (preloaded?: NjinConfig): Promise<void> => {
       path: userConfig.db?.path ?? "rocksdb://data",
       namespace: userConfig.db?.namespace ?? "general",
       database: userConfig.db?.database ?? "general",
+      auth: userConfig.db?.auth,
     },
     img: { hosts: userConfig.img?.hosts ?? [] },
     adapters: { file: userConfig.adapters?.file ?? bunFilesystemAdapter() },
