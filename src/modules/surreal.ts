@@ -10,7 +10,7 @@ const ensureTables = async (db: Surreal) => {
   const { default: userModel } = await import("../models/user");
   const { default: fileModel } = await import("../models/file");
 
-  const prefixes = new Set<string>([userModel.prefix, fileModel.prefix]);
+  const prefixes = new Set<string>([userModel.prefix, fileModel.prefix, "vars"]);
 
   for (const factory of getConfig().models) {
     const { default: model } = await factory();
@@ -29,18 +29,24 @@ const surreal = makeModule(() => {
     return db;
   };
 
-  fn.init = () => {
+  // Connect during init(), not spin() — init() calls for every module run (in
+  // src/config/module.ts's array construction) before any module's spin() runs, and a
+  // plugin's own init() (src/modules/plugin.ts) may query the DB (e.g. reading its own
+  // vars group) as part of its own setup. Deferring the actual connect to spin() left a
+  // window where `surreal()` returned an instance that existed but had never connected,
+  // so any DB call made from a plugin's init() failed with ConnectionUnavailableError.
+  fn.init = async () => {
     db = new Surreal({
       engines: createNodeEngines(),
     });
 
-    return {
-      spin: async () => {
-        const { db: dbConfig } = getConfig();
-        await db.connect(dbConfig.path);
-        await db.use({ namespace: dbConfig.namespace, database: dbConfig.database });
-        await ensureTables(db);
+    const { db: dbConfig } = getConfig();
+    await db.connect(dbConfig.path);
+    await db.use({ namespace: dbConfig.namespace, database: dbConfig.database });
+    await ensureTables(db);
 
+    return {
+      spin: () => {
         const shutdown = async () => {
           await db.close();
           process.exit(0);

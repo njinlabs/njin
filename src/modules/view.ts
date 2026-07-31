@@ -97,6 +97,11 @@ const view = makeModule(() => {
       edge.global(model.prefix, model);
     }
 
+    for (const varsPromise of getConfig().vars) {
+      const { default: group } = await varsPromise();
+      edge.global(group.prefix, group);
+    }
+
     const controller = new Elysia();
 
     if (!isDev) {

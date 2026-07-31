@@ -2,6 +2,7 @@ import surreal from "../../modules/surreal";
 import moment from "moment";
 import { RecordId, Table, type Values } from "surrealdb";
 import { z } from "zod";
+import { runAfterHooks, runBeforeDestroyHooks, runBeforeHooks } from "./hooks";
 
 export type FormMeta = {
   label: string;
@@ -118,13 +119,19 @@ export const makeModel = <Rules extends z.ZodObject>(
   };
 
   const create = async (data: Values<Data>) => {
-    await assertUnique(data);
+    const merged = (await runBeforeHooks("beforeCreate", prefix, data as Record<string, unknown>, {})) as Values<Data>;
 
-    return surreal()
+    await assertUnique(merged);
+
+    const record = (await surreal()
       .create<Data>(table)
-      .content({ ...data, createdAt: moment().toISOString(), updatedAt: moment().toISOString() })
+      .content({ ...merged, createdAt: moment().toISOString(), updatedAt: moment().toISOString() })
       .output("after")
-      .then(([data]) => data) as Promise<Returning>;
+      .then(([data]) => data)) as Returning;
+
+    await runAfterHooks("afterCreate", prefix, record);
+
+    return record;
   };
 
   const read = async ({
@@ -214,18 +221,32 @@ export const makeModel = <Rules extends z.ZodObject>(
   };
 
   const update = async (id: string, data: Values<Partial<Data>>) => {
-    await assertUnique(data, id);
+    const merged = (await runBeforeHooks("beforeUpdate", prefix, data as Record<string, unknown>, {
+      id,
+    })) as Values<Partial<Data>>;
 
-    return surreal()
+    await assertUnique(merged, id);
+
+    const record = (await (surreal()
       .update<Data>(new RecordId(table, id))
       .merge({
-        ...data,
+        ...merged,
         updatedAt: moment().toISOString(),
-      }) as unknown as Promise<Returning>;
+      }) as unknown as Promise<Returning>)) as Returning;
+
+    await runAfterHooks("afterUpdate", prefix, record);
+
+    return record;
   };
 
-  const destroy = (id: string) => {
-    return surreal().delete<Data>(new RecordId(table, id)) as unknown as Promise<Returning>;
+  const destroy = async (id: string) => {
+    await runBeforeDestroyHooks(prefix, id);
+
+    const record = (await (surreal().delete<Data>(new RecordId(table, id)) as unknown as Promise<Returning>)) as Returning;
+
+    await runAfterHooks("afterDestroy", prefix, record);
+
+    return record;
   };
 
   return {
@@ -242,3 +263,8 @@ export const makeModel = <Rules extends z.ZodObject>(
 };
 
 export * from "./data_type";
+export * from "./hooks";
+export * from "../event";
+export * from "../plugin";
+export * from "../route";
+export * from "../vars";

@@ -82,6 +82,139 @@ This automatically generates:
 | `DELETE` | `/api/post/:id` | Delete |
 | `GET` | `/api/schema` | Full schema for admin panel |
 
+## Vars — user-editable settings
+
+`vars` groups are singleton settings objects (site name, SEO meta, feature toggles, ...) meant to be edited later through an admin panel — unlike a model, there's no list of records, just one object per group.
+
+```ts
+// src/vars/general.ts
+import { makeVars, text, boolean } from "@njinlabs/njin";
+import z from "zod";
+
+const general = makeVars("general", {
+  name: "General",
+  schema: z.object({
+    // Every field needs a .default(...) — there's no "create" step, so
+    // get() must always return a complete object even before anything
+    // has ever been saved.
+    siteName: text({ label: "Site Name" }, (z) => z.default("My Site")),
+    maintenanceMode: boolean({ label: "Maintenance Mode" }, (z) => z.default(false)),
+  }),
+});
+
+export default general;
+```
+
+Register it in `config.ts`:
+
+```ts
+// config.ts
+export default defineConfig({
+  vars: [
+    () => import("./src/vars/general"),
+  ],
+});
+```
+
+This automatically generates:
+
+| Method | Endpoint | Description |
+|--------|----------|--------------|
+| `GET` | `/api/vars/general` | Read current values (defaults-filled even before the first save) |
+| `PUT` | `/api/vars/general` | Partial update — merges into the existing values |
+| `GET` | `/api/schema` | Also lists every registered vars group's schema, under a `vars` key |
+
+`vars` groups are also available in templates as global async functions, same as models — but only `get()`/`update()`, not the full model method set:
+
+```edge
+@let(settings = await general.get())
+<title>{{ settings.siteName }}</title>
+```
+
+## Events
+
+A type-safe event bus for fan-out notifications (e.g. "an order was paid", "a user registered") — different from model hooks (`beforeCreate`/`afterCreate`/...): hooks are scoped to one model and can abort the operation by throwing, while events are fire-and-forget — a listener that throws is logged but never stops other listeners or the code that dispatched.
+
+`makeEvent()` has no name — dispatch and listen are correlated by sharing the same instance (not a string key), so always define one event in one canonical file and import it wherever you need it:
+
+```ts
+// src/events/order_paid.ts
+import { makeEvent } from "@njinlabs/njin";
+
+const orderPaid = makeEvent<{ orderId: string; total: number }>();
+
+export default orderPaid;
+```
+
+```ts
+// src/events/listeners/send_receipt.ts
+import orderPaid from "../order_paid";
+
+orderPaid.listen(async (payload) => {
+  // errors here are caught and logged, they never bubble back to whoever dispatched
+  console.log(`Sending receipt for order ${payload.orderId} ($${payload.total})`);
+});
+```
+
+Register the listener file in `config.ts` so it's imported (and its `.listen()` call runs) at boot:
+
+```ts
+// config.ts
+export default defineConfig({
+  events: [
+    () => import("./src/events/listeners/send_receipt"),
+  ],
+});
+```
+
+## Plugins
+
+A plugin bundles models/vars/hooks/events/routes into one reusable, installable unit — like a self-contained njin app that extends whatever project installs it. It's a factory function that takes options and returns its bundle, so it ships as a plain npm package:
+
+```ts
+// my-plugin/index.ts
+import { definePlugin } from "@njinlabs/njin";
+
+export default (options: { apiKey: string }) =>
+  definePlugin({
+    models: [() => import("./models/order")],
+    routes: [() => import("./routes/webhook")],
+    init: async () => {
+      // runs once at boot, before any model/route/hook/event goes live —
+      // validate options, construct an SDK client, etc.
+    },
+  });
+```
+
+Register it in `config.ts` — the factory is called directly (not wrapped in another thunk), same as `adapters.file`:
+
+```ts
+// config.ts
+import myPlugin from "my-plugin";
+
+export default defineConfig({
+  plugins: [myPlugin({ apiKey: process.env.MY_PLUGIN_KEY! })],
+});
+```
+
+Everything a plugin contributes is merged in ahead of your own project's models/vars/hooks/events/routes — so your project's own registrations always run after, and can build on top of what the plugin sets up.
+
+Dispatch from anywhere — for example, composing with a model's `afterCreate` hook:
+
+```ts
+// src/models/order.ts
+import { makeModel, afterCreate } from "@njinlabs/njin";
+import orderPaid from "../events/order_paid";
+
+const order = makeModel("order", { /* ... */ });
+
+afterCreate(order, (record) => {
+  orderPaid.dispatch({ orderId: record.id.id, total: record.total });
+});
+
+export default order;
+```
+
 ## File-based routing
 
 Files in `src/views/pages/` map to routes automatically:
@@ -188,6 +321,12 @@ export default defineConfig({
   },
   models: [
     () => import("./src/models/post"),
+  ],
+  vars: [
+    () => import("./src/vars/general"),
+  ],
+  events: [
+    () => import("./src/events/listeners/send_receipt"),
   ],
 });
 ```
