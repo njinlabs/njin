@@ -114,11 +114,16 @@ const require = (specifier) => {
 // binary still points at node_modules/geoip-lite/data on the machine that ran `njin build` —
 // which won't exist wherever the binary is actually deployed. Same fix shape as the SurrealDB
 // native binding above: ship the data dir next to the executable and patch the lookup.
+// Only the country .dat files are shipped — analytics.ts only ever reads the `country` field,
+// and geoip-lite falls back to country-only mode automatically when the (much larger, ~100MB)
+// city .dat files are absent, keeping the buffers it preloads into memory at startup small.
 const geoipLibDir = dirname(fileURLToPath(import.meta.resolve("geoip-lite")));
 const geoipDataDir = join(geoipLibDir, "..", "data");
 const outGeoipDataDir = join(outDir, "geoip-data");
-await cp(geoipDataDir, outGeoipDataDir, { recursive: true });
-console.log("✓ Copied geoip-lite data -> out/geoip-data");
+await mkdir(outGeoipDataDir, { recursive: true });
+await cp(join(geoipDataDir, "geoip-country.dat"), join(outGeoipDataDir, "geoip-country.dat"));
+await cp(join(geoipDataDir, "geoip-country6.dat"), join(outGeoipDataDir, "geoip-country6.dat"));
+console.log("✓ Copied geoip-lite country data -> out/geoip-data");
 
 const geoipDataPlugin: BunPlugin = {
   name: "geoip-lite-data-dir",
