@@ -57,8 +57,8 @@ describe("elysia() error handling", () => {
 });
 
 describe("elysia().spin", () => {
-  it("listens on the configured port without binding a real socket", () => {
-    const result = elysia.init();
+  it("listens on the configured port without binding a real socket", async () => {
+    const result = await elysia.init();
     const listenSpy = spyOn(elysia(), "listen").mockImplementation(() => elysia());
     try {
       result.spin!();

@@ -88,6 +88,7 @@ describe("view.init() — with a page and an errors/404.edge template", () => {
       }));
 
       process.chdir(dir);
+      // @ts-expect-error — query string forces a fresh module instance under Bun; not a resolvable TS module path
       const { default: viewWithPages } = await import("../../src/modules/view?withpages");
       await viewWithPages.init();
       process.chdir(cwd);

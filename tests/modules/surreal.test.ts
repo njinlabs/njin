@@ -142,11 +142,9 @@ describe("surreal.init() spin()", () => {
       return process;
     });
     const originalOnce = process.once;
-    // @ts-expect-error — intentionally stubbing for this test only
     process.once = onceSpy;
     const exitSpy = mock(() => undefined as never);
     const originalExit = process.exit;
-    // @ts-expect-error — intentionally stubbing for this test only
     process.exit = exitSpy;
 
     try {
