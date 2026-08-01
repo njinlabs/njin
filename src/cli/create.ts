@@ -35,7 +35,7 @@ mkdirSync(targetDir, { recursive: true });
 
 // `--strip-components=2` drops the `njin-<version>/template/` prefix baked into
 // GitHub's tag-tarball layout, so template/ contents land directly in targetDir.
-const tar = Bun.spawn(["tar", "-xz", "--strip-components=2", "-C", targetDir, `njin-${pkg.version}/template`], {
+const tar = Bun.spawn(["tar", "-xz", "-f", "-", "--strip-components=2", "-C", targetDir, `njin-${pkg.version}/template`], {
   stdin: res.body,
   stdout: "inherit",
   stderr: "inherit",
