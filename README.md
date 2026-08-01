@@ -18,7 +18,7 @@ A modern framework for building company profiles, landing pages, and content-dri
 ## Quick start
 
 ```bash
-bun create njin-app my-web
+bunx @njinlabs/njin create my-web
 cd my-web
 bunx njin dev
 ```
@@ -394,6 +394,7 @@ adapters: {
 ## Commands
 
 ```bash
+bunx @njinlabs/njin create my-web  # Scaffold a new project
 bunx njin dev       # Start dev server (Elysia + Vite HMR)
 bunx njin build     # Build for production -> ./out (public/, _admin/, views/, compiled server)
 bunx njin start     # Run from source in production mode (no compile)

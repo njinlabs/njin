@@ -2,6 +2,9 @@
 const [command] = process.argv.slice(2);
 
 switch (command) {
+  case "create":
+    await import("./create");
+    break;
   case "dev":
     await import("./dev");
     break;
@@ -12,10 +15,11 @@ switch (command) {
     await import("./build");
     break;
   default:
-    console.log(`Usage: njin <dev|build|start>
+    console.log(`Usage: njin <create|dev|build|start>
 
-  dev    Run the dev server (Vite HMR + live reload)
-  build  Build for production -> ./out (public/, _admin/, views/, server)
-  start  Run from source in production mode (no compile)`);
+  create <dir>  Scaffold a new project (defaults to current directory)
+  dev           Run the dev server (Vite HMR + live reload)
+  build         Build for production -> ./out (public/, _admin/, views/, server)
+  start         Run from source in production mode (no compile)`);
     process.exit(command ? 1 : 0);
 }

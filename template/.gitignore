@@ -1,0 +1,29 @@
+# dependencies
+node_modules/
+
+# environment
+.env
+.env.*.local
+
+# database
+data/
+
+# uploads (filesystem adapter)
+uploads/
+
+# build output (Vite)
+public/
+
+# build output (njin build)
+out/
+
+# typescript
+*.tsbuildinfo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
