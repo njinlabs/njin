@@ -62,10 +62,18 @@ const surreal = makeModule(() => {
     db = new Surreal({ engines });
     await db.connect(dbConfig.path, { authentication: dbConfig.auth });
     await db.use({ namespace: dbConfig.namespace, database: dbConfig.database });
-    await ensureTables(db);
 
     return {
-      spin: () => {
+      // Deferred to spin(), not run here — ensureTables() imports every registered model
+      // to read its prefix, which forces evaluation of data types like file()/multiFile()
+      // that depend on other modules' singletons (e.g. fileModule().model, only set once
+      // file.init() has run). Every module's init() — file's included — has already
+      // completed by the time any module's spin() starts, so this ordering is safe. It
+      // still runs before elysia's spin() (which calls app.listen()), since surreal is
+      // earlier in src/config/module.ts's array, so tables exist before the first request.
+      spin: async () => {
+        await ensureTables(db);
+
         const shutdown = async () => {
           await db.close();
           process.exit(0);

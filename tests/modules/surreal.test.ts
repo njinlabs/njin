@@ -89,7 +89,7 @@ describe("isRemotePath", () => {
 });
 
 describe("surreal.init() — remote db.path", () => {
-  it("connects with createRemoteEngines and defines tables for user/file/vars/models", async () => {
+  it("connects with createRemoteEngines and defines tables for user/file/vars/models once spin() runs", async () => {
     dbConfig = { path: "ws://localhost:8000", namespace: "ns", database: "db", auth: { username: "root", password: "root" } };
     extraModels = [async () => ({ default: { prefix: "post" } })];
 
@@ -99,6 +99,12 @@ describe("surreal.init() — remote db.path", () => {
     const instance = instances[instances.length - 1]!;
     expect(instance.connectArgs).toEqual(["ws://localhost:8000", { authentication: dbConfig.auth }]);
     expect(instance.useArgs).toEqual([{ namespace: "ns", database: "db" }]);
+
+    // ensureTables() is deferred to spin() — see src/modules/surreal.ts — so it hasn't
+    // run yet immediately after init().
+    expect(instance.queries).toHaveLength(0);
+
+    await result.spin!();
 
     const definedTables = instance.queries.join("\n");
     expect(definedTables).toContain("DEFINE TABLE IF NOT EXISTS user SCHEMALESS;");
@@ -149,7 +155,7 @@ describe("surreal.init() spin()", () => {
 
     try {
       const result = await surreal.init();
-      result.spin!();
+      await result.spin!();
 
       expect(capturedHandlers).toHaveLength(2); // SIGINT + SIGTERM
 
