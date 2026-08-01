@@ -18,7 +18,7 @@ import { makeFakeElysia } from "../helpers/fake_elysia";
 // (loadConfig, injectBracketQuery, isSameOrigin, ...).
 mock.module("../../src/core/config", () => ({
   ...realConfig,
-  getConfig: () => ({ models: [], vars: [] }),
+  getConfig: () => ({ models: [], vars: [], helpers: [] }),
 }));
 
 mock.module("vite", () => ({
@@ -75,7 +75,7 @@ describe("view.init() — with a page and an errors/404.edge template", () => {
 
       const isolatedElysia = makeFakeElysia();
       mock.module("../../src/modules/elysia", () => ({ ...realElysiaModule, default: isolatedElysia.fn }));
-      mock.module("../../src/core/config", () => ({ ...realConfig, getConfig: () => ({ models: [], vars: [] }) }));
+      mock.module("../../src/core/config", () => ({ ...realConfig, getConfig: () => ({ models: [], vars: [], helpers: [] }) }));
       // The page route fire-and-forgets `analytics().track(...)` on every request (see
       // view.ts) — mocked here so it doesn't reach the real (unconfigured) surreal()/
       // logger() singletons and produce an unhandled rejection after this test returns.

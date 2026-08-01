@@ -131,6 +131,37 @@ This automatically generates:
 <title>{{ settings.siteName }}</title>
 ```
 
+## Helpers — custom template functions
+
+`helpers` register a plain, stateless function as an Edge global — unlike `vars`/`models`, there's no DB record and no auto-generated REST endpoint, just a function callable from any `.edge` template.
+
+```ts
+// src/helpers/format_date.ts
+import { defineHelper } from "@njinlabs/njin";
+import moment from "moment";
+
+export default defineHelper("formatDate", (date: string, format = "DD MMM YYYY") =>
+  moment(date).format(format),
+);
+```
+
+Register it in `config.ts`:
+
+```ts
+// config.ts
+export default defineConfig({
+  helpers: [
+    () => import("./src/helpers/format_date"),
+  ],
+});
+```
+
+Use it directly in a template, no `await` needed since it's a plain synchronous function (an `async` `fn` works too, called with `await` like any other async global):
+
+```edge
+<p>{{ formatDate(post.createdAt) }}</p>
+```
+
 ## Events
 
 A type-safe event bus for fan-out notifications (e.g. "an order was paid", "a user registered") — different from model hooks (`beforeCreate`/`afterCreate`/...): hooks are scoped to one model and can abort the operation by throwing, while events are fire-and-forget — a listener that throws is logged but never stops other listeners or the code that dispatched.

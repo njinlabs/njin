@@ -2,6 +2,7 @@ import type { AnyElysia } from "elysia";
 import type { FileAdapter } from "../modules/file";
 import { join } from "node:path";
 import bunFilesystemAdapter from "./adapters/bun_filesystem";
+import type { Helper } from "./helper";
 import type { makeModel } from "./model";
 import type { Plugin } from "./plugin";
 import type { makeVars } from "./vars";
@@ -28,6 +29,11 @@ export type RouteFactory = () => Promise<{ default: AnyElysia }>;
 // a singleton settings object, not a list of records like a model.
 export type VarsFactory = () => Promise<{ default: ReturnType<typeof makeVars> }>;
 
+// A helper file's default export is one defineHelper() — a stateless function
+// registered as an Edge global by its own name, unlike models/vars which are
+// DB-backed objects registered by prefix.
+export type HelperFactory = () => Promise<{ default: Helper }>;
+
 export type NjinConfig = {
   port?: number;
   db?: {
@@ -50,6 +56,7 @@ export type NjinConfig = {
   events?: EventFactory[];
   routes?: RouteFactory[];
   vars?: VarsFactory[];
+  helpers?: HelperFactory[];
   plugins?: Plugin[];
 };
 
@@ -64,6 +71,7 @@ export type ResolvedConfig = {
   events: EventFactory[];
   routes: RouteFactory[];
   vars: VarsFactory[];
+  helpers: HelperFactory[];
   // Everything else a Plugin contributes (models/vars/hooks/events/routes) is already
   // flattened into the arrays above — init() is the only part that can't be merged away,
   // so it's the only piece of each Plugin that survives resolution on its own.
@@ -131,6 +139,7 @@ export const loadConfig = async (preloaded?: NjinConfig): Promise<void> => {
     events: [...plugins.flatMap((p) => p.events ?? []), ...(userConfig.events ?? [])],
     routes: [...plugins.flatMap((p) => p.routes ?? []), ...(userConfig.routes ?? [])],
     vars: [...plugins.flatMap((p) => p.vars ?? []), ...(userConfig.vars ?? [])],
+    helpers: [...plugins.flatMap((p) => p.helpers ?? []), ...(userConfig.helpers ?? [])],
     pluginInits: plugins.map((p) => p.init).filter((fn): fn is () => Promise<void> | void => typeof fn === "function"),
   };
 };

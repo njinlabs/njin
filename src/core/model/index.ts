@@ -272,6 +272,7 @@ export const makeModel = <Rules extends z.ZodObject>(
 export * from "./data_type";
 export * from "./hooks";
 export * from "../event";
+export * from "../helper";
 export * from "../plugin";
 export * from "../route";
 export * from "../vars";

@@ -102,6 +102,11 @@ const view = makeModule(() => {
       edge.global(group.prefix, group);
     }
 
+    for (const helperPromise of getConfig().helpers) {
+      const { default: helper } = await helperPromise();
+      edge.global(helper.name, helper.fn);
+    }
+
     const controller = new Elysia();
 
     if (!isDev) {

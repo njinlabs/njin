@@ -48,6 +48,17 @@ describe("loadConfig — plugin merging", () => {
     expect(calls).toEqual(["a", "c"]);
   });
 
+  it("merges a plugin's helpers, plugin-first then the project's own", async () => {
+    const pluginHelper = thunk("plugin-helper");
+    const projectHelper = thunk("project-helper");
+
+    const plugin = definePlugin({ helpers: [pluginHelper] });
+
+    await loadConfig({ plugins: [plugin], helpers: [projectHelper] });
+
+    expect(getConfig().helpers).toEqual([pluginHelper, projectHelper]);
+  });
+
   it("behaves exactly as before when no plugins are configured", async () => {
     const model = thunk("solo-model");
 
