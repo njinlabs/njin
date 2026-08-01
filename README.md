@@ -398,6 +398,7 @@ bunx @njinlabs/njin create my-web  # Scaffold a new project
 bunx njin dev       # Start dev server (Elysia + Vite HMR)
 bunx njin build     # Build for production -> ./out (public/, _admin/, views/, compiled server)
 bunx njin start     # Run from source in production mode (no compile)
+bunx njin update    # Update @njinlabs/njin to the latest version and refresh _admin/
 ```
 
 Wire these as `package.json` scripts (`"dev": "njin dev"`, etc.) if you'd rather run `bun run dev`.

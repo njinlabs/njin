@@ -14,12 +14,16 @@ switch (command) {
   case "build":
     await import("./build");
     break;
+  case "update":
+    await import("./update");
+    break;
   default:
-    console.log(`Usage: njin <create|dev|build|start>
+    console.log(`Usage: njin <create|dev|build|start|update>
 
   create <dir>  Scaffold a new project (defaults to current directory)
   dev           Run the dev server (Vite HMR + live reload)
   build         Build for production -> ./out (public/, _admin/, views/, server)
-  start         Run from source in production mode (no compile)`);
+  start         Run from source in production mode (no compile)
+  update        Update @njinlabs/njin to the latest version and refresh _admin/`);
     process.exit(command ? 1 : 0);
 }

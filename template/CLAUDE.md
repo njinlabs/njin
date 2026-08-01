@@ -665,6 +665,7 @@ For S3 (or R2/Spaces/MinIO), use `s3Adapter` from `"@njinlabs/njin/adapters/s3"`
 bunx njin dev      # dev server + Vite HMR (single command)
 bunx njin build    # build for production -> ./out (public/, _admin/, views/, compiled server)
 bunx njin start    # production, run from source (no compile)
+bunx njin update   # update @njinlabs/njin to the latest version and refresh _admin/
 ```
 
 Wire these as `package.json` scripts (`"dev": "njin dev"`, etc.) to run them via `bun run dev` instead.
