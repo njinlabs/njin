@@ -1,5 +1,10 @@
 # njin
 
+[![CI](https://github.com/njinlabs/njin/actions/workflows/ci.yml/badge.svg)](https://github.com/njinlabs/njin/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/njinlabs/njin/actions/workflows/codeql.yml/badge.svg)](https://github.com/njinlabs/njin/actions/workflows/codeql.yml)
+[![npm version](https://img.shields.io/npm/v/%40njinlabs%2Fnjin.svg)](https://www.npmjs.com/package/@njinlabs/njin)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 A modern framework for building company profiles, landing pages, and content-driven websites. Define your data model once — get a full REST API, admin panel schema, and server-rendered website out of the box.
 
 ## Stack
