@@ -1,11 +1,14 @@
+import { getConfig } from "../core/config";
 import { makeModule } from "../core/module";
 import { resolveSafePath } from "../core/path_guard";
 import Elysia from "elysia";
 import { join } from "node:path";
 import elysia from "./elysia";
 
-const adminDir = join(process.cwd(), "_admin");
-const indexFile = () => Bun.file(join(adminDir, "index.html"));
+// Lazy, not a top-level const — this file's static import runs before module.ts's own
+// `await loadConfig()`, so getConfig() isn't populated yet at that point.
+const adminDir = () => join(getConfig().rootDir, "_admin");
+const indexFile = () => Bun.file(join(adminDir(), "index.html"));
 
 const admin = makeModule(() => {
   const fn = () => {};
@@ -22,7 +25,7 @@ const admin = makeModule(() => {
           return indexFile();
         }
 
-        const requested = resolveSafePath(adminDir, decoded);
+        const requested = resolveSafePath(adminDir(), decoded);
         if (!requested) return indexFile();
 
         const file = Bun.file(requested);

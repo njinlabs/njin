@@ -3,7 +3,7 @@ import type { makeModel } from "../core/model";
 import { makeModule } from "../core/module";
 import { resolveSafePath } from "../core/path_guard";
 import Elysia from "elysia";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { RecordId } from "surrealdb";
 import z from "zod";
 import auth from "./auth";
@@ -95,7 +95,9 @@ const file = makeModule(() => {
     const adapterDir = getConfig().adapters.file.dir;
 
     if (adapterDir) {
-      const uploadsDir = join(process.cwd(), adapterDir);
+      // resolve(), not join() — adapterDir is normally project-relative, but an
+      // already-absolute dir must win outright rather than get nested under rootDir.
+      const uploadsDir = resolve(getConfig().rootDir, adapterDir);
 
       const uploadsController = new Elysia().get("/uploads/*", async ({ params }) => {
         // Elysia leaves wildcard params percent-encoded — decode before touching the filesystem.

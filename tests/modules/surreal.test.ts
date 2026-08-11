@@ -98,11 +98,13 @@ describe("surreal.init() — remote db.path", () => {
     expect(createRemoteEnginesCalls).toBe(1);
     const instance = instances[instances.length - 1]!;
     expect(instance.connectArgs).toEqual(["ws://localhost:8000", { authentication: dbConfig.auth }]);
+    // FakeSurreal.use() overwrites useArgs each call, so this only reflects the final
+    // (namespace + database) call — the namespace-only call in between isn't visible here.
     expect(instance.useArgs).toEqual([{ namespace: "ns", database: "db" }]);
 
-    // ensureTables() is deferred to spin() — see src/modules/surreal.ts — so it hasn't
-    // run yet immediately after init().
-    expect(instance.queries).toHaveLength(0);
+    // Namespace/database are explicitly DEFINE'd during init() — not deferred to spin()
+    // like ensureTables()'s DEFINE TABLE calls are.
+    expect(instance.queries).toEqual(["DEFINE NAMESPACE IF NOT EXISTS `ns`;", "DEFINE DATABASE IF NOT EXISTS `db`;"]);
 
     await result.spin!();
 

@@ -1,7 +1,8 @@
 import type { FileAdapter } from "../../modules/file";
 import { init } from "@paralleldrive/cuid2";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import z from "zod";
+import { getConfig } from "../config";
 import { sanitizeFileName } from "../path_guard";
 
 const createId = init({
@@ -21,7 +22,10 @@ const bunFilesystemAdapter = ({ dir = "./uploads" }: { dir?: string } = {}): Fil
 
       const name = `${fileName}_${createId()}.${exts.join(".")}`;
 
-      await Bun.write(join(dir, name), await file.arrayBuffer());
+      // resolve(), not join() — dir is normally project-relative ("./uploads"), but an
+      // already-absolute dir (as tests pass directly) must win outright rather than get
+      // nested under rootDir.
+      await Bun.write(join(resolve(getConfig().rootDir, dir), name), await file.arrayBuffer());
 
       return {
         meta: null,
@@ -31,7 +35,7 @@ const bunFilesystemAdapter = ({ dir = "./uploads" }: { dir?: string } = {}): Fil
         url: `/uploads/${name}`,
       };
     },
-    unlink: (file) => Bun.file(join(dir, file.name)).delete(),
+    unlink: (file) => Bun.file(join(resolve(getConfig().rootDir, dir), file.name)).delete(),
   };
 };
 

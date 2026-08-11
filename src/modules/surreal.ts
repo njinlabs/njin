@@ -61,6 +61,16 @@ const surreal = makeModule(() => {
 
     db = new Surreal({ engines });
     await db.connect(dbConfig.path, { authentication: dbConfig.auth });
+
+    // Explicit DEFINE, not left to auto-create-on-USE — that only happens for a
+    // root-authenticated connection, and isn't guaranteed across SurrealDB versions/configs.
+    // Needed for multi-tenant setups where several njin instances share one remote SurrealDB,
+    // each isolated into its own namespace (embedded engines are unaffected either way — a
+    // private local file always has implicit owner access). DEFINE DATABASE must run inside
+    // the namespace it belongs to, hence the two-step USE.
+    await db.query(`DEFINE NAMESPACE IF NOT EXISTS \`${dbConfig.namespace}\`;`);
+    await db.use({ namespace: dbConfig.namespace });
+    await db.query(`DEFINE DATABASE IF NOT EXISTS \`${dbConfig.database}\`;`);
     await db.use({ namespace: dbConfig.namespace, database: dbConfig.database });
 
     return {

@@ -9,9 +9,8 @@ import * as realSurrealModule from "../../src/modules/surreal";
 import { makeFakeAuthPlugin } from "../helpers/fake_auth";
 import { makeFakeElysia } from "../helpers/fake_elysia";
 
-// file.ts resolves its static uploads dir as `join(process.cwd(), adapters.file.dir)` —
-// an absolute `dir` would produce a garbled path.join() result, so `dir` here is relative
-// and process.cwd() is switched to a temp root for the duration of init().
+// file.ts resolves its static uploads dir as `resolve(getConfig().rootDir, adapters.file.dir)`
+// — `dir` here is relative, so the mocked getConfig() below points rootDir at this temp root.
 const projectRoot = mkdtempSync(join(tmpdir(), "njin-file-uploads-"));
 mkdirSync(join(projectRoot, "uploads"));
 writeFileSync(join(projectRoot, "uploads", "existing.txt"), "already here");
@@ -48,6 +47,7 @@ mock.module("../../src/models/file", () => ({
 mock.module("../../src/core/config", () => ({
   ...realConfig,
   getConfig: () => ({
+    rootDir: projectRoot,
     adapters: {
       file: {
         dir: "uploads",
@@ -71,10 +71,7 @@ mock.module("../../src/modules/elysia", () => ({ ...realElysiaModule, default: f
 
 const { default: file } = await import("../../src/modules/file");
 
-const cwd = process.cwd();
-process.chdir(projectRoot);
 await file.init();
-process.chdir(cwd);
 const app = fakeElysia.buildApp();
 
 describe("GET /api/file", () => {

@@ -8,9 +8,10 @@ import * as realElysiaModule from "../../src/modules/elysia";
 import { makeFakeElysia } from "../helpers/fake_elysia";
 
 // Own file (separate module registry under --isolate) — view.ts's fn.init() reads
-// process.cwd() at call time for src/views(/pages), so a chdir here doesn't collide
-// with tests/modules/view.test.ts or view_prod.test.ts, which each fix their own cwd
-// at different points.
+// getConfig().rootDir at call time for src/views(/pages), and the mocked getConfig()
+// below calls process.cwd() lazily too, so a chdir here doesn't collide with
+// tests/modules/view.test.ts or view_prod.test.ts, which each fix their own cwd at
+// different points.
 //
 // Each mock below spreads the real module's other exports — without --isolate,
 // mock.module() replaces the module in a registry shared across the whole test run, so
@@ -18,7 +19,7 @@ import { makeFakeElysia } from "../helpers/fake_elysia";
 // (loadConfig, injectBracketQuery, isSameOrigin, ...).
 mock.module("../../src/core/config", () => ({
   ...realConfig,
-  getConfig: () => ({ models: [], vars: [], helpers: [] }),
+  getConfig: () => ({ models: [], vars: [], helpers: [], rootDir: process.cwd() }),
 }));
 
 mock.module("vite", () => ({
@@ -75,7 +76,7 @@ describe("view.init() — with a page and an errors/404.edge template", () => {
 
       const isolatedElysia = makeFakeElysia();
       mock.module("../../src/modules/elysia", () => ({ ...realElysiaModule, default: isolatedElysia.fn }));
-      mock.module("../../src/core/config", () => ({ ...realConfig, getConfig: () => ({ models: [], vars: [], helpers: [] }) }));
+      mock.module("../../src/core/config", () => ({ ...realConfig, getConfig: () => ({ models: [], vars: [], helpers: [], rootDir: process.cwd() }) }));
       // The page route fire-and-forgets `analytics().track(...)` on every request (see
       // view.ts) — mocked here so it doesn't reach the real (unconfigured) surreal()/
       // logger() singletons and produce an unhandled rejection after this test returns.

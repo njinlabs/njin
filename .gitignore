@@ -6,6 +6,9 @@ node_modules/
 # inside playground/ now, not at the package root, so it's covered by this alone.
 playground/
 
+# local embedded db runtime state (rocksdb) generated while running tests/dev at repo root
+data/
+
 # typescript
 *.tsbuildinfo
 

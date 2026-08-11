@@ -14,9 +14,11 @@ const fakeConfig = {
 // --isolate, mock.module() replaces the module in a registry shared across every test
 // file in the run, so a partial mock here would otherwise break any other file (e.g.
 // tests/core/config.test.ts) that imports loadConfig from this same specifier later.
+// rootDir is read lazily (process.cwd() at call time, not captured into fakeConfig above)
+// so it picks up each test's own chdir() before printBanner() runs.
 mock.module("../../src/core/config", () => ({
   ...realConfig,
-  getConfig: () => fakeConfig,
+  getConfig: () => ({ ...fakeConfig, rootDir: process.cwd() }),
 }));
 
 const { printBanner } = await import("../../src/core/banner");

@@ -36,6 +36,12 @@ export type HelperFactory = () => Promise<{ default: Helper }>;
 
 export type NjinConfig = {
   port?: number;
+  // Base directory every project-relative path (src/views, _admin, public, upload dirs)
+  // resolves against. Defaults to process.cwd() — only needs overriding by a build step
+  // (see build-worker.ts) that bakes in an absolute path for a runtime whose cwd isn't
+  // reliably the project root, e.g. multiple `new Worker(...)` instances sharing one
+  // supervisor process's cwd.
+  rootDir?: string;
   db?: {
     path?: string;
     namespace?: string;
@@ -62,6 +68,7 @@ export type NjinConfig = {
 
 export type ResolvedConfig = {
   port: number;
+  rootDir: string;
   db: { path: string; namespace: string; database: string; auth?: { username: string; password: string } | string };
   img: { hosts: string[] };
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -126,6 +133,7 @@ export const loadConfig = async (preloaded?: NjinConfig): Promise<void> => {
   // prefix fails the same way it already does today — naturally, at runtime.
   resolved = {
     port: userConfig.port ?? 3000,
+    rootDir: userConfig.rootDir ?? process.cwd(),
     db: {
       path: userConfig.db?.path ?? "rocksdb://data",
       namespace: userConfig.db?.namespace ?? "general",

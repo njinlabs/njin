@@ -7,6 +7,11 @@ mock.module("../../src/modules/logger", () => ({
   default: () => ({ error: (...args: unknown[]) => loggerErrorCalls.push(args) }),
 }));
 
+const serveWorkerCalls: unknown[] = [];
+mock.module("../../src/core/worker", () => ({
+  serveWorker: (app: unknown) => serveWorkerCalls.push(app),
+}));
+
 // Spread the real module's other exports (loadConfig, defineConfig, ...) — without
 // --isolate, mock.module() replaces the module in a registry shared across the whole
 // test run, so a partial mock here would otherwise break other files that import
@@ -31,6 +36,8 @@ const app = elysia()
 
 afterEach(() => {
   loggerErrorCalls.length = 0;
+  serveWorkerCalls.length = 0;
+  delete process.env.NJIN_WORKER;
 });
 
 describe("elysia() error handling", () => {
@@ -63,6 +70,19 @@ describe("elysia().spin", () => {
     try {
       result.spin!();
       expect(listenSpy).toHaveBeenCalledWith(5555);
+    } finally {
+      listenSpy.mockRestore();
+    }
+  });
+
+  it("routes to serveWorker() instead of listen() when NJIN_WORKER=1", async () => {
+    process.env.NJIN_WORKER = "1";
+    const result = await elysia.init();
+    const listenSpy = spyOn(elysia(), "listen").mockImplementation(() => elysia());
+    try {
+      result.spin!();
+      expect(listenSpy).not.toHaveBeenCalled();
+      expect(serveWorkerCalls).toEqual([elysia()]);
     } finally {
       listenSpy.mockRestore();
     }

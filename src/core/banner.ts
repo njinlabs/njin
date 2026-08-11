@@ -30,7 +30,7 @@ export type BootSummary = {
 export const printBanner = ({ mode }: BootSummary): void => {
   const config = getConfig();
   const port = config.port;
-  const adminEntry = join(process.cwd(), "_admin", "index.html");
+  const adminEntry = join(config.rootDir, "_admin", "index.html");
   const hasAdmin = existsSync(adminEntry);
 
   const rows: [string, string][] = [

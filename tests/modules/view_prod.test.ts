@@ -2,19 +2,18 @@ import { afterAll, describe, expect, it } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { loadConfig } from "../../src/core/config";
 
 // Separate file so --isolate gives it a fresh module registry — view.ts's `isDev`
-// constant AND its `publicDir` constant are both read once at module load time (from
-// NODE_ENV and process.cwd() respectively), so both must be set/switched *before* this
-// dynamic import, and can't vary across tests within a single already-imported module.
+// constant is read once at module load time (from NODE_ENV), so it must be set before
+// this dynamic import. publicDir() itself is read lazily from getConfig().rootDir on
+// every call, so it just needs a config loaded before buildViteGlobal() runs below.
 process.env.NODE_ENV = "production";
 
 const dir = mkdtempSync(join(tmpdir(), "njin-view-prod-"));
 mkdirSync(join(dir, "public"));
-const cwd = process.cwd();
-process.chdir(dir);
+await loadConfig({ rootDir: dir });
 const { buildViteGlobal } = await import("../../src/modules/view");
-process.chdir(cwd);
 
 afterAll(() => {
   rmSync(dir, { recursive: true, force: true });

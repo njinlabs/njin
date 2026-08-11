@@ -2,6 +2,7 @@ import cors from "@elysia/cors";
 import { getConfig } from "../core/config";
 import { UniqueConstraintError } from "../core/model";
 import { makeModule } from "../core/module";
+import { serveWorker } from "../core/worker";
 import Elysia, { status, ValidationError, type AnyElysia } from "elysia";
 import logger from "./logger";
 
@@ -73,8 +74,15 @@ const elysia = makeModule(() => {
     return {
       // No startup log here — the CLI prints one consolidated banner after every
       // module has finished booting (src/core/banner.ts), instead of one line per module.
+      // Worker mode (NJIN_WORKER=1, set by the generated `njin build:worker` entry) skips
+      // the real socket entirely — requests arrive via postMessage() from a supervisor-owned
+      // Worker thread instead (see src/core/worker.ts).
       spin: () => {
-        app.listen(getConfig().port);
+        if (process.env.NJIN_WORKER === "1") {
+          serveWorker(app);
+        } else {
+          app.listen(getConfig().port);
+        }
       },
     };
   };

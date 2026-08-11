@@ -7,7 +7,11 @@ import { join } from "path";
 import elysia from "./elysia";
 
 const isDev = process.env.NODE_ENV !== "production";
-const publicDir = join(process.cwd(), "public");
+// Lazy, not a top-level const — this module's static import runs (as a side effect of
+// module.ts importing it) before module.ts's own `await loadConfig()` line, so getConfig()
+// isn't populated yet at that point. Every call site below only runs from inside fn.init()
+// or a request handler, both well after loadConfig() has resolved.
+const publicDir = () => join(getConfig().rootDir, "public");
 
 type ViteManifestChunk = {
   file: string;
@@ -46,7 +50,7 @@ export const buildViteGlobal = async (): Promise<ViteGlobal> => {
     };
   }
 
-  const manifestFile = Bun.file(join(publicDir, "manifest.json"));
+  const manifestFile = Bun.file(join(publicDir(), "manifest.json"));
 
   if (!(await manifestFile.exists())) {
     return {
@@ -78,9 +82,10 @@ const view = makeModule(() => {
   const fn = () => edge;
 
   fn.init = async () => {
-    // process.cwd()-based, not import.meta.dir — once view.ts lives inside node_modules/njin,
-    // import.meta.dir would point at the package's own location, not the consuming project's views.
-    const viewsDir = join(process.cwd(), "src/views");
+    // getConfig().rootDir-based, not import.meta.dir — once view.ts lives inside
+    // node_modules/njin, import.meta.dir would point at the package's own location, not
+    // the consuming project's views.
+    const viewsDir = join(getConfig().rootDir, "src/views");
     const pagesDir = join(viewsDir, "pages");
 
     edge.mount(viewsDir);
@@ -111,7 +116,7 @@ const view = makeModule(() => {
 
     if (!isDev) {
       controller.get("/assets/*", async ({ params }) => {
-        const file = Bun.file(join(publicDir, "assets", params["*"]));
+        const file = Bun.file(join(publicDir(), "assets", params["*"]));
         if (!(await file.exists())) return new Response("Not Found", { status: 404 });
         return file;
       });
@@ -180,7 +185,7 @@ const view = makeModule(() => {
     // Catch-all — must be registered last so specific routes take priority
     controller.get("/*", async ({ path }) => {
       if (!isDev) {
-        const staticFile = Bun.file(join(publicDir, path));
+        const staticFile = Bun.file(join(publicDir(), path));
         if (await staticFile.exists()) return staticFile;
       }
 

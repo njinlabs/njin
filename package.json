@@ -29,6 +29,7 @@
     "./config": "./src/core/config.ts",
     "./boot": "./src/core/boot.ts",
     "./banner": "./src/core/banner.ts",
+    "./worker": "./src/core/worker.ts",
     "./adapters/*": "./src/core/adapters/*.ts"
   },
   "devDependencies": {

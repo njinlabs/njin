@@ -2,6 +2,7 @@ import { afterAll, describe, expect, it, mock } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { loadConfig } from "../../src/core/config";
 import * as realElysiaModule from "../../src/modules/elysia";
 import { makeFakeElysia } from "../helpers/fake_elysia";
 
@@ -12,18 +13,16 @@ const fakeElysia = makeFakeElysia();
 mock.module("../../src/modules/elysia", () => ({ ...realElysiaModule, default: fakeElysia.fn }));
 
 const dir = mkdtempSync(join(tmpdir(), "njin-admin-"));
-const cwd = process.cwd();
 mkdirSync(join(dir, "_admin"));
 writeFileSync(join(dir, "_admin", "index.html"), "<html>admin shell</html>");
 mkdirSync(join(dir, "_admin", "assets"));
 writeFileSync(join(dir, "_admin", "assets", "app.js"), "console.log(1)");
 
-// admin.ts resolves its adminDir from process.cwd() at module-load time, so the chdir
-// must happen before this dynamic import (and be undone right after).
-process.chdir(dir);
+// admin.ts resolves its adminDir from getConfig().rootDir, read lazily inside fn.init() —
+// load a config pointing at the temp dir before init() runs.
+await loadConfig({ rootDir: dir });
 const { default: admin } = await import("../../src/modules/admin");
 await admin.init();
-process.chdir(cwd);
 
 const app = fakeElysia.buildApp();
 
