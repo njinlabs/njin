@@ -85,7 +85,17 @@ const img = makeModule(() => {
       let imageData: ArrayBuffer;
 
       if (url.startsWith("/")) {
-        const resp = await fetch(`http://localhost:${getConfig().port}${url}`);
+        // A real network fetch to localhost:<port> only works when app.listen() actually bound
+        // that port — under njin-supervisor's worker mode (NJIN_WORKER=1, see core/worker.ts)
+        // nothing does, requests arrive via postMessage and are handled in-process instead, so
+        // that socket was never listening and this always failed with a connection error.
+        // Calling the same in-process Elysia instance's handle() works in both modes, and skips
+        // an unnecessary self-round-trip even outside worker mode. The origin is taken from the
+        // *incoming* request rather than hardcoded — routing itself only cares about
+        // pathname+query, but a handler further down that inspects request.url (absolute-URL
+        // generation, host-based logic, ...) should see the same scheme/host this request
+        // actually arrived on, not a fake one that may not match across environments.
+        const resp = await elysia().handle(new Request(`${new URL(request.url).origin}${url}`));
         if (!resp.ok) return new Response("Image not found", { status: 404 });
         imageData = await resp.arrayBuffer();
       } else {

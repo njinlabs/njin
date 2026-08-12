@@ -17,6 +17,14 @@ export const makeFakeElysia = () => {
       controllers.push(controller);
       return fakeApp;
     },
+    // Mirrors the real elysia() singleton's app.handle() — lets code that calls
+    // elysia().handle(...) directly (e.g. modules/img.ts's local-image path, which routes a
+    // request back through the same in-process app instead of a real network fetch) work the
+    // same way under test as it does at runtime, without a bespoke mock per call site. Rebuilds
+    // from the currently-captured controllers on every call, same composition buildApp() does.
+    handle(request: Request) {
+      return buildApp().handle(request);
+    },
   };
 
   const fn = () => fakeApp;

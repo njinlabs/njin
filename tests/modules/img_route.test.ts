@@ -36,6 +36,14 @@ mock.module("../../src/modules/elysia", () => ({ ...realElysiaModule, default: f
 const { default: img } = await import("../../src/modules/img");
 
 await img.init();
+
+// Stands in for "some other route in the app serves this local asset" — img.ts's local-path
+// branch now routes back through the same in-process app (elysia().handle()) instead of a real
+// network fetch, so exercising that path needs a real registered route to hit, the same way a
+// static-file/public-asset handler would exist in a real app.
+const { default: RealElysia } = await import("elysia");
+fakeElysia.fn().use(new RealElysia().get("/a.png", () => new Response(ONE_PX_PNG)));
+
 const app = fakeElysia.buildApp();
 
 afterEach(() => {
@@ -66,34 +74,29 @@ describe("GET /img", () => {
   });
 
   it("returns 304 when If-None-Match matches the computed ETag", async () => {
-    spyOn(globalThis, "fetch").mockResolvedValue(new Response(ONE_PX_PNG, { status: 200 }));
+    // Local path — resolved via the registered "/a.png" test route (see setup above), not fetch.
     const first = await app.handle(new Request("http://localhost/img?url=/a.png"));
     const etag = first.headers.get("etag")!;
     expect(etag).toBeTruthy();
 
     // The ETag is derived purely from the query params, so the 304 branch short-circuits
-    // before any fetch happens — no need to keep the fetch mock in place for this request.
+    // before the local route is ever hit for this second request.
     const res = await app.handle(new Request("http://localhost/img?url=/a.png", { headers: { "If-None-Match": etag } }));
     expect(res.status).toBe(304);
   });
 
-  it("fetches a local path from the app's own port and resizes width-only", async () => {
-    const fetchSpy = spyOn(globalThis, "fetch").mockResolvedValue(new Response(ONE_PX_PNG, { status: 200 }));
-
+  it("resolves a local path via the app's own routing and resizes width-only", async () => {
     const res = await app.handle(new Request("http://localhost/img?url=/a.png&w=10"));
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toBe("image/webp");
-    expect(fetchSpy).toHaveBeenCalledWith("http://localhost:4000/a.png");
   });
 
   it("resizes height-only, deriving width from the source aspect ratio", async () => {
-    spyOn(globalThis, "fetch").mockResolvedValue(new Response(ONE_PX_PNG, { status: 200 }));
     const res = await app.handle(new Request("http://localhost/img?url=/a.png&h=10"));
     expect(res.status).toBe(200);
   });
 
-  it("returns 404 when a local path fetch is not ok", async () => {
-    spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 500 }));
+  it("returns 404 when a local path has no matching route", async () => {
     const res = await app.handle(new Request("http://localhost/img?url=/missing.png"));
     expect(res.status).toBe(404);
   });
