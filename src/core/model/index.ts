@@ -154,10 +154,16 @@ export const makeModel = <Rules extends z.ZodObject>(
     const whereParts: string[] = [];
     const params: Record<string, unknown> = {};
 
+    // Uses SurrealDB's full-text SEARCH index (see SEARCH_ANALYZER in ../../modules/surreal),
+    // not string::similarity::jaro_winkler — jaro_winkler compares two strings as a whole, so
+    // a short search term against a long field (e.g. "next.js" inside a full title) scores far
+    // below any usable threshold even though the term is clearly present. The @N@ match
+    // operator + ngram analyzer gives real substring/partial-word matching, BM25 relevance
+    // ranking, and still tolerates minor typos via shared n-grams.
     if (search && config.searchFields.length) {
-      params.search = search.toLowerCase();
+      params.search = search.trim();
       whereParts.push(
-        `(${config.searchFields.map((f) => `string::similarity::jaro_winkler(string::lowercase(${f}), $search) > 0.4`).join(" OR ")})`,
+        `(${config.searchFields.map((f, i) => `${f} @${i + 1}@ $search`).join(" OR ")})`,
       );
     }
 
@@ -191,7 +197,14 @@ export const makeModel = <Rules extends z.ZodObject>(
     // id/createdAt/updatedAt are always present on every record but aren't part of the
     // user-defined schema shape (they're injected in create()/update()) — allow sorting by them too.
     const sortableFields = new Set([...Object.keys(config.schema.shape), "id", "createdAt", "updatedAt"]);
-    const orderBy = sort && sortableFields.has(sort) ? `ORDER BY ${sort} ${order === "desc" ? "DESC" : "ASC"}` : "";
+    // An explicit sort always wins; otherwise, when searching, rank by BM25 relevance
+    // (summed across every matched search field) instead of leaving result order unspecified.
+    const orderBy =
+      sort && sortableFields.has(sort)
+        ? `ORDER BY ${sort} ${order === "desc" ? "DESC" : "ASC"}`
+        : search && config.searchFields.length
+          ? `ORDER BY (${config.searchFields.map((_, i) => `search::score(${i + 1})`).join(" + ")}) DESC`
+          : "";
 
     // Validate populate against known relation fields — prevents FETCH injection
     const fetchFields =
@@ -263,6 +276,7 @@ export const makeModel = <Rules extends z.ZodObject>(
     create,
     destroy,
     read,
+    searchFields: config.searchFields,
     show,
     table,
     update,

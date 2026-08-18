@@ -8,6 +8,13 @@ const EMBEDDED_SCHEMES = ["mem://", "rocksdb://", "surrealkv://"];
 
 export const isRemotePath = (path: string) => REMOTE_SCHEMES.some((scheme) => path.startsWith(scheme));
 
+// Shared by every model's search index (see ../core/model/index.ts's read()) — a `class`
+// tokenizer splits on Unicode character-class boundaries (language-agnostic word
+// splitting), and the `ngram` filter indexes overlapping 2-10 char slices of each token so
+// the `@N@` match operator can find a term anywhere inside a field (not just a whole-field
+// match) and still tolerate minor typos, similar to trigram search.
+const SEARCH_ANALYZER = "njin_search";
+
 // SurrealDB's `GROUP ALL` aggregate (used for count queries) throws NotFoundError
 // on a table that has never had a row created, unlike plain SELECT. Defining every
 // table up front avoids that first-run failure (e.g. /api/setup/status before any user exists).
@@ -15,15 +22,33 @@ const ensureTables = async (db: Surreal) => {
   const { default: userModel } = await import("../models/user");
   const { default: fileModel } = await import("../models/file");
 
-  const prefixes = new Set<string>([userModel.prefix, fileModel.prefix, "vars"]);
+  const models: { prefix: string; searchFields?: string[] }[] = [userModel, fileModel];
 
   for (const factory of getConfig().models) {
     const { default: model } = await factory();
-    prefixes.add(model.prefix);
+    models.push(model);
   }
+
+  const prefixes = new Set<string>(models.map((model) => model.prefix));
+  prefixes.add("vars");
 
   for (const prefix of prefixes) {
     await db.query(`DEFINE TABLE IF NOT EXISTS ${prefix} SCHEMALESS;`);
+  }
+
+  await db.query(`DEFINE ANALYZER IF NOT EXISTS ${SEARCH_ANALYZER} TOKENIZERS class FILTERS lowercase,ngram(2,10);`);
+
+  const definedIndexes = new Set<string>(); // dedupe prefix+field in case two factories share a prefix
+  for (const model of models) {
+    for (const field of model.searchFields ?? []) {
+      const key = `${model.prefix}.${field}`;
+      if (definedIndexes.has(key)) continue;
+      definedIndexes.add(key);
+
+      await db.query(
+        `DEFINE INDEX IF NOT EXISTS idx_search_${model.prefix}_${field} ON TABLE ${model.prefix} FIELDS ${field} SEARCH ANALYZER ${SEARCH_ANALYZER} BM25 HIGHLIGHTS;`,
+      );
+    }
   }
 };
 
