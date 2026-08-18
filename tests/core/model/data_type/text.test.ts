@@ -32,4 +32,11 @@ describe("text", () => {
       renderAs: "text",
     });
   });
+
+  it("carries hideForm through to meta", () => {
+    expect(text({ label: "Internal Flag", hideForm: true }).meta()).toMatchObject({
+      hideForm: true,
+      renderAs: "text",
+    });
+  });
 });

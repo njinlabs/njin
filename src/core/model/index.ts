@@ -7,6 +7,7 @@ import { runAfterHooks, runBeforeDestroyHooks, runBeforeHooks } from "./hooks";
 export type FormMeta = {
   label: string;
   unique?: boolean;
+  hideForm?: boolean;
 };
 
 export class UniqueConstraintError extends Error {

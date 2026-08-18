@@ -20,6 +20,7 @@ const fakeModel = {
     owner: z.string().meta({ renderAs: "relation" }).optional(),
     tags: z.array(z.string()).meta({ renderAs: "multi_relation" }).optional(),
     cover: z.string().meta({ renderAs: "file" }).optional(),
+    internalFlag: z.boolean().meta({ renderAs: "boolean", hideForm: true }).optional(),
   }),
   read: async (opts: Record<string, unknown>) => ({ data: Array.from(records.values()), opts }),
   show: async (id: string) => records.get(id) ?? null,
@@ -109,6 +110,9 @@ describe("GET /api/schema", () => {
     expect(props.owner!.type).toBe("object");
     expect((props.owner as { required?: string[] }).required).toEqual(["id"]);
     expect(props.cover!.type).toBe("string");
+
+    expect(props.internalFlag).toBeUndefined();
+    expect((body.data[0]!.schema as { required?: string[] }).required).not.toContain("internalFlag");
 
     expect(body.vars).toHaveLength(1);
     expect(body.vars[0]!.prefix).toBe("seo");
