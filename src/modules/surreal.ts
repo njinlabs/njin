@@ -8,9 +8,11 @@ const EMBEDDED_SCHEMES = ["mem://", "rocksdb://", "surrealkv://"];
 
 export const isRemotePath = (path: string) => REMOTE_SCHEMES.some((scheme) => path.startsWith(scheme));
 
-// Shared by every model's search index (see ../core/model/index.ts's read()) — a `class`
-// tokenizer splits on Unicode character-class boundaries (language-agnostic word
-// splitting), and the `ngram` filter indexes overlapping 2-10 char slices of each token so
+// Shared by every model's search index (see ../core/model/index.ts's read()) — `blank`
+// tokenizer splits on whitespace only (unlike `class`, which also splits on punctuation:
+// "Next.js" would become "next" / "." / "js", and a lone "." can't form any 2-char ngram,
+// so a query for "next.js" — tokenized the same way — would never match). The `ngram`
+// filter then indexes overlapping 2-10 char slices of each whitespace-delimited token so
 // the `@N@` match operator can find a term anywhere inside a field (not just a whole-field
 // match) and still tolerate minor typos, similar to trigram search.
 const SEARCH_ANALYZER = "njin_search";
@@ -36,7 +38,7 @@ const ensureTables = async (db: Surreal) => {
     await db.query(`DEFINE TABLE IF NOT EXISTS ${prefix} SCHEMALESS;`);
   }
 
-  await db.query(`DEFINE ANALYZER IF NOT EXISTS ${SEARCH_ANALYZER} TOKENIZERS class FILTERS lowercase,ngram(2,10);`);
+  await db.query(`DEFINE ANALYZER IF NOT EXISTS ${SEARCH_ANALYZER} TOKENIZERS blank FILTERS lowercase,ngram(2,10);`);
 
   const definedIndexes = new Set<string>(); // dedupe prefix+field in case two factories share a prefix
   for (const model of models) {
@@ -45,8 +47,10 @@ const ensureTables = async (db: Surreal) => {
       if (definedIndexes.has(key)) continue;
       definedIndexes.add(key);
 
+      // FULLTEXT, not SEARCH — this SurrealDB version renamed the index-type keyword;
+      // SEARCH ANALYZER ... is a parse error here even though older docs/examples use it.
       await db.query(
-        `DEFINE INDEX IF NOT EXISTS idx_search_${model.prefix}_${field} ON TABLE ${model.prefix} FIELDS ${field} SEARCH ANALYZER ${SEARCH_ANALYZER} BM25 HIGHLIGHTS;`,
+        `DEFINE INDEX IF NOT EXISTS idx_search_${model.prefix}_${field} ON TABLE ${model.prefix} FIELDS ${field} FULLTEXT ANALYZER ${SEARCH_ANALYZER} BM25 HIGHLIGHTS;`,
       );
     }
   }

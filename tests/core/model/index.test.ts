@@ -180,3 +180,52 @@ describe("makeModel read() filter whitelist", () => {
     expect(call!.params.f_title).toBe("Hello");
   });
 });
+
+describe("makeModel read() search", () => {
+  it("matches with the @N@ full-text operator and orders by relevance, stripping __relevance from results", async () => {
+    const post = makeModel(`post_${crypto.randomUUID().replace(/-/g, "")}`, {
+      name: "Post",
+      searchFields: ["title", "body"],
+      schema: z.object({ title: text({ label: "Title" }), body: text({ label: "Body" }) }),
+    });
+
+    fakeDb.queries.length = 0;
+    const originalQuery = fakeDb.query;
+    fakeDb.query = (async (sql: string, params: Record<string, unknown> = {}) => {
+      fakeDb.queries.push({ sql, params });
+      return [[{ title: "Hello", body: "World", __relevance: 1.5 }], [{ count: 1 }]];
+    }) as typeof fakeDb.query;
+
+    try {
+      const result = await post.read({ search: "hello" });
+
+      const [call] = fakeDb.queries;
+      // @N@, not string::similarity::jaro_winkler — a whole-field comparison would score a
+      // short query against a long field far below any usable threshold.
+      expect(call!.sql).toContain("(title @1@ $search OR body @2@ $search)");
+      expect(call!.sql).toContain("(search::score(1) + search::score(2)) AS __relevance");
+      expect(call!.sql).toContain("ORDER BY __relevance DESC");
+      expect(call!.params.search).toBe("hello");
+
+      expect(result.data).toEqual([{ title: "Hello", body: "World" }] as never);
+    } finally {
+      fakeDb.query = originalQuery;
+    }
+  });
+
+  it("lets an explicit sort win over relevance ordering", async () => {
+    const post = makeModel(`post_${crypto.randomUUID().replace(/-/g, "")}`, {
+      name: "Post",
+      searchFields: ["title"],
+      schema: z.object({ title: text({ label: "Title" }) }),
+    });
+
+    fakeDb.queries.length = 0;
+
+    await post.read({ search: "hello", sort: "title", order: "desc" });
+
+    const [call] = fakeDb.queries;
+    expect(call!.sql).toContain("ORDER BY title DESC");
+    expect(call!.sql).not.toContain("__relevance");
+  });
+});

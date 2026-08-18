@@ -117,6 +117,29 @@ describe("surreal.init() — remote db.path", () => {
     expect(surreal()).toBe(instance as unknown as ReturnType<typeof surreal>);
     expect(typeof result.spin).toBe("function");
   });
+
+  it("defines a search analyzer and a FULLTEXT index per model searchField", async () => {
+    dbConfig = { path: "ws://localhost:8000", namespace: "ns", database: "db", auth: undefined };
+    extraModels = [async () => ({ default: { prefix: "post", searchFields: ["title", "body"] } })];
+
+    const result = await surreal.init();
+    await result.spin!();
+
+    const instance = instances[instances.length - 1]!;
+    const defined = instance.queries.join("\n");
+
+    // TOKENIZERS blank (not class) — a "class" tokenizer splits on punctuation too, so
+    // "Next.js" would tokenize into "next" / "." / "js" and a query for "next.js" (split
+    // the same way) would never match. FULLTEXT (not SEARCH) — this SurrealDB version
+    // renamed the DEFINE INDEX keyword; SEARCH ANALYZER is a parse error here.
+    expect(defined).toContain("DEFINE ANALYZER IF NOT EXISTS njin_search TOKENIZERS blank FILTERS lowercase,ngram(2,10);");
+    expect(defined).toContain(
+      "DEFINE INDEX IF NOT EXISTS idx_search_post_title ON TABLE post FIELDS title FULLTEXT ANALYZER njin_search BM25 HIGHLIGHTS;",
+    );
+    expect(defined).toContain(
+      "DEFINE INDEX IF NOT EXISTS idx_search_post_body ON TABLE post FIELDS body FULLTEXT ANALYZER njin_search BM25 HIGHLIGHTS;",
+    );
+  });
 });
 
 describe("surreal.init() — embedded db.path", () => {

@@ -197,14 +197,21 @@ export const makeModel = <Rules extends z.ZodObject>(
     // id/createdAt/updatedAt are always present on every record but aren't part of the
     // user-defined schema shape (they're injected in create()/update()) — allow sorting by them too.
     const sortableFields = new Set([...Object.keys(config.schema.shape), "id", "createdAt", "updatedAt"]);
+    const hasExplicitSort = Boolean(sort && sortableFields.has(sort));
     // An explicit sort always wins; otherwise, when searching, rank by BM25 relevance
     // (summed across every matched search field) instead of leaving result order unspecified.
-    const orderBy =
-      sort && sortableFields.has(sort)
-        ? `ORDER BY ${sort} ${order === "desc" ? "DESC" : "ASC"}`
-        : search && config.searchFields.length
-          ? `ORDER BY (${config.searchFields.map((_, i) => `search::score(${i + 1})`).join(" + ")}) DESC`
-          : "";
+    // `ORDER BY` only accepts a bare identifier here, not a function call — so relevance is
+    // projected as an aliased field below (SELECT ... AS __relevance) and stripped back out
+    // of each returned record afterwards, since it isn't part of the model's schema.
+    const useRelevance = !hasExplicitSort && Boolean(search && config.searchFields.length);
+    const orderBy = hasExplicitSort
+      ? `ORDER BY ${sort} ${order === "desc" ? "DESC" : "ASC"}`
+      : useRelevance
+        ? "ORDER BY __relevance DESC"
+        : "";
+    const relevanceSelect = useRelevance
+      ? `, (${config.searchFields.map((_, i) => `search::score(${i + 1})`).join(" + ")}) AS __relevance`
+      : "";
 
     // Validate populate against known relation fields — prevents FETCH injection
     const fetchFields =
@@ -216,16 +223,22 @@ export const makeModel = <Rules extends z.ZodObject>(
     const fetch = fetchFields.length ? `FETCH ${fetchFields.join(", ")}` : "";
     const start = (page - 1) * pageLimit;
 
-    const [data, [countRow]] = await surreal().query<[Returning[], { count: number }[]]>(
-      `SELECT * FROM ${prefix} ${where} ${orderBy} LIMIT ${pageLimit} START ${start} ${fetch};
+    const [rows, [countRow]] = await surreal().query<[(Returning & { __relevance?: number })[], { count: number }[]]>(
+      `SELECT *${relevanceSelect} FROM ${prefix} ${where} ${orderBy} LIMIT ${pageLimit} START ${start} ${fetch};
        SELECT count() as count FROM ${prefix} ${where} GROUP ALL`,
       params,
     );
 
+    const data = (rows ?? []).map((row) => {
+      if (!useRelevance) return row;
+      const { __relevance, ...rest } = row;
+      return rest as Returning;
+    });
+
     const total = countRow?.count ?? 0;
 
     return {
-      data: data ?? [],
+      data,
       meta: {
         total,
         page,
