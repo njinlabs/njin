@@ -2,6 +2,7 @@ import { describe, expect, it, mock } from "bun:test";
 import * as realSurrealdb from "surrealdb";
 import * as realConfig from "../../src/core/config";
 import realUserModel from "../../src/models/user";
+import z from "zod";
 
 let createRemoteEnginesCalls = 0;
 let createNodeEnginesCalls = 0;
@@ -59,7 +60,9 @@ mock.module("../../src/models/user", () => ({ default: { ...realUserModel, prefi
 mock.module("../../src/models/file", () => ({ default: { prefix: "file" } }));
 
 let dbConfig = { path: "ws://localhost:8000", namespace: "ns", database: "db", auth: undefined as unknown };
-let extraModels: (() => Promise<{ default: { prefix: string } }>)[] = [];
+let extraModels: (() => Promise<{
+  default: { prefix: string; searchFields?: string[]; validation?: z.ZodObject };
+}>)[] = [];
 
 // Spreads the real module's other exports (loadConfig, defineConfig, ...) — without
 // --isolate, mock.module() replaces the module in a registry shared across the whole
@@ -139,6 +142,56 @@ describe("surreal.init() — remote db.path", () => {
     expect(defined).toContain(
       "DEFINE INDEX IF NOT EXISTS idx_search_post_body ON TABLE post FIELDS body FULLTEXT ANALYZER njin_search BM25 HIGHLIGHTS;",
     );
+  });
+
+  it("defines a nested (relation) searchField's index on the target table/field, not the local relation field", async () => {
+    dbConfig = { path: "ws://localhost:8000", namespace: "ns", database: "db", auth: undefined };
+    extraModels = [
+      async () => ({
+        default: {
+          prefix: "post",
+          searchFields: ["author.name"],
+          validation: z.object({
+            author: z.string().meta({ renderAs: "relation", model: "user" }),
+          }),
+        },
+      }),
+    ];
+
+    const result = await surreal.init();
+    await result.spin!();
+
+    const instance = instances[instances.length - 1]!;
+    const defined = instance.queries.join("\n");
+
+    expect(defined).toContain(
+      "DEFINE INDEX IF NOT EXISTS idx_search_user_name ON TABLE user FIELDS name FULLTEXT ANALYZER njin_search BM25 HIGHLIGHTS;",
+    );
+    expect(defined).not.toContain("idx_search_post_author");
+  });
+
+  it("dedupes a nested searchField's index against the target model's own flat searchField for the same field", async () => {
+    dbConfig = { path: "ws://localhost:8000", namespace: "ns", database: "db", auth: undefined };
+    extraModels = [
+      async () => ({ default: { prefix: "user", searchFields: ["name"], validation: z.object({ name: z.string() }) } }),
+      async () => ({
+        default: {
+          prefix: "post",
+          searchFields: ["author.name"],
+          validation: z.object({
+            author: z.string().meta({ renderAs: "relation", model: "user" }),
+          }),
+        },
+      }),
+    ];
+
+    const result = await surreal.init();
+    await result.spin!();
+
+    const instance = instances[instances.length - 1]!;
+    const occurrences = instance.queries.filter((q) => q.includes("idx_search_user_name")).length;
+
+    expect(occurrences).toBe(1);
   });
 });
 

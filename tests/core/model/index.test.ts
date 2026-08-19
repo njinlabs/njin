@@ -44,6 +44,8 @@ const { makeModel, afterCreate, afterDestroy, afterUpdate, beforeCreate, beforeD
   "../../../src/core/model/index"
 );
 const { text } = await import("../../../src/core/model/data_type/text");
+const { relation } = await import("../../../src/core/model/data_type/relation");
+const { relationMany } = await import("../../../src/core/model/data_type/relation_many");
 const z = (await import("zod")).default;
 
 describe("makeModel hook wiring", () => {
@@ -227,5 +229,102 @@ describe("makeModel read() search", () => {
     const [call] = fakeDb.queries;
     expect(call!.sql).toContain("ORDER BY title DESC");
     expect(call!.sql).not.toContain("__relevance");
+  });
+});
+
+describe("makeModel read() nested relation search", () => {
+  it("turns a relation searchField into an IN subquery, excluded from relevance", async () => {
+    const author = makeModel(`author_${crypto.randomUUID().replace(/-/g, "")}`, {
+      name: "Author",
+      searchFields: [],
+      schema: z.object({ name: text({ label: "Name" }) }),
+    });
+
+    const post = makeModel(`post_${crypto.randomUUID().replace(/-/g, "")}`, {
+      name: "Post",
+      searchFields: ["title", "author.name"],
+      schema: z.object({
+        title: text({ label: "Title" }),
+        author: relation({ label: "Author" }, author),
+      }),
+    });
+
+    fakeDb.queries.length = 0;
+
+    await post.read({ search: "hello" });
+
+    const [call] = fakeDb.queries;
+    expect(call!.sql).toContain(
+      `(title @1@ $search OR author IN (SELECT VALUE id FROM ${author.prefix} WHERE name @2@ $search))`,
+    );
+    // Only the flat "title" field contributes a score — the nested match has no
+    // per-record score in this query's context.
+    expect(call!.sql).toContain("(search::score(1)) AS __relevance");
+    expect(call!.sql).not.toContain("search::score(2)");
+  });
+
+  it("turns a multi_relation searchField into a CONTAINSANY subquery", async () => {
+    const tag = makeModel(`tag_${crypto.randomUUID().replace(/-/g, "")}`, {
+      name: "Tag",
+      searchFields: [],
+      schema: z.object({ name: text({ label: "Name" }) }),
+    });
+
+    const post = makeModel(`post_${crypto.randomUUID().replace(/-/g, "")}`, {
+      name: "Post",
+      searchFields: ["tags.name"],
+      schema: z.object({
+        tags: relationMany({ label: "Tags" }, tag),
+      }),
+    });
+
+    fakeDb.queries.length = 0;
+
+    await post.read({ search: "hello" });
+
+    const [call] = fakeDb.queries;
+    expect(call!.sql).toContain(
+      `(tags CONTAINSANY (SELECT VALUE id FROM ${tag.prefix} WHERE name @1@ $search))`,
+    );
+    expect(call!.sql).not.toContain("__relevance");
+  });
+
+  it("throws at model-definition time when a searchField references a non-relation field", () => {
+    expect(() =>
+      makeModel(`post_${crypto.randomUUID().replace(/-/g, "")}`, {
+        name: "Post",
+        searchFields: ["title.name"],
+        schema: z.object({ title: text({ label: "Title" }) }),
+      }),
+    ).toThrow(/is not a relation\/file field/);
+  });
+
+  it("throws at model-definition time on more than one level of nesting", () => {
+    expect(() =>
+      makeModel(`post_${crypto.randomUUID().replace(/-/g, "")}`, {
+        name: "Post",
+        searchFields: ["author.company.name"],
+        schema: z.object({ title: text({ label: "Title" }) }),
+      }),
+    ).toThrow(/more than one level of nesting/);
+  });
+
+  it("throws at model-definition time when the target field doesn't exist on an already-registered target model", () => {
+    const author = makeModel(`author_${crypto.randomUUID().replace(/-/g, "")}`, {
+      name: "Author",
+      searchFields: [],
+      schema: z.object({ name: text({ label: "Name" }) }),
+    });
+
+    expect(() =>
+      makeModel(`post_${crypto.randomUUID().replace(/-/g, "")}`, {
+        name: "Post",
+        searchFields: ["author.nickname"],
+        schema: z.object({
+          title: text({ label: "Title" }),
+          author: relation({ label: "Author" }, author),
+        }),
+      }),
+    ).toThrow(/does not exist on model/);
   });
 });

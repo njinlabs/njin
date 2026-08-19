@@ -58,7 +58,10 @@ import z from "zod";
 
 const post = makeModel("post", {
   name: "Post", // display name for admin panel
-  searchFields: ["title", "body"], // fields used for fuzzy search
+  // Fields used for fuzzy search. "author.name" reaches one level into a relation field
+  // (author must be relation/relationMany/file/multiFile) — throws at makeModel() call
+  // time if "author" isn't a relation field, or if the target field doesn't exist.
+  searchFields: ["title", "body", "author.name"],
   schema: z.object({
     // --- Data types ---
     title: text({ label: "Title" }),

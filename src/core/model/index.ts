@@ -63,6 +63,56 @@ const OPERATORS: Record<FilterOperator, (field: string, param: string) => string
   $in:         (f, p) => `${f} CONTAINS $${p}`,
 };
 
+const RELATION_RENDER_AS = ["relation", "multi_relation", "file", "multi_file"];
+
+// Every makeModel() call registers its own schema here before returning — since
+// relation()/relationMany() require the actual built target Model as an argument,
+// the target's makeModel() is guaranteed to have already run (and registered itself)
+// by the time a field referencing it via relation() can even be constructed. Used
+// only for the opportunistic target-field check in resolveSearchPlan below.
+const schemaRegistry = new Map<string, z.ZodObject>();
+
+export type ResolvedSearchField =
+  | { kind: "flat"; field: string }
+  | { kind: "nested"; local: string; targetPrefix: string; targetField: string; multi: boolean };
+
+// Parses searchFields entries into flat field names and single-hop nested
+// "relationField.targetField" references, validating relation-family fields and
+// (when the target model has already registered itself) the target field's existence
+// synchronously — so a bad reference throws at model-definition time, not per-request.
+export const resolveSearchPlan = (schema: z.ZodObject, searchFields: string[], modelName: string): ResolvedSearchField[] => {
+  return searchFields.map((raw): ResolvedSearchField => {
+    const dot = raw.indexOf(".");
+    if (dot === -1) return { kind: "flat", field: raw };
+
+    if (raw.indexOf(".", dot + 1) !== -1) {
+      throw new Error(`Model "${modelName}": searchFields entry "${raw}" has more than one level of nesting — only a single relation hop is supported.`);
+    }
+
+    const local = raw.slice(0, dot);
+    const targetField = raw.slice(dot + 1);
+    const meta = (schema.shape[local] as z.ZodType | undefined)?.meta() as any;
+
+    if (!meta || !RELATION_RENDER_AS.includes(meta.renderAs)) {
+      throw new Error(`Model "${modelName}": searchFields entry "${raw}" references "${local}", which is not a relation/file field on this model's schema.`);
+    }
+
+    const targetPrefix = meta.model as string;
+    const targetSchema = schemaRegistry.get(targetPrefix);
+    if (targetSchema && !(targetField in targetSchema.shape)) {
+      throw new Error(`Model "${modelName}": searchFields entry "${raw}" references field "${targetField}", which does not exist on model "${targetPrefix}".`);
+    }
+
+    return {
+      kind: "nested",
+      local,
+      targetPrefix,
+      targetField,
+      multi: meta.renderAs === "multi_relation" || meta.renderAs === "multi_file",
+    };
+  });
+};
+
 export const makeModel = <Rules extends z.ZodObject>(
   prefix: string,
   config: {
@@ -80,14 +130,18 @@ export const makeModel = <Rules extends z.ZodObject>(
 
   const table = new Table(prefix);
 
+  schemaRegistry.set(prefix, config.schema);
+
   const relationFields = Object.entries(config.schema.shape)
     .filter(([, v]) => {
       const m = (v as z.ZodType).meta() as any;
-      return ["relation", "multi_relation", "file", "multi_file"].includes(m?.renderAs);
+      return RELATION_RENDER_AS.includes(m?.renderAs);
     })
     .map(([k]) => k);
 
   const relationFieldSet = new Set(relationFields);
+
+  const searchPlan = resolveSearchPlan(config.schema, config.searchFields, config.name);
 
   const uniqueFields = Object.entries(config.schema.shape)
     .filter(([, v]) => (v as z.ZodType).meta()?.unique === true)
@@ -160,11 +214,21 @@ export const makeModel = <Rules extends z.ZodObject>(
     // below any usable threshold even though the term is clearly present. The @N@ match
     // operator + ngram analyzer gives real substring/partial-word matching, BM25 relevance
     // ranking, and still tolerates minor typos via shared n-grams.
-    if (search && config.searchFields.length) {
+    //
+    // A nested entry (searchPlan `kind: "nested"`, e.g. "author.name") becomes an IN/CONTAINSANY
+    // subquery against the target table instead — the local relation field holds a record link,
+    // not text, so it can't carry its own full-text index. All entries (flat and nested alike)
+    // share one running @N@ counter in declaration order, since SurrealDB's match-ref scoping
+    // across a WHERE-clause subquery on a different table isn't something to assume either way.
+    if (search && searchPlan.length) {
       params.search = search.trim();
-      whereParts.push(
-        `(${config.searchFields.map((f, i) => `${f} @${i + 1}@ $search`).join(" OR ")})`,
-      );
+      const clauses = searchPlan.map((entry, i) => {
+        const n = i + 1;
+        if (entry.kind === "flat") return `${entry.field} @${n}@ $search`;
+        const op = entry.multi ? "CONTAINSANY" : "IN";
+        return `${entry.local} ${op} (SELECT VALUE id FROM ${entry.targetPrefix} WHERE ${entry.targetField} @${n}@ $search)`;
+      });
+      whereParts.push(`(${clauses.join(" OR ")})`);
     }
 
     if (filters) {
@@ -199,18 +263,25 @@ export const makeModel = <Rules extends z.ZodObject>(
     const sortableFields = new Set([...Object.keys(config.schema.shape), "id", "createdAt", "updatedAt"]);
     const hasExplicitSort = Boolean(sort && sortableFields.has(sort));
     // An explicit sort always wins; otherwise, when searching, rank by BM25 relevance
-    // (summed across every matched search field) instead of leaving result order unspecified.
+    // (summed across every matched flat search field) instead of leaving result order
+    // unspecified. Nested (relation) entries are excluded from this sum — a match found via
+    // the IN/CONTAINSANY subquery above has no per-record score in this query's context, since
+    // it happened on a different table entirely. If a model's searchFields are all nested,
+    // there's no score to rank by, so relevance ordering is skipped (same as no searchFields).
     // `ORDER BY` only accepts a bare identifier here, not a function call — so relevance is
     // projected as an aliased field below (SELECT ... AS __relevance) and stripped back out
     // of each returned record afterwards, since it isn't part of the model's schema.
-    const useRelevance = !hasExplicitSort && Boolean(search && config.searchFields.length);
+    const useRelevance = !hasExplicitSort && Boolean(search && searchPlan.some((e) => e.kind === "flat"));
     const orderBy = hasExplicitSort
       ? `ORDER BY ${sort} ${order === "desc" ? "DESC" : "ASC"}`
       : useRelevance
         ? "ORDER BY __relevance DESC"
         : "";
     const relevanceSelect = useRelevance
-      ? `, (${config.searchFields.map((_, i) => `search::score(${i + 1})`).join(" + ")}) AS __relevance`
+      ? `, (${searchPlan
+          .map((e, i) => (e.kind === "flat" ? `search::score(${i + 1})` : null))
+          .filter((s): s is string => s !== null)
+          .join(" + ")}) AS __relevance`
       : "";
 
     // Validate populate against known relation fields — prevents FETCH injection

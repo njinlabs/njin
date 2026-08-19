@@ -1,7 +1,9 @@
 import { getConfig } from "../core/config";
+import { resolveSearchPlan } from "../core/model";
 import { makeModule } from "../core/module";
 import { Surreal, createRemoteEngines } from "surrealdb";
 import type { Engines } from "surrealdb";
+import type { z } from "zod";
 
 const REMOTE_SCHEMES = ["ws://", "wss://", "http://", "https://"];
 const EMBEDDED_SCHEMES = ["mem://", "rocksdb://", "surrealkv://"];
@@ -24,7 +26,7 @@ const ensureTables = async (db: Surreal) => {
   const { default: userModel } = await import("../models/user");
   const { default: fileModel } = await import("../models/file");
 
-  const models: { prefix: string; searchFields?: string[] }[] = [userModel, fileModel];
+  const models: { prefix: string; searchFields?: string[]; validation?: z.ZodObject }[] = [userModel, fileModel];
 
   for (const factory of getConfig().models) {
     const { default: model } = await factory();
@@ -40,18 +42,36 @@ const ensureTables = async (db: Surreal) => {
 
   await db.query(`DEFINE ANALYZER IF NOT EXISTS ${SEARCH_ANALYZER} TOKENIZERS blank FILTERS lowercase,ngram(2,10);`);
 
-  const definedIndexes = new Set<string>(); // dedupe prefix+field in case two factories share a prefix
-  for (const model of models) {
-    for (const field of model.searchFields ?? []) {
-      const key = `${model.prefix}.${field}`;
-      if (definedIndexes.has(key)) continue;
-      definedIndexes.add(key);
+  const defineSearchIndex = async (targetPrefix: string, field: string) => {
+    const key = `${targetPrefix}.${field}`;
+    if (definedIndexes.has(key)) return;
+    definedIndexes.add(key);
 
-      // FULLTEXT, not SEARCH — this SurrealDB version renamed the index-type keyword;
-      // SEARCH ANALYZER ... is a parse error here even though older docs/examples use it.
-      await db.query(
-        `DEFINE INDEX IF NOT EXISTS idx_search_${model.prefix}_${field} ON TABLE ${model.prefix} FIELDS ${field} FULLTEXT ANALYZER ${SEARCH_ANALYZER} BM25 HIGHLIGHTS;`,
-      );
+    // FULLTEXT, not SEARCH — this SurrealDB version renamed the index-type keyword;
+    // SEARCH ANALYZER ... is a parse error here even though older docs/examples use it.
+    await db.query(
+      `DEFINE INDEX IF NOT EXISTS idx_search_${targetPrefix}_${field} ON TABLE ${targetPrefix} FIELDS ${field} FULLTEXT ANALYZER ${SEARCH_ANALYZER} BM25 HIGHLIGHTS;`,
+    );
+  };
+
+  const definedIndexes = new Set<string>(); // dedupe prefix+field in case two factories share a prefix, or a nested reference targets an already-indexed field
+  for (const model of models) {
+    // A nested searchFields entry (e.g. "author.name") needs its index defined on the
+    // *target* table/field instead — the local relation field holds a record link, not
+    // text. model.validation carries the schema needed to resolve that; if it's missing for
+    // some reason, fall back to treating every entry as flat (today's behavior) rather than
+    // throwing here — an authoring bug in a dotted entry is makeModel()'s job to catch, not
+    // table setup's.
+    const plan = model.validation
+      ? resolveSearchPlan(model.validation, model.searchFields ?? [], model.prefix)
+      : (model.searchFields ?? []).map((field) => ({ kind: "flat" as const, field }));
+
+    for (const entry of plan) {
+      if (entry.kind === "flat") {
+        await defineSearchIndex(model.prefix, entry.field);
+      } else {
+        await defineSearchIndex(entry.targetPrefix, entry.targetField);
+      }
     }
   }
 };

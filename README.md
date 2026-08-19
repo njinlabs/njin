@@ -63,6 +63,11 @@ const post = makeModel("post", {
 export default post;
 ```
 
+`searchFields` can also reach one level into a `relation`/`multiRelation`/`file`/`multiFile` field
+using dot notation, e.g. `searchFields: ["title", "author.name"]` to search `post` by its related
+`author`'s `name` field. A bad reference (the local field isn't a relation, or more than one level
+of nesting is used) throws when `makeModel()` is called, not at query time.
+
 Register it in `config.ts` at the project root:
 
 ```ts
