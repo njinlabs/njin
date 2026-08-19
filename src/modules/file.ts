@@ -3,7 +3,7 @@ import type { makeModel } from "../core/model";
 import { makeModule } from "../core/module";
 import { resolveSafePath } from "../core/path_guard";
 import Elysia from "elysia";
-import { join, resolve } from "node:path";
+import { resolve } from "node:path";
 import { RecordId } from "surrealdb";
 import z from "zod";
 import auth from "./auth";
