@@ -13,6 +13,9 @@ class FakeSurreal {
   useArgs: unknown[] = [];
   queries: string[] = [];
   closed = false;
+  // Set by a test before spin() to simulate a DB that was already migrated to this exact
+  // schema in a previous boot — the recorded hash ensureTables() reads back.
+  recordedSchemaHash: string | null = null;
   constructor(public opts: { engines: unknown }) {
     instances.push(this);
   }
@@ -24,6 +27,9 @@ class FakeSurreal {
   }
   async query(sql: string) {
     this.queries.push(sql);
+    if (sql.startsWith("SELECT hash FROM njin_schema_meta")) {
+      return [this.recordedSchemaHash ? [{ hash: this.recordedSchemaHash }] : []];
+    }
     return [];
   }
   async close() {
@@ -192,6 +198,47 @@ describe("surreal.init() — remote db.path", () => {
     const occurrences = instance.queries.filter((q) => q.includes("idx_search_user_name")).length;
 
     expect(occurrences).toBe(1);
+  });
+
+  it("skips every DEFINE and re-runs ensureTables() when the schema hash changes", async () => {
+    dbConfig = { path: "ws://localhost:8000", namespace: "ns", database: "db", auth: undefined };
+    extraModels = [async () => ({ default: { prefix: "post" } })];
+
+    // First boot: no recorded hash yet, so every DEFINE runs and the resulting hash gets
+    // written back via UPSERT.
+    const first = await surreal.init();
+    await first.spin!();
+    const firstInstance = instances[instances.length - 1]!;
+    const upsert = firstInstance.queries.find((q) => q.startsWith("UPSERT njin_schema_meta:current"))!;
+    const writtenHash = upsert.match(/hash = '([^']+)'/)![1]!;
+
+    // Second boot against a DB that already recorded that exact hash (same models, same
+    // config) — the warm-boot path this whole change exists for (idle-evict/crash respawn
+    // hitting the same, already-migrated DB).
+    const second = await surreal.init();
+    const secondInstance = instances[instances.length - 1]!;
+    secondInstance.recordedSchemaHash = writtenHash;
+    await second.spin!();
+
+    expect(secondInstance.queries).toEqual([
+      "DEFINE NAMESPACE IF NOT EXISTS `ns`;",
+      "DEFINE DATABASE IF NOT EXISTS `db`;",
+      "DEFINE TABLE IF NOT EXISTS njin_schema_meta SCHEMALESS;",
+      "SELECT hash FROM njin_schema_meta:current;",
+    ]);
+
+    // Third boot: schema changed (a new model prefix), so the recorded hash from the first
+    // boot no longer matches and every DEFINE must run again.
+    extraModels = [
+      async () => ({ default: { prefix: "post" } }),
+      async () => ({ default: { prefix: "comment" } }),
+    ];
+    const third = await surreal.init();
+    const thirdInstance = instances[instances.length - 1]!;
+    thirdInstance.recordedSchemaHash = writtenHash;
+    await third.spin!();
+
+    expect(thirdInstance.queries.join("\n")).toContain("DEFINE TABLE IF NOT EXISTS comment SCHEMALESS;");
   });
 });
 

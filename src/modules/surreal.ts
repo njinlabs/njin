@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { getConfig } from "../core/config";
 import { resolveSearchPlan } from "../core/model";
 import { makeModule } from "../core/module";
@@ -19,6 +20,13 @@ export const isRemotePath = (path: string) => REMOTE_SCHEMES.some((scheme) => pa
 // match) and still tolerate minor typos, similar to trigram search.
 const SEARCH_ANALYZER = "njin_search";
 
+// Records the hash of the last schema this DB was migrated to, so a worker booting against
+// an already-migrated DB (idle-evict/crash respawn — every DEFINE below is idempotent but
+// still a full network round trip per statement) can skip straight past ensureTables(). Keyed
+// off the DB itself rather than the process/build: a worker pointed at a fresh or different DB
+// (e.g. a per-client env change) finds no matching record here and still runs the DEFINEs.
+const SCHEMA_META_TABLE = "njin_schema_meta";
+
 // SurrealDB's `GROUP ALL` aggregate (used for count queries) throws NotFoundError
 // on a table that has never had a row created, unlike plain SELECT. Defining every
 // table up front avoids that first-run failure (e.g. /api/setup/status before any user exists).
@@ -36,25 +44,11 @@ const ensureTables = async (db: Surreal) => {
   const prefixes = new Set<string>(models.map((model) => model.prefix));
   prefixes.add("vars");
 
-  for (const prefix of prefixes) {
-    await db.query(`DEFINE TABLE IF NOT EXISTS ${prefix} SCHEMALESS;`);
-  }
-
-  await db.query(`DEFINE ANALYZER IF NOT EXISTS ${SEARCH_ANALYZER} TOKENIZERS blank FILTERS lowercase,ngram(2,10);`);
-
-  const defineSearchIndex = async (targetPrefix: string, field: string) => {
-    const key = `${targetPrefix}.${field}`;
-    if (definedIndexes.has(key)) return;
-    definedIndexes.add(key);
-
-    // FULLTEXT, not SEARCH — this SurrealDB version renamed the index-type keyword;
-    // SEARCH ANALYZER ... is a parse error here even though older docs/examples use it.
-    await db.query(
-      `DEFINE INDEX IF NOT EXISTS idx_search_${targetPrefix}_${field} ON TABLE ${targetPrefix} FIELDS ${field} FULLTEXT ANALYZER ${SEARCH_ANALYZER} BM25 HIGHLIGHTS;`,
-    );
-  };
-
-  const definedIndexes = new Set<string>(); // dedupe prefix+field in case two factories share a prefix, or a nested reference targets an already-indexed field
+  // Resolve every search index's target table+field up front (also dedupes prefix+field in
+  // case two factories share a prefix, or a nested reference targets an already-indexed
+  // field) — needed both to compute the schema hash below and to drive the DEFINE INDEX loop
+  // further down.
+  const searchIndexes = new Map<string, { prefix: string; field: string }>();
   for (const model of models) {
     // A nested searchFields entry (e.g. "author.name") needs its index defined on the
     // *target* table/field instead — the local relation field holds a record link, not
@@ -67,13 +61,43 @@ const ensureTables = async (db: Surreal) => {
       : (model.searchFields ?? []).map((field) => ({ kind: "flat" as const, field }));
 
     for (const entry of plan) {
-      if (entry.kind === "flat") {
-        await defineSearchIndex(model.prefix, entry.field);
-      } else {
-        await defineSearchIndex(entry.targetPrefix, entry.targetField);
-      }
+      const target =
+        entry.kind === "flat"
+          ? { prefix: model.prefix, field: entry.field }
+          : { prefix: entry.targetPrefix, field: entry.targetField };
+      searchIndexes.set(`${target.prefix}.${target.field}`, target);
     }
   }
+
+  const schemaHash = createHash("sha256")
+    .update(JSON.stringify({ prefixes: [...prefixes].sort(), searchIndexes: [...searchIndexes.keys()].sort() }))
+    .digest("hex");
+
+  // Must be DEFINE'd before the SELECT below can even run — unlike a table that exists but
+  // has no rows (see the GROUP ALL note above), a table SurrealDB has never seen DEFINE'd at
+  // all makes ANY query against a specific record id in it throw NotFoundError, plain SELECT
+  // included. One extra round trip on every boot (skip path too), still far cheaper than the
+  // N DEFINEs it's gating.
+  await db.query(`DEFINE TABLE IF NOT EXISTS ${SCHEMA_META_TABLE} SCHEMALESS;`);
+
+  const [rows] = await db.query<[{ hash: string }[]]>(`SELECT hash FROM ${SCHEMA_META_TABLE}:current;`);
+  if (rows?.[0]?.hash === schemaHash) return;
+
+  for (const prefix of prefixes) {
+    await db.query(`DEFINE TABLE IF NOT EXISTS ${prefix} SCHEMALESS;`);
+  }
+
+  await db.query(`DEFINE ANALYZER IF NOT EXISTS ${SEARCH_ANALYZER} TOKENIZERS blank FILTERS lowercase,ngram(2,10);`);
+
+  for (const { prefix: targetPrefix, field } of searchIndexes.values()) {
+    // FULLTEXT, not SEARCH — this SurrealDB version renamed the index-type keyword;
+    // SEARCH ANALYZER ... is a parse error here even though older docs/examples use it.
+    await db.query(
+      `DEFINE INDEX IF NOT EXISTS idx_search_${targetPrefix}_${field} ON TABLE ${targetPrefix} FIELDS ${field} FULLTEXT ANALYZER ${SEARCH_ANALYZER} BM25 HIGHLIGHTS;`,
+    );
+  }
+
+  await db.query(`UPSERT ${SCHEMA_META_TABLE}:current SET hash = '${schemaHash}';`);
 };
 
 const surreal = makeModule(() => {
