@@ -13,21 +13,37 @@ import logger from "./logger";
 // without any per-route setup.
 const BRACKET_KEY_RE = /^([^[\]]+)\[([^\]]+)\](?:\[([^\]]+)\])?$/;
 
-export const injectBracketQuery = ({ query, request }: { query: Record<string, unknown>; request: Request }) => {
+export const injectBracketQuery = ({
+  query,
+  request,
+}: {
+  query: Record<string, unknown>;
+  request: Request;
+}) => {
   const params = new URL(request.url).searchParams;
 
   for (const [key, value] of params) {
     const match = BRACKET_KEY_RE.exec(key);
     if (!match) continue;
 
-    const [, root, sub1, sub2] = match as unknown as [string, string, string, string | undefined];
+    const [, root, sub1, sub2] = match as unknown as [
+      string,
+      string,
+      string,
+      string | undefined,
+    ];
     const existingRoot = query[root];
-    const rootObj = typeof existingRoot === "object" && existingRoot !== null ? (existingRoot as Record<string, unknown>) : {};
+    const rootObj =
+      typeof existingRoot === "object" && existingRoot !== null
+        ? (existingRoot as Record<string, unknown>)
+        : {};
 
     if (sub2) {
       const existingSub = rootObj[sub1];
       rootObj[sub1] = {
-        ...(typeof existingSub === "object" && existingSub !== null ? (existingSub as Record<string, unknown>) : {}),
+        ...(typeof existingSub === "object" && existingSub !== null
+          ? (existingSub as Record<string, unknown>)
+          : {}),
         [sub2]: value,
       };
     } else {
@@ -47,29 +63,35 @@ const elysia = makeModule(() => {
 
   fn.init = () => {
     app = new Elysia()
-      .use(cors())
+      .use(
+        cors({
+          origin: () => true,
+        }),
+      )
       .onTransform({ as: "global" }, injectBracketQuery)
       .onError(({ error }) => {
-      if (error instanceof ValidationError) {
-        return status(422, {
-          message: "Validation error",
-          errors: (error.detail("") as { errors: { value: {}; summary: string }[] }).errors.map(({ value, summary, ...err }) => err),
+        if (error instanceof ValidationError) {
+          return status(422, {
+            message: "Validation error",
+            errors: (
+              error.detail("") as { errors: { value: {}; summary: string }[] }
+            ).errors.map(({ value, summary, ...err }) => err),
+          });
+        }
+
+        if (error instanceof UniqueConstraintError) {
+          return status(409, {
+            message: error.message,
+            field: error.field,
+          });
+        }
+
+        logger().error(error);
+
+        return status(500, {
+          message: "Internal Server Error",
         });
-      }
-
-      if (error instanceof UniqueConstraintError) {
-        return status(409, {
-          message: error.message,
-          field: error.field,
-        });
-      }
-
-      logger().error(error);
-
-      return status(500, {
-        message: "Internal Server Error",
       });
-    });
 
     return {
       // No startup log here — the CLI prints one consolidated banner after every
