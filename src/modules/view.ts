@@ -155,13 +155,13 @@ const view = makeModule(() => {
           });
 
           // Fire-and-forget — never awaited, so it can't add latency to the response.
-          import("./analytics").then(({ default: analytics, resolveClientIp }) =>
+          import("./analytics").then(({ default: analytics, resolveClientIp, resolveRequestOrigin }) =>
             analytics().track({
               path,
               referrer: request.headers.get("referer"),
               userAgent: request.headers.get("user-agent"),
               ip: resolveClientIp(request, server),
-              requestUrl: request.url,
+              requestUrl: resolveRequestOrigin(request),
             }),
           );
 

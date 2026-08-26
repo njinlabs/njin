@@ -46,6 +46,21 @@ export const resolveClientIp = (
   return server?.requestIP(request)?.address ?? null;
 };
 
+// `request.url` reflects what the backend itself sees — behind a reverse proxy that
+// terminates TLS (the common case), that's `http://` even though visitors hit the site
+// over `https://`. That scheme mismatch alone breaks isSameOrigin's exact comparison,
+// so every internal navigation gets misclassified as an external referrer. Prefer the
+// headers a trusted proxy sets; fall back to request.url for direct connections.
+export const resolveRequestOrigin = (request: Request) => {
+  const forwardedHost = request.headers.get("x-forwarded-host");
+  if (forwardedHost) {
+    const proto = request.headers.get("x-forwarded-proto")?.split(",")[0]!.trim() || "http";
+    return `${proto}://${forwardedHost.split(",")[0]!.trim()}`;
+  }
+
+  return new URL(request.url).origin;
+};
+
 const hashVisitor = (ip: string, userAgent: string) => {
   const today = moment().format("YYYY-MM-DD");
   return new Bun.CryptoHasher("sha256").update(`${ip}:${userAgent}:${today}`).digest("hex");

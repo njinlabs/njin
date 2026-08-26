@@ -43,7 +43,9 @@ mock.module("../../src/modules/auth", () => ({ default: async () => ({ plugin: f
 const fakeElysia = makeFakeElysia();
 mock.module("../../src/modules/elysia", () => ({ ...realElysiaModule, default: fakeElysia.fn }));
 
-const { resolveClientIp, default: analytics } = await import("../../src/modules/analytics");
+const { resolveClientIp, resolveRequestOrigin, default: analytics } = await import(
+  "../../src/modules/analytics"
+);
 
 const initResult = await analytics.init();
 const app = fakeElysia.buildApp();
@@ -69,6 +71,27 @@ describe("resolveClientIp", () => {
     const req = new Request("http://x");
     expect(resolveClientIp(req, null)).toBeNull();
     expect(resolveClientIp(req, { requestIP: () => null })).toBeNull();
+  });
+});
+
+describe("resolveRequestOrigin", () => {
+  it("uses x-forwarded-proto and x-forwarded-host when present", () => {
+    const req = new Request("http://127.0.0.1:3000/blog", {
+      headers: { "x-forwarded-proto": "https", "x-forwarded-host": "mysite.com" },
+    });
+    expect(resolveRequestOrigin(req)).toBe("https://mysite.com");
+  });
+
+  it("defaults to http when x-forwarded-proto is missing", () => {
+    const req = new Request("http://127.0.0.1:3000/blog", {
+      headers: { "x-forwarded-host": "mysite.com" },
+    });
+    expect(resolveRequestOrigin(req)).toBe("http://mysite.com");
+  });
+
+  it("falls back to request.url when there is no proxy", () => {
+    const req = new Request("https://mysite.com/blog");
+    expect(resolveRequestOrigin(req)).toBe("https://mysite.com");
   });
 });
 
