@@ -207,9 +207,10 @@ describe("makeModel read() search", () => {
       expect(call!.sql).toContain("(title @1@ $search OR body @2@ $search)");
       // Each field's BM25 score gets a containment boost (see CONTAINMENT_BOOST) so a document
       // that literally contains the search string outranks one that only shares ngrams with it.
+      // Both sides have spaces stripped before comparing (run-together variants like "REDWING").
       expect(call!.sql).toContain(
-        "((search::score(1) + (IF string::contains(string::lowercase(title), string::lowercase($search)) THEN 100 ELSE 0 END)) + " +
-          "(search::score(2) + (IF string::contains(string::lowercase(body), string::lowercase($search)) THEN 100 ELSE 0 END))) AS __relevance",
+        '((search::score(1) + (IF string::contains(string::replace(string::lowercase(title), " ", ""), string::replace(string::lowercase($search), " ", "")) THEN 100 ELSE 0 END)) + ' +
+          '(search::score(2) + (IF string::contains(string::replace(string::lowercase(body), " ", ""), string::replace(string::lowercase($search), " ", "")) THEN 100 ELSE 0 END))) AS __relevance',
       );
       expect(call!.sql).toContain("ORDER BY __relevance DESC");
       expect(call!.params.search).toBe("hello");
@@ -238,7 +239,7 @@ describe("makeModel read() search", () => {
 });
 
 describe("makeModel read() nested relation search", () => {
-  it("turns a relation searchField into an IN subquery, excluded from relevance", async () => {
+  it("turns a relation searchField into an IN subquery, contributing its own BM25 + containment boost to relevance via $parent", async () => {
     const author = makeModel(`author_${crypto.randomUUID().replace(/-/g, "")}`, {
       name: "Author",
       searchFields: [],
@@ -262,15 +263,19 @@ describe("makeModel read() nested relation search", () => {
     expect(call!.sql).toContain(
       `(title @1@ $search OR author IN (SELECT VALUE id FROM ${author.prefix} WHERE name @2@ $search))`,
     );
-    // Only the flat "title" field contributes a score — the nested match has no
-    // per-record score in this query's context.
+    // The flat "title" field contributes BM25 + containment boost directly. The nested
+    // "author.name" match pulls its BM25 score back via a correlated subquery keyed on
+    // $parent.author (the current post's link), re-running the same @2@ match scoped to just
+    // that one author record and summing the (0 or 1 row) result with math::sum — so a real
+    // relation match (e.g. the author's name is exactly the query) gets a genuine score instead
+    // of the flat 0 it used to be stuck with.
     expect(call!.sql).toContain(
-      "((search::score(1) + (IF string::contains(string::lowercase(title), string::lowercase($search)) THEN 100 ELSE 0 END))) AS __relevance",
+      '((search::score(1) + (IF string::contains(string::replace(string::lowercase(title), " ", ""), string::replace(string::lowercase($search), " ", "")) THEN 100 ELSE 0 END)) + ' +
+        `math::sum((SELECT VALUE (search::score(2) + (IF string::contains(string::replace(string::lowercase(name), " ", ""), string::replace(string::lowercase($search), " ", "")) THEN 100 ELSE 0 END)) FROM ${author.prefix} WHERE id = $parent.author AND name @2@ $search))) AS __relevance`,
     );
-    expect(call!.sql).not.toContain("search::score(2)");
   });
 
-  it("turns a multi_relation searchField into a CONTAINSANY subquery", async () => {
+  it("turns a multi_relation searchField into a CONTAINSANY subquery, still ranked by BM25 + containment via $parent even with no flat fields", async () => {
     const tag = makeModel(`tag_${crypto.randomUUID().replace(/-/g, "")}`, {
       name: "Tag",
       searchFields: [],
@@ -293,7 +298,13 @@ describe("makeModel read() nested relation search", () => {
     expect(call!.sql).toContain(
       `(tags CONTAINSANY (SELECT VALUE id FROM ${tag.prefix} WHERE name @1@ $search))`,
     );
-    expect(call!.sql).not.toContain("__relevance");
+    // No flat fields at all, but the nested match still gets a real BM25 + containment signal to
+    // rank by (summed over every matching tag via $parent.tags) — relevance ordering is no
+    // longer skipped just because every searchField is nested.
+    expect(call!.sql).toContain(
+      `(math::sum((SELECT VALUE (search::score(1) + (IF string::contains(string::replace(string::lowercase(name), " ", ""), string::replace(string::lowercase($search), " ", "")) THEN 100 ELSE 0 END)) FROM ${tag.prefix} WHERE id IN $parent.tags AND name @1@ $search))) AS __relevance`,
+    );
+    expect(call!.sql).toContain("ORDER BY __relevance DESC");
   });
 
   it("throws at model-definition time when a searchField references a non-relation field", () => {

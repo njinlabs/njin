@@ -266,38 +266,55 @@ export const makeModel = <Rules extends z.ZodObject>(
     // user-defined schema shape (they're injected in create()/update()) — allow sorting by them too.
     const sortableFields = new Set([...Object.keys(config.schema.shape), "id", "createdAt", "updatedAt"]);
     const hasExplicitSort = Boolean(sort && sortableFields.has(sort));
-    // An explicit sort always wins; otherwise, when searching, rank by BM25 relevance
-    // (summed across every matched flat search field) instead of leaving result order
-    // unspecified. Nested (relation) entries are excluded from this sum — a match found via
-    // the IN/CONTAINSANY subquery above has no per-record score in this query's context, since
-    // it happened on a different table entirely. If a model's searchFields are all nested,
-    // there's no score to rank by, so relevance ordering is skipped (same as no searchFields).
-    // `ORDER BY` only accepts a bare identifier here, not a function call — so relevance is
-    // projected as an aliased field below (SELECT ... AS __relevance) and stripped back out
-    // of each returned record afterwards, since it isn't part of the model's schema.
+    // An explicit sort always wins; otherwise, when searching, rank by relevance instead of
+    // leaving result order unspecified. `ORDER BY` only accepts a bare identifier here, not a
+    // function call — so relevance is projected as an aliased field below (SELECT ... AS
+    // __relevance) and stripped back out of each returned record afterwards, since it isn't
+    // part of the model's schema.
     //
-    // Each flat field's score also gets a containment boost: the ngram analyzer (see
-    // SEARCH_ANALYZER_DEFINITION in ../../modules/surreal) matches on shared n-grams, which
-    // means a document can match without ever containing the search string as a whole — two
-    // unrelated titles can share enough short n-grams to both "match". A document whose field
-    // literally contains the (lowercased) search string is a much stronger relevance signal than
-    // raw BM25 alone, so it's boosted well above the normal BM25 range (empirically small, well
-    // under 10) to consistently outrank n-gram-only matches, while leaving those matches in the
-    // result set (fuzzy/typo recall from ngram is unaffected — this only changes ordering).
-    const useRelevance = !hasExplicitSort && Boolean(search && searchPlan.some((e) => e.kind === "flat"));
+    // Every field — flat or nested — contributes raw BM25 (search::score(N)) plus a containment
+    // boost. search::score(N) only works against a FULLTEXT index on the table actually being
+    // queried, and a nested match happened on a different table entirely — so its score is
+    // pulled back via a correlated subquery using SurrealDB's $parent (the current outer row),
+    // re-running the same `targetField @N@ $search` match scoped to just that one linked record
+    // (`id = $parent.<local>`, or `id IN $parent.<local>` for a multi relation) and summing the
+    // result with math::sum (0 rows -> 0, exactly what an unmatched/absent relation should
+    // contribute). Nested entries used to be excluded from __relevance altogether, which meant a
+    // row matched *only* through its relation (e.g. brand.name === "Red Wing", normally the most
+    // precise signal available) scored exactly 0 — tied with "didn't match" and ranked below any
+    // row that merely shared a few ngrams with the query on a flat field.
+    //
+    // The containment check itself: the ngram analyzer (see SEARCH_ANALYZER_DEFINITION in
+    // ../../modules/surreal) matches on shared n-grams, which means a document can match without
+    // ever containing the search string as a whole — two unrelated titles can share enough short
+    // n-grams to both "match", and short/generic field values are disproportionately likely to
+    // do so. A field that truly contains the (lowercased) search string is a much stronger
+    // signal than raw BM25 alone, so it's boosted well above the normal BM25 range (empirically
+    // small, well under 10) to consistently outrank n-gram-only matches, without removing those
+    // matches from the result set (fuzzy/typo recall from ngram is unaffected — this only changes
+    // ordering). Both sides also have their spaces stripped before comparing, since real product
+    // data routinely writes a multi-word term as one run-together token (e.g. "REDWING 2415..."
+    // for "Red Wing") — a plain substring check against "red wing" (with the space) would miss
+    // that despite it being a stronger match than most ngram overlaps.
+    const useRelevance = !hasExplicitSort && Boolean(search && searchPlan.length);
     const orderBy = hasExplicitSort
       ? `ORDER BY ${sort} ${order === "desc" ? "DESC" : "ASC"}`
       : useRelevance
         ? "ORDER BY __relevance DESC"
         : "";
+    const containmentCheck = (field: string) =>
+      `string::contains(string::replace(string::lowercase(${field}), " ", ""), string::replace(string::lowercase($search), " ", ""))`;
     const relevanceSelect = useRelevance
       ? `, (${searchPlan
-          .map((e, i) =>
-            e.kind === "flat"
-              ? `(search::score(${i + 1}) + (IF string::contains(string::lowercase(${e.field}), string::lowercase($search)) THEN ${CONTAINMENT_BOOST} ELSE 0 END))`
-              : null,
-          )
-          .filter((s): s is string => s !== null)
+          .map((e, i) => {
+            const n = i + 1;
+            const boost = (field: string) => `(IF ${containmentCheck(field)} THEN ${CONTAINMENT_BOOST} ELSE 0 END)`;
+            if (e.kind === "flat") {
+              return `(search::score(${n}) + ${boost(e.field)})`;
+            }
+            const idFilter = e.multi ? `id IN $parent.${e.local}` : `id = $parent.${e.local}`;
+            return `math::sum((SELECT VALUE (search::score(${n}) + ${boost(e.targetField)}) FROM ${e.targetPrefix} WHERE ${idFilter} AND ${e.targetField} @${n}@ $search))`;
+          })
           .join(" + ")}) AS __relevance`
       : "";
 
