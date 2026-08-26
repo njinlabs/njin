@@ -205,7 +205,12 @@ describe("makeModel read() search", () => {
       // @N@, not string::similarity::jaro_winkler — a whole-field comparison would score a
       // short query against a long field far below any usable threshold.
       expect(call!.sql).toContain("(title @1@ $search OR body @2@ $search)");
-      expect(call!.sql).toContain("(search::score(1) + search::score(2)) AS __relevance");
+      // Each field's BM25 score gets a containment boost (see CONTAINMENT_BOOST) so a document
+      // that literally contains the search string outranks one that only shares ngrams with it.
+      expect(call!.sql).toContain(
+        "((search::score(1) + (IF string::contains(string::lowercase(title), string::lowercase($search)) THEN 100 ELSE 0 END)) + " +
+          "(search::score(2) + (IF string::contains(string::lowercase(body), string::lowercase($search)) THEN 100 ELSE 0 END))) AS __relevance",
+      );
       expect(call!.sql).toContain("ORDER BY __relevance DESC");
       expect(call!.params.search).toBe("hello");
 
@@ -259,7 +264,9 @@ describe("makeModel read() nested relation search", () => {
     );
     // Only the flat "title" field contributes a score — the nested match has no
     // per-record score in this query's context.
-    expect(call!.sql).toContain("(search::score(1)) AS __relevance");
+    expect(call!.sql).toContain(
+      "((search::score(1) + (IF string::contains(string::lowercase(title), string::lowercase($search)) THEN 100 ELSE 0 END))) AS __relevance",
+    );
     expect(call!.sql).not.toContain("search::score(2)");
   });
 

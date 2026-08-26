@@ -141,12 +141,12 @@ describe("surreal.init() — remote db.path", () => {
     // "Next.js" would tokenize into "next" / "." / "js" and a query for "next.js" (split
     // the same way) would never match. FULLTEXT (not SEARCH) — this SurrealDB version
     // renamed the DEFINE INDEX keyword; SEARCH ANALYZER is a parse error here.
-    expect(defined).toContain("DEFINE ANALYZER IF NOT EXISTS njin_search TOKENIZERS blank FILTERS lowercase,ngram(2,10);");
+    expect(defined).toContain("DEFINE ANALYZER OVERWRITE njin_search TOKENIZERS blank FILTERS lowercase,ngram(3,10);");
     expect(defined).toContain(
-      "DEFINE INDEX IF NOT EXISTS idx_search_post_title ON TABLE post FIELDS title FULLTEXT ANALYZER njin_search BM25 HIGHLIGHTS;",
+      "DEFINE INDEX OVERWRITE idx_search_post_title ON TABLE post FIELDS title FULLTEXT ANALYZER njin_search BM25 HIGHLIGHTS;",
     );
     expect(defined).toContain(
-      "DEFINE INDEX IF NOT EXISTS idx_search_post_body ON TABLE post FIELDS body FULLTEXT ANALYZER njin_search BM25 HIGHLIGHTS;",
+      "DEFINE INDEX OVERWRITE idx_search_post_body ON TABLE post FIELDS body FULLTEXT ANALYZER njin_search BM25 HIGHLIGHTS;",
     );
   });
 
@@ -171,7 +171,7 @@ describe("surreal.init() — remote db.path", () => {
     const defined = instance.queries.join("\n");
 
     expect(defined).toContain(
-      "DEFINE INDEX IF NOT EXISTS idx_search_user_name ON TABLE user FIELDS name FULLTEXT ANALYZER njin_search BM25 HIGHLIGHTS;",
+      "DEFINE INDEX OVERWRITE idx_search_user_name ON TABLE user FIELDS name FULLTEXT ANALYZER njin_search BM25 HIGHLIGHTS;",
     );
     expect(defined).not.toContain("idx_search_post_author");
   });

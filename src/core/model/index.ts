@@ -4,6 +4,10 @@ import { RecordId, Table, type Values } from "surrealdb";
 import { z } from "zod";
 import { runAfterHooks, runBeforeDestroyHooks, runBeforeHooks } from "./hooks";
 
+// See the containment-boost comment in read()'s relevanceSelect below for why this exists and
+// why the value just needs to clear typical BM25 scores (~0-10), not be precisely tuned.
+const CONTAINMENT_BOOST = 100;
+
 export type FormMeta = {
   label: string;
   unique?: boolean;
@@ -271,6 +275,15 @@ export const makeModel = <Rules extends z.ZodObject>(
     // `ORDER BY` only accepts a bare identifier here, not a function call — so relevance is
     // projected as an aliased field below (SELECT ... AS __relevance) and stripped back out
     // of each returned record afterwards, since it isn't part of the model's schema.
+    //
+    // Each flat field's score also gets a containment boost: the ngram analyzer (see
+    // SEARCH_ANALYZER_DEFINITION in ../../modules/surreal) matches on shared n-grams, which
+    // means a document can match without ever containing the search string as a whole — two
+    // unrelated titles can share enough short n-grams to both "match". A document whose field
+    // literally contains the (lowercased) search string is a much stronger relevance signal than
+    // raw BM25 alone, so it's boosted well above the normal BM25 range (empirically small, well
+    // under 10) to consistently outrank n-gram-only matches, while leaving those matches in the
+    // result set (fuzzy/typo recall from ngram is unaffected — this only changes ordering).
     const useRelevance = !hasExplicitSort && Boolean(search && searchPlan.some((e) => e.kind === "flat"));
     const orderBy = hasExplicitSort
       ? `ORDER BY ${sort} ${order === "desc" ? "DESC" : "ASC"}`
@@ -279,7 +292,11 @@ export const makeModel = <Rules extends z.ZodObject>(
         : "";
     const relevanceSelect = useRelevance
       ? `, (${searchPlan
-          .map((e, i) => (e.kind === "flat" ? `search::score(${i + 1})` : null))
+          .map((e, i) =>
+            e.kind === "flat"
+              ? `(search::score(${i + 1}) + (IF string::contains(string::lowercase(${e.field}), string::lowercase($search)) THEN ${CONTAINMENT_BOOST} ELSE 0 END))`
+              : null,
+          )
           .filter((s): s is string => s !== null)
           .join(" + ")}) AS __relevance`
       : "";

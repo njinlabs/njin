@@ -15,10 +15,20 @@ export const isRemotePath = (path: string) => REMOTE_SCHEMES.some((scheme) => pa
 // tokenizer splits on whitespace only (unlike `class`, which also splits on punctuation:
 // "Next.js" would become "next" / "." / "js", and a lone "." can't form any 2-char ngram,
 // so a query for "next.js" — tokenized the same way — would never match). The `ngram`
-// filter then indexes overlapping 2-10 char slices of each whitespace-delimited token so
+// filter then indexes overlapping 3-10 char slices of each whitespace-delimited token so
 // the `@N@` match operator can find a term anywhere inside a field (not just a whole-field
-// match) and still tolerate minor typos, similar to trigram search.
+// match) and still tolerate minor typos, similar to trigram search. Minimum is 3, not 2 —
+// 2-char slices ("si", "ze", digit pairs, ...) are common enough across unrelated documents
+// that they matched all over the place on real-sized catalogs (a 2-char generic word turns
+// into near-universal noise); 3+ cuts that collision rate drastically. core/model/index.ts's
+// relevanceSelect adds a containment-based score boost on top of this, so a document that
+// truly contains the query substring still outranks one that only shares a few ngrams with it.
 const SEARCH_ANALYZER = "njin_search";
+// Single source of truth for the analyzer body — reused both in the DEFINE below and in
+// schemaHash, so any future change here (e.g. a different ngram range) automatically
+// invalidates the stored hash and re-runs the DEFINE on next boot instead of silently
+// leaving an already-migrated DB on the old analyzer definition.
+const SEARCH_ANALYZER_DEFINITION = "TOKENIZERS blank FILTERS lowercase,ngram(3,10)";
 
 // Records the hash of the last schema this DB was migrated to, so a worker booting against
 // an already-migrated DB (idle-evict/crash respawn — every DEFINE below is idempotent but
@@ -70,7 +80,13 @@ const ensureTables = async (db: Surreal) => {
   }
 
   const schemaHash = createHash("sha256")
-    .update(JSON.stringify({ prefixes: [...prefixes].sort(), searchIndexes: [...searchIndexes.keys()].sort() }))
+    .update(
+      JSON.stringify({
+        prefixes: [...prefixes].sort(),
+        searchIndexes: [...searchIndexes.keys()].sort(),
+        analyzer: SEARCH_ANALYZER_DEFINITION,
+      }),
+    )
     .digest("hex");
 
   // Must be DEFINE'd before the SELECT below can even run — unlike a table that exists but
@@ -87,13 +103,16 @@ const ensureTables = async (db: Surreal) => {
     await db.query(`DEFINE TABLE IF NOT EXISTS ${prefix} SCHEMALESS;`);
   }
 
-  await db.query(`DEFINE ANALYZER IF NOT EXISTS ${SEARCH_ANALYZER} TOKENIZERS blank FILTERS lowercase,ngram(2,10);`);
+  // OVERWRITE, not IF NOT EXISTS — this block only runs when schemaHash just changed (see the
+  // early return above), so an analyzer/index that already exists under this name here means its
+  // definition is stale and needs replacing, not skipping. FULLTEXT, not SEARCH — this SurrealDB
+  // version renamed the index-type keyword; SEARCH ANALYZER ... is a parse error here even though
+  // older docs/examples use it.
+  await db.query(`DEFINE ANALYZER OVERWRITE ${SEARCH_ANALYZER} ${SEARCH_ANALYZER_DEFINITION};`);
 
   for (const { prefix: targetPrefix, field } of searchIndexes.values()) {
-    // FULLTEXT, not SEARCH — this SurrealDB version renamed the index-type keyword;
-    // SEARCH ANALYZER ... is a parse error here even though older docs/examples use it.
     await db.query(
-      `DEFINE INDEX IF NOT EXISTS idx_search_${targetPrefix}_${field} ON TABLE ${targetPrefix} FIELDS ${field} FULLTEXT ANALYZER ${SEARCH_ANALYZER} BM25 HIGHLIGHTS;`,
+      `DEFINE INDEX OVERWRITE idx_search_${targetPrefix}_${field} ON TABLE ${targetPrefix} FIELDS ${field} FULLTEXT ANALYZER ${SEARCH_ANALYZER} BM25 HIGHLIGHTS;`,
     );
   }
 
