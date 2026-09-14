@@ -19,6 +19,9 @@ coverage/
 .DS_Store
 Thumbs.db
 
+# graphify output (generated knowledge graph)
+graphify-out/
+
 # IDE
 .idea/
 .vscode/
