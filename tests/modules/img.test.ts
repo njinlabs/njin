@@ -30,8 +30,12 @@ describe("isAllowed", () => {
   });
 
   it("allows an external host only if explicitly whitelisted", () => {
-    expect(isAllowed("https://cdn.example.com/img.png", ["cdn.example.com"])).toBe(true);
-    expect(isAllowed("https://evil.com/img.png", ["cdn.example.com"])).toBe(false);
+    expect(
+      isAllowed("https://cdn.example.com/img.png", ["cdn.example.com"]),
+    ).toBe(true);
+    expect(isAllowed("https://evil.com/img.png", ["cdn.example.com"])).toBe(
+      false,
+    );
   });
 
   it("rejects an unparseable URL", () => {
@@ -45,7 +49,9 @@ describe("extractFilename", () => {
   });
 
   it("derives a .webp filename from a full URL", () => {
-    expect(extractFilename("https://cdn.example.com/path/to/image.jpg")).toBe("image.webp");
+    expect(extractFilename("https://cdn.example.com/path/to/image.jpg")).toBe(
+      "image.webp",
+    );
   });
 
   it("falls back to image.webp when nothing usable is found", () => {

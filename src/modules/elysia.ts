@@ -1,9 +1,9 @@
 import cors from "@elysia/cors";
+import Elysia, { type AnyElysia, status, ValidationError } from "elysia";
 import { getConfig } from "../core/config";
 import { UniqueConstraintError } from "../core/model";
 import { makeModule } from "../core/module";
 import { serveWorker } from "../core/worker";
-import Elysia, { status, ValidationError, type AnyElysia } from "elysia";
 import logger from "./logger";
 
 // Elysia's query parser only understands object/record-shaped query schemas as a single

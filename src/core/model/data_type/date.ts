@@ -4,7 +4,10 @@ import type { FormMeta } from "..";
 
 export function date(meta: FormMeta): z.ZodPreprocess<z.ZodString>;
 
-export function date<T extends z.ZodTypeAny>(meta: FormMeta, rule: (z: z.ZodString) => T): z.ZodPreprocess<T>;
+export function date<T extends z.ZodTypeAny>(
+  meta: FormMeta,
+  rule: (z: z.ZodString) => T,
+): z.ZodPreprocess<T>;
 
 export function date(meta: FormMeta, rule?: (z: any) => any) {
   const inner = rule ? rule(z.string()) : z.string();

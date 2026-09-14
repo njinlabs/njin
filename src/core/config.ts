@@ -1,13 +1,15 @@
+import { join } from "node:path";
 import type { AnyElysia } from "elysia";
 import type { FileAdapter } from "../modules/file";
-import { join } from "node:path";
 import bunFilesystemAdapter from "./adapters/bun_filesystem";
 import type { Helper } from "./helper";
 import type { makeModel } from "./model";
 import type { Plugin } from "./plugin";
 import type { makeVars } from "./vars";
 
-export type ModelFactory = () => Promise<{ default: ReturnType<typeof makeModel> }>;
+export type ModelFactory = () => Promise<{
+  default: ReturnType<typeof makeModel>;
+}>;
 
 // A hook file's only job is the side effect of calling afterCreate()/etc. at import
 // time — its module's exports (if any) are irrelevant, unlike ModelFactory.
@@ -27,7 +29,9 @@ export type RouteFactory = () => Promise<{ default: AnyElysia }>;
 
 // A vars file's default export is one makeVars() group (e.g. "general", "seo") —
 // a singleton settings object, not a list of records like a model.
-export type VarsFactory = () => Promise<{ default: ReturnType<typeof makeVars> }>;
+export type VarsFactory = () => Promise<{
+  default: ReturnType<typeof makeVars>;
+}>;
 
 // A helper file's default export is one defineHelper() — a stateless function
 // registered as an Edge global by its own name, unlike models/vars which are
@@ -69,7 +73,12 @@ export type NjinConfig = {
 export type ResolvedConfig = {
   port: number;
   rootDir: string;
-  db: { path: string; namespace: string; database: string; auth?: { username: string; password: string } | string };
+  db: {
+    path: string;
+    namespace: string;
+    database: string;
+    auth?: { username: string; password: string } | string;
+  };
   img: { hosts: string[] };
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   adapters: { file: FileAdapter<any> };
@@ -142,17 +151,39 @@ export const loadConfig = async (preloaded?: NjinConfig): Promise<void> => {
     },
     img: { hosts: userConfig.img?.hosts ?? [] },
     adapters: { file: userConfig.adapters?.file ?? bunFilesystemAdapter() },
-    models: [...plugins.flatMap((p) => p.models ?? []), ...(userConfig.models ?? [])],
-    hooks: [...plugins.flatMap((p) => p.hooks ?? []), ...(userConfig.hooks ?? [])],
-    events: [...plugins.flatMap((p) => p.events ?? []), ...(userConfig.events ?? [])],
-    routes: [...plugins.flatMap((p) => p.routes ?? []), ...(userConfig.routes ?? [])],
+    models: [
+      ...plugins.flatMap((p) => p.models ?? []),
+      ...(userConfig.models ?? []),
+    ],
+    hooks: [
+      ...plugins.flatMap((p) => p.hooks ?? []),
+      ...(userConfig.hooks ?? []),
+    ],
+    events: [
+      ...plugins.flatMap((p) => p.events ?? []),
+      ...(userConfig.events ?? []),
+    ],
+    routes: [
+      ...plugins.flatMap((p) => p.routes ?? []),
+      ...(userConfig.routes ?? []),
+    ],
     vars: [...plugins.flatMap((p) => p.vars ?? []), ...(userConfig.vars ?? [])],
-    helpers: [...plugins.flatMap((p) => p.helpers ?? []), ...(userConfig.helpers ?? [])],
-    pluginInits: plugins.map((p) => p.init).filter((fn): fn is () => Promise<void> | void => typeof fn === "function"),
+    helpers: [
+      ...plugins.flatMap((p) => p.helpers ?? []),
+      ...(userConfig.helpers ?? []),
+    ],
+    pluginInits: plugins
+      .map((p) => p.init)
+      .filter(
+        (fn): fn is () => Promise<void> | void => typeof fn === "function",
+      ),
   };
 };
 
 export const getConfig = (): ResolvedConfig => {
-  if (!resolved) throw new Error("Config not loaded yet — loadConfig() must run before getConfig() is called.");
+  if (!resolved)
+    throw new Error(
+      "Config not loaded yet — loadConfig() must run before getConfig() is called.",
+    );
   return resolved;
 };

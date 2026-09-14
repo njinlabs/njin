@@ -28,7 +28,13 @@ mock.module("../../src/core/config", () => ({
     adapters: {
       file: {
         // No `dir` — the S3-style adapter case, where /uploads/* should never be mounted.
-        write: async (f: File) => ({ name: f.name, size: f.size, type: f.type, meta: null, url: "/x" }),
+        write: async (f: File) => ({
+          name: f.name,
+          size: f.size,
+          type: f.type,
+          meta: null,
+          url: "/x",
+        }),
         unlink: async () => {},
       },
     },
@@ -36,10 +42,15 @@ mock.module("../../src/core/config", () => ({
 }));
 
 const fakeAuthPlugin = makeFakeAuthPlugin();
-mock.module("../../src/modules/auth", () => ({ default: async () => ({ plugin: fakeAuthPlugin }) }));
+mock.module("../../src/modules/auth", () => ({
+  default: async () => ({ plugin: fakeAuthPlugin }),
+}));
 
 const fakeElysia = makeFakeElysia();
-mock.module("../../src/modules/elysia", () => ({ ...realElysiaModule, default: fakeElysia.fn }));
+mock.module("../../src/modules/elysia", () => ({
+  ...realElysiaModule,
+  default: fakeElysia.fn,
+}));
 
 const { default: file } = await import("../../src/modules/file");
 

@@ -1,8 +1,8 @@
 import { describe, expect, it, mock } from "bun:test";
 import * as realSurrealdb from "surrealdb";
+import z from "zod";
 import * as realConfig from "../../src/core/config";
 import realUserModel from "../../src/models/user";
-import z from "zod";
 
 let createRemoteEnginesCalls = 0;
 let createNodeEnginesCalls = 0;
@@ -28,7 +28,9 @@ class FakeSurreal {
   async query(sql: string) {
     this.queries.push(sql);
     if (sql.startsWith("SELECT hash FROM njin_schema_meta")) {
-      return [this.recordedSchemaHash ? [{ hash: this.recordedSchemaHash }] : []];
+      return [
+        this.recordedSchemaHash ? [{ hash: this.recordedSchemaHash }] : [],
+      ];
     }
     return [];
   }
@@ -62,12 +64,23 @@ mock.module("@surrealdb/node", () => ({
 // module-load time, so importing the *real* module here (before getConfig is mocked)
 // would throw "Config not loaded yet". No other test file relies on an un-mocked
 // "../../src/models/file" import, so a minimal stand-in is safe.
-mock.module("../../src/models/user", () => ({ default: { ...realUserModel, prefix: "user" } }));
+mock.module("../../src/models/user", () => ({
+  default: { ...realUserModel, prefix: "user" },
+}));
 mock.module("../../src/models/file", () => ({ default: { prefix: "file" } }));
 
-let dbConfig = { path: "ws://localhost:8000", namespace: "ns", database: "db", auth: undefined as unknown };
+let dbConfig = {
+  path: "ws://localhost:8000",
+  namespace: "ns",
+  database: "db",
+  auth: undefined as unknown,
+};
 let extraModels: (() => Promise<{
-  default: { prefix: string; searchFields?: string[]; validation?: z.ZodObject };
+  default: {
+    prefix: string;
+    searchFields?: string[];
+    validation?: z.ZodObject;
+  };
 }>)[] = [];
 
 // Spreads the real module's other exports (loadConfig, defineConfig, ...) — without
@@ -99,37 +112,65 @@ describe("isRemotePath", () => {
 
 describe("surreal.init() — remote db.path", () => {
   it("connects with createRemoteEngines and defines tables for user/file/vars/models once spin() runs", async () => {
-    dbConfig = { path: "ws://localhost:8000", namespace: "ns", database: "db", auth: { username: "root", password: "root" } };
+    dbConfig = {
+      path: "ws://localhost:8000",
+      namespace: "ns",
+      database: "db",
+      auth: { username: "root", password: "root" },
+    };
     extraModels = [async () => ({ default: { prefix: "post" } })];
 
     const result = await surreal.init();
 
     expect(createRemoteEnginesCalls).toBe(1);
     const instance = instances[instances.length - 1]!;
-    expect(instance.connectArgs).toEqual(["ws://localhost:8000", { authentication: dbConfig.auth }]);
+    expect(instance.connectArgs).toEqual([
+      "ws://localhost:8000",
+      { authentication: dbConfig.auth },
+    ]);
     // FakeSurreal.use() overwrites useArgs each call, so this only reflects the final
     // (namespace + database) call — the namespace-only call in between isn't visible here.
     expect(instance.useArgs).toEqual([{ namespace: "ns", database: "db" }]);
 
     // Namespace/database are explicitly DEFINE'd during init() — not deferred to spin()
     // like ensureTables()'s DEFINE TABLE calls are.
-    expect(instance.queries).toEqual(["DEFINE NAMESPACE IF NOT EXISTS `ns`;", "DEFINE DATABASE IF NOT EXISTS `db`;"]);
+    expect(instance.queries).toEqual([
+      "DEFINE NAMESPACE IF NOT EXISTS `ns`;",
+      "DEFINE DATABASE IF NOT EXISTS `db`;",
+    ]);
 
     await result.spin!();
 
     const definedTables = instance.queries.join("\n");
-    expect(definedTables).toContain("DEFINE TABLE IF NOT EXISTS user SCHEMALESS;");
-    expect(definedTables).toContain("DEFINE TABLE IF NOT EXISTS file SCHEMALESS;");
-    expect(definedTables).toContain("DEFINE TABLE IF NOT EXISTS vars SCHEMALESS;");
-    expect(definedTables).toContain("DEFINE TABLE IF NOT EXISTS post SCHEMALESS;");
+    expect(definedTables).toContain(
+      "DEFINE TABLE IF NOT EXISTS user SCHEMALESS;",
+    );
+    expect(definedTables).toContain(
+      "DEFINE TABLE IF NOT EXISTS file SCHEMALESS;",
+    );
+    expect(definedTables).toContain(
+      "DEFINE TABLE IF NOT EXISTS vars SCHEMALESS;",
+    );
+    expect(definedTables).toContain(
+      "DEFINE TABLE IF NOT EXISTS post SCHEMALESS;",
+    );
 
     expect(surreal()).toBe(instance as unknown as ReturnType<typeof surreal>);
     expect(typeof result.spin).toBe("function");
   });
 
   it("defines a search analyzer and a FULLTEXT index per model searchField", async () => {
-    dbConfig = { path: "ws://localhost:8000", namespace: "ns", database: "db", auth: undefined };
-    extraModels = [async () => ({ default: { prefix: "post", searchFields: ["title", "body"] } })];
+    dbConfig = {
+      path: "ws://localhost:8000",
+      namespace: "ns",
+      database: "db",
+      auth: undefined,
+    };
+    extraModels = [
+      async () => ({
+        default: { prefix: "post", searchFields: ["title", "body"] },
+      }),
+    ];
 
     const result = await surreal.init();
     await result.spin!();
@@ -141,7 +182,9 @@ describe("surreal.init() — remote db.path", () => {
     // "Next.js" would tokenize into "next" / "." / "js" and a query for "next.js" (split
     // the same way) would never match. FULLTEXT (not SEARCH) — this SurrealDB version
     // renamed the DEFINE INDEX keyword; SEARCH ANALYZER is a parse error here.
-    expect(defined).toContain("DEFINE ANALYZER OVERWRITE njin_search TOKENIZERS blank FILTERS lowercase,ngram(3,10);");
+    expect(defined).toContain(
+      "DEFINE ANALYZER OVERWRITE njin_search TOKENIZERS blank FILTERS lowercase,ngram(3,10);",
+    );
     expect(defined).toContain(
       "DEFINE INDEX OVERWRITE idx_search_post_title ON TABLE post FIELDS title FULLTEXT ANALYZER njin_search BM25 HIGHLIGHTS;",
     );
@@ -151,7 +194,12 @@ describe("surreal.init() — remote db.path", () => {
   });
 
   it("defines a nested (relation) searchField's index on the target table/field, not the local relation field", async () => {
-    dbConfig = { path: "ws://localhost:8000", namespace: "ns", database: "db", auth: undefined };
+    dbConfig = {
+      path: "ws://localhost:8000",
+      namespace: "ns",
+      database: "db",
+      auth: undefined,
+    };
     extraModels = [
       async () => ({
         default: {
@@ -177,9 +225,20 @@ describe("surreal.init() — remote db.path", () => {
   });
 
   it("dedupes a nested searchField's index against the target model's own flat searchField for the same field", async () => {
-    dbConfig = { path: "ws://localhost:8000", namespace: "ns", database: "db", auth: undefined };
+    dbConfig = {
+      path: "ws://localhost:8000",
+      namespace: "ns",
+      database: "db",
+      auth: undefined,
+    };
     extraModels = [
-      async () => ({ default: { prefix: "user", searchFields: ["name"], validation: z.object({ name: z.string() }) } }),
+      async () => ({
+        default: {
+          prefix: "user",
+          searchFields: ["name"],
+          validation: z.object({ name: z.string() }),
+        },
+      }),
       async () => ({
         default: {
           prefix: "post",
@@ -195,13 +254,20 @@ describe("surreal.init() — remote db.path", () => {
     await result.spin!();
 
     const instance = instances[instances.length - 1]!;
-    const occurrences = instance.queries.filter((q) => q.includes("idx_search_user_name")).length;
+    const occurrences = instance.queries.filter((q) =>
+      q.includes("idx_search_user_name"),
+    ).length;
 
     expect(occurrences).toBe(1);
   });
 
   it("skips every DEFINE and re-runs ensureTables() when the schema hash changes", async () => {
-    dbConfig = { path: "ws://localhost:8000", namespace: "ns", database: "db", auth: undefined };
+    dbConfig = {
+      path: "ws://localhost:8000",
+      namespace: "ns",
+      database: "db",
+      auth: undefined,
+    };
     extraModels = [async () => ({ default: { prefix: "post" } })];
 
     // First boot: no recorded hash yet, so every DEFINE runs and the resulting hash gets
@@ -209,7 +275,9 @@ describe("surreal.init() — remote db.path", () => {
     const first = await surreal.init();
     await first.spin!();
     const firstInstance = instances[instances.length - 1]!;
-    const upsert = firstInstance.queries.find((q) => q.startsWith("UPSERT njin_schema_meta:current"))!;
+    const upsert = firstInstance.queries.find((q) =>
+      q.startsWith("UPSERT njin_schema_meta:current"),
+    )!;
     const writtenHash = upsert.match(/hash = '([^']+)'/)![1]!;
 
     // Second boot against a DB that already recorded that exact hash (same models, same
@@ -238,13 +306,20 @@ describe("surreal.init() — remote db.path", () => {
     thirdInstance.recordedSchemaHash = writtenHash;
     await third.spin!();
 
-    expect(thirdInstance.queries.join("\n")).toContain("DEFINE TABLE IF NOT EXISTS comment SCHEMALESS;");
+    expect(thirdInstance.queries.join("\n")).toContain(
+      "DEFINE TABLE IF NOT EXISTS comment SCHEMALESS;",
+    );
   });
 });
 
 describe("surreal.init() — embedded db.path", () => {
   it("connects with createNodeEngines for a rocksdb:// path", async () => {
-    dbConfig = { path: "rocksdb://data", namespace: "ns", database: "db", auth: undefined };
+    dbConfig = {
+      path: "rocksdb://data",
+      namespace: "ns",
+      database: "db",
+      auth: undefined,
+    };
     extraModels = [];
     createNodeEnginesCalls = 0;
 
@@ -256,15 +331,27 @@ describe("surreal.init() — embedded db.path", () => {
 
 describe("surreal.init() — unrecognized db.path scheme", () => {
   it("throws a descriptive error", async () => {
-    dbConfig = { path: "postgres://data", namespace: "ns", database: "db", auth: undefined };
+    dbConfig = {
+      path: "postgres://data",
+      namespace: "ns",
+      database: "db",
+      auth: undefined,
+    };
 
-    await expect(surreal.init()).rejects.toThrow(/Unrecognized db\.path scheme/);
+    await expect(surreal.init()).rejects.toThrow(
+      /Unrecognized db\.path scheme/,
+    );
   });
 });
 
 describe("surreal.init() spin()", () => {
   it("closes the connection and exits the process on SIGINT/SIGTERM without touching the real listeners", async () => {
-    dbConfig = { path: "ws://localhost:8000", namespace: "ns", database: "db", auth: undefined };
+    dbConfig = {
+      path: "ws://localhost:8000",
+      namespace: "ns",
+      database: "db",
+      auth: undefined,
+    };
     extraModels = [];
 
     const capturedHandlers: (() => Promise<void>)[] = [];

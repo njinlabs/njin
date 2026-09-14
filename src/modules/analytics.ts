@@ -1,9 +1,9 @@
-import { makeModule } from "../core/module";
 import Elysia from "elysia";
 import geoip from "geoip-lite";
 import moment from "moment";
 import { Table } from "surrealdb";
 import z from "zod";
+import { makeModule } from "../core/module";
 import auth from "./auth";
 import elysia from "./elysia";
 import logger from "./logger";
@@ -54,7 +54,8 @@ export const resolveClientIp = (
 export const resolveRequestOrigin = (request: Request) => {
   const forwardedHost = request.headers.get("x-forwarded-host");
   if (forwardedHost) {
-    const proto = request.headers.get("x-forwarded-proto")?.split(",")[0]!.trim() || "http";
+    const proto =
+      request.headers.get("x-forwarded-proto")?.split(",")[0]!.trim() || "http";
     return `${proto}://${forwardedHost.split(",")[0]!.trim()}`;
   }
 
@@ -63,7 +64,9 @@ export const resolveRequestOrigin = (request: Request) => {
 
 const hashVisitor = (ip: string, userAgent: string) => {
   const today = moment().format("YYYY-MM-DD");
-  return new Bun.CryptoHasher("sha256").update(`${ip}:${userAgent}:${today}`).digest("hex");
+  return new Bun.CryptoHasher("sha256")
+    .update(`${ip}:${userAgent}:${today}`)
+    .digest("hex");
 };
 
 const lookupCountry = (ip: string | null) => {
@@ -102,22 +105,28 @@ const buildWhere = (from?: string, to?: string, path?: string) => {
 
 const analytics = makeModule(() => {
   const fn = () => ({
-    track: async ({ path, referrer, userAgent, ip, requestUrl }: TrackInput) => {
+    track: async ({
+      path,
+      referrer,
+      userAgent,
+      ip,
+      requestUrl,
+    }: TrackInput) => {
       try {
         const country = lookupCountry(ip);
         const visitorHash = ip && userAgent ? hashVisitor(ip, userAgent) : null;
-        const externalReferrer = isSameOrigin(referrer, requestUrl) ? null : referrer;
+        const externalReferrer = isSameOrigin(referrer, requestUrl)
+          ? null
+          : referrer;
 
-        await surreal()
-          .create(table)
-          .content({
-            path,
-            referrer: externalReferrer,
-            userAgent,
-            country,
-            visitorHash,
-            createdAt: moment().toISOString(),
-          });
+        await surreal().create(table).content({
+          path,
+          referrer: externalReferrer,
+          userAgent,
+          country,
+          visitorHash,
+          createdAt: moment().toISOString(),
+        });
       } catch (e) {
         logger().error(e, "[analytics] failed to track pageview");
       }
@@ -133,13 +142,14 @@ const analytics = makeModule(() => {
         "/summary",
         async ({ query: { from, to, path } }) => {
           const { where, params } = buildWhere(from, to, path);
-          const [rows] = await surreal().query<[{ visitorHash: string | null }[]]>(
-            `SELECT visitorHash FROM pageview ${where}`,
-            params,
-          );
+          const [rows] = await surreal().query<
+            [{ visitorHash: string | null }[]]
+          >(`SELECT visitorHash FROM pageview ${where}`, params);
 
           const totalPageviews = rows?.length ?? 0;
-          const uniqueVisitors = new Set((rows ?? []).map((r) => r.visitorHash).filter(Boolean)).size;
+          const uniqueVisitors = new Set(
+            (rows ?? []).map((r) => r.visitorHash).filter(Boolean),
+          ).size;
 
           return { data: { totalPageviews, uniqueVisitors } };
         },
@@ -149,7 +159,9 @@ const analytics = makeModule(() => {
         "/by-country",
         async ({ query: { from, to, path } }) => {
           const { where, params } = buildWhere(from, to, path);
-          const [rows] = await surreal().query<[{ country: string | null; count: number }[]]>(
+          const [rows] = await surreal().query<
+            [{ country: string | null; count: number }[]]
+          >(
             `SELECT country, count() AS count FROM pageview ${where} GROUP BY country ORDER BY count DESC`,
             params,
           );
@@ -162,7 +174,9 @@ const analytics = makeModule(() => {
         "/by-referrer",
         async ({ query: { from, to, path } }) => {
           const { where, params } = buildWhere(from, to, path);
-          const [rows] = await surreal().query<[{ referrer: string | null; count: number }[]]>(
+          const [rows] = await surreal().query<
+            [{ referrer: string | null; count: number }[]]
+          >(
             `SELECT referrer, count() AS count FROM pageview ${where} GROUP BY referrer ORDER BY count DESC`,
             params,
           );
@@ -175,7 +189,9 @@ const analytics = makeModule(() => {
         "/by-page",
         async ({ query: { from, to } }) => {
           const { where, params } = buildWhere(from, to, undefined);
-          const [rows] = await surreal().query<[{ path: string; count: number }[]]>(
+          const [rows] = await surreal().query<
+            [{ path: string; count: number }[]]
+          >(
             `SELECT path, count() AS count FROM pageview ${where} GROUP BY path ORDER BY count DESC`,
             params,
           );
@@ -193,7 +209,9 @@ const analytics = makeModule(() => {
           const { where, params } = buildWhere(from, to, path);
           const bucketLen = interval === "hour" ? 13 : 10; // "YYYY-MM-DDTHH" vs "YYYY-MM-DD"
 
-          const [rows] = await surreal().query<[{ date: string; count: number }[]]>(
+          const [rows] = await surreal().query<
+            [{ date: string; count: number }[]]
+          >(
             `SELECT string::slice(createdAt, 0, ${bucketLen}) AS date, count() AS count
              FROM pageview ${where}
              GROUP BY date
@@ -216,7 +234,9 @@ const analytics = makeModule(() => {
     return {
       // Runs after surreal's own spin() has connected — init() itself runs too early for DB queries.
       spin: async () => {
-        await surreal().query("DEFINE TABLE IF NOT EXISTS pageview SCHEMALESS;");
+        await surreal().query(
+          "DEFINE TABLE IF NOT EXISTS pageview SCHEMALESS;",
+        );
       },
     };
   };

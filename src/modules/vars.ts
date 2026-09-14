@@ -1,6 +1,6 @@
+import Elysia from "elysia";
 import { getConfig } from "../core/config";
 import { makeModule } from "../core/module";
-import Elysia from "elysia";
 import auth from "./auth";
 import elysia from "./elysia";
 

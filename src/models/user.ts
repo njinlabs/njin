@@ -1,5 +1,5 @@
-import { email, makeModel, text } from "../core/model";
 import z from "zod";
+import { email, makeModel, text } from "../core/model";
 
 const user = makeModel("user", {
   name: "Pengguna",

@@ -5,7 +5,10 @@ import { join } from "node:path";
 // Shared staging steps between `njin build` (compiled binary) and `njin build:worker`
 // (bundled JS entry) — both produce the same `out/public`, `out/src/views`, `out/_admin`
 // layout; only the server artifact itself differs.
-export const stageBuildAssets = async (root: string, outDir: string): Promise<void> => {
+export const stageBuildAssets = async (
+  root: string,
+  outDir: string,
+): Promise<void> => {
   await rm(outDir, { recursive: true, force: true });
   await mkdir(outDir, { recursive: true });
 

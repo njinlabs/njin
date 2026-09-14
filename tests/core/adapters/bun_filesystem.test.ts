@@ -20,7 +20,9 @@ describe("bunFilesystemAdapter", () => {
     const dir = mkdtempSync(join(tmpdir(), "njin-bunfs-"));
     try {
       const adapter = bunFilesystemAdapter({ dir });
-      const file = new File(["hello world"], "myphoto.png", { type: "image/png" });
+      const file = new File(["hello world"], "myphoto.png", {
+        type: "image/png",
+      });
 
       const result = await adapter.write(file);
 
@@ -42,7 +44,9 @@ describe("bunFilesystemAdapter", () => {
     const dir = mkdtempSync(join(tmpdir(), "njin-bunfs-"));
     try {
       const adapter = bunFilesystemAdapter({ dir });
-      const file = new File(["data"], "archive.tar.gz", { type: "application/gzip" });
+      const file = new File(["data"], "archive.tar.gz", {
+        type: "application/gzip",
+      });
 
       const result = await adapter.write(file);
 
@@ -61,7 +65,12 @@ describe("bunFilesystemAdapter", () => {
 
       expect(existsSync(join(dir, written.name))).toBe(true);
 
-      await adapter.unlink({ ...written, id: undefined as never, createdAt: "", updatedAt: "" });
+      await adapter.unlink({
+        ...written,
+        id: undefined as never,
+        createdAt: "",
+        updatedAt: "",
+      });
 
       expect(existsSync(join(dir, written.name))).toBe(false);
     } finally {

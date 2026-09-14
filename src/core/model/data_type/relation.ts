@@ -1,6 +1,6 @@
 import { RecordId } from "surrealdb";
 import z from "zod";
-import { type FormMeta, type makeModel } from "..";
+import type { FormMeta, makeModel } from "..";
 
 export type RelationType<Relation> = z.ZodPreprocess<
   z.ZodPipe<
@@ -31,13 +31,29 @@ export type RelationType<Relation> = z.ZodPreprocess<
   >
 >;
 
-type Relation<Model extends ReturnType<typeof makeModel>> = RelationType<ReturnType<Model["validation"]["partial"]>>;
+type Relation<Model extends ReturnType<typeof makeModel>> = RelationType<
+  ReturnType<Model["validation"]["partial"]>
+>;
 
-export function relation<Model extends ReturnType<typeof makeModel>>(meta: FormMeta & { labelKey?: keyof Model["validation"]["shape"] }, model: Model): Relation<Model>;
+export function relation<Model extends ReturnType<typeof makeModel>>(
+  meta: FormMeta & { labelKey?: keyof Model["validation"]["shape"] },
+  model: Model,
+): Relation<Model>;
 
-export function relation<T extends z.ZodTypeAny, Model extends ReturnType<typeof makeModel>>(meta: FormMeta & { labelKey?: keyof Model["validation"]["shape"] }, model: Model, rule: (z: Relation<Model>) => T): T;
+export function relation<
+  T extends z.ZodTypeAny,
+  Model extends ReturnType<typeof makeModel>,
+>(
+  meta: FormMeta & { labelKey?: keyof Model["validation"]["shape"] },
+  model: Model,
+  rule: (z: Relation<Model>) => T,
+): T;
 
-export function relation(meta: any, model: ReturnType<typeof makeModel>, rule?: (z: any) => any) {
+export function relation(
+  meta: any,
+  model: ReturnType<typeof makeModel>,
+  rule?: (z: any) => any,
+) {
   const baseRule = z.preprocess(
     (value) => {
       if (typeof value === "string") {

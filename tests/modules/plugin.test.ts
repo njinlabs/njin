@@ -31,7 +31,15 @@ describe("plugin module", () => {
   });
 
   it("propagates a throwing init() instead of swallowing it", async () => {
-    await loadConfig({ plugins: [definePlugin({ init: () => { throw new Error("boom"); } })] });
+    await loadConfig({
+      plugins: [
+        definePlugin({
+          init: () => {
+            throw new Error("boom");
+          },
+        }),
+      ],
+    });
 
     await expect(plugin.init()).rejects.toThrow("boom");
   });

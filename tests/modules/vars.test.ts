@@ -27,10 +27,15 @@ mock.module("../../src/core/config", () => ({
 }));
 
 const fakeAuthPlugin = makeFakeAuthPlugin();
-mock.module("../../src/modules/auth", () => ({ default: async () => ({ plugin: fakeAuthPlugin }) }));
+mock.module("../../src/modules/auth", () => ({
+  default: async () => ({ plugin: fakeAuthPlugin }),
+}));
 
 const fakeElysia = makeFakeElysia();
-mock.module("../../src/modules/elysia", () => ({ ...realElysiaModule, default: fakeElysia.fn }));
+mock.module("../../src/modules/elysia", () => ({
+  ...realElysiaModule,
+  default: fakeElysia.fn,
+}));
 
 const { default: vars } = await import("../../src/modules/vars");
 
@@ -39,7 +44,11 @@ const app = fakeElysia.buildApp();
 
 describe("GET /api/vars/:prefix", () => {
   it("returns the group's current data", async () => {
-    const res = await app.handle(new Request("http://localhost/api/vars/seo", { headers: { Authorization: "Bearer x" } }));
+    const res = await app.handle(
+      new Request("http://localhost/api/vars/seo", {
+        headers: { Authorization: "Bearer x" },
+      }),
+    );
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ data: { title: "Default title" } });
   });
@@ -50,7 +59,10 @@ describe("PUT /api/vars/:prefix", () => {
     const res = await app.handle(
       new Request("http://localhost/api/vars/seo", {
         method: "PUT",
-        headers: { Authorization: "Bearer x", "Content-Type": "application/json" },
+        headers: {
+          Authorization: "Bearer x",
+          "Content-Type": "application/json",
+        },
         body: JSON.stringify({ title: "New title" }),
       }),
     );

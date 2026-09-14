@@ -1,7 +1,7 @@
-import surreal from "../../modules/surreal";
 import moment from "moment";
 import { RecordId, Table, type Values } from "surrealdb";
-import { z } from "zod";
+import type { z } from "zod";
+import surreal from "../../modules/surreal";
 import { runAfterHooks, runBeforeHooks } from "../model/hooks";
 
 // One shared physical table for every VARS group — rows are keyed by each
@@ -26,9 +26,16 @@ export const makeVars = <Rules extends z.ZodObject>(
   // returns a complete, valid object. Every VARS field is expected to
   // declare a .default(...) for this reason.
   const get = async (): Promise<Returning> => {
-    const record = await surreal().select<Data & { updatedAt?: string }>(recordId);
-    const { updatedAt, ...rest } = (record ?? {}) as Record<string, unknown> & { updatedAt?: string };
-    return { ...(config.schema.parse(rest) as Data), updatedAt: updatedAt ?? null };
+    const record = await surreal().select<Data & { updatedAt?: string }>(
+      recordId,
+    );
+    const { updatedAt, ...rest } = (record ?? {}) as Record<string, unknown> & {
+      updatedAt?: string;
+    };
+    return {
+      ...(config.schema.parse(rest) as Data),
+      updatedAt: updatedAt ?? null,
+    };
   };
 
   // Upsert, not update — the row may not exist yet on first save.
@@ -42,11 +49,18 @@ export const makeVars = <Rules extends z.ZodObject>(
 
     const record = (await surreal()
       .upsert<Data & { updatedAt: string }>(recordId)
-      .merge({ ...merged, updatedAt: moment().toISOString() } as Values<Data & { updatedAt: string }>)
+      .merge({ ...merged, updatedAt: moment().toISOString() } as Values<
+        Data & { updatedAt: string }
+      >)
       .output("after")) as (Data & { updatedAt: string }) | undefined;
 
-    const { updatedAt, ...rest } = (record ?? {}) as Record<string, unknown> & { updatedAt?: string };
-    const result = { ...(config.schema.parse(rest) as Data), updatedAt: updatedAt ?? null };
+    const { updatedAt, ...rest } = (record ?? {}) as Record<string, unknown> & {
+      updatedAt?: string;
+    };
+    const result = {
+      ...(config.schema.parse(rest) as Data),
+      updatedAt: updatedAt ?? null,
+    };
 
     await runAfterHooks("afterVarsUpdate", prefix, result);
 

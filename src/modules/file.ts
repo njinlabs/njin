@@ -1,11 +1,11 @@
+import { resolve } from "node:path";
+import Elysia from "elysia";
+import { RecordId } from "surrealdb";
+import z from "zod";
 import { getConfig } from "../core/config";
 import type { makeModel } from "../core/model";
 import { makeModule } from "../core/module";
 import { resolveSafePath } from "../core/path_guard";
-import Elysia from "elysia";
-import { resolve } from "node:path";
-import { RecordId } from "surrealdb";
-import z from "zod";
 import auth from "./auth";
 import elysia from "./elysia";
 import surreal from "./surreal";
@@ -22,7 +22,9 @@ export type FileUpload<Meta> = {
 };
 
 export interface FileAdapter<Meta> {
-  write: (file: File) => Promise<Omit<FileUpload<Meta>, "id" | "createdAt" | "updatedAt">>;
+  write: (
+    file: File,
+  ) => Promise<Omit<FileUpload<Meta>, "id" | "createdAt" | "updatedAt">>;
   unlink: (file: FileUpload<Meta>) => Promise<void>;
   meta: Meta;
   // Only set by filesystem-backed adapters — tells this module where to serve
@@ -62,7 +64,9 @@ const file = makeModule(() => {
       .delete(
         "/:id",
         async ({ params }) => {
-          const data = await surreal().delete<FileUploadCurrent>(new RecordId(baseModel.table, params.id));
+          const data = await surreal().delete<FileUploadCurrent>(
+            new RecordId(baseModel.table, params.id),
+          );
 
           await getConfig().adapters.file.unlink(data);
 
@@ -99,23 +103,27 @@ const file = makeModule(() => {
       // already-absolute dir must win outright rather than get nested under rootDir.
       const uploadsDir = resolve(getConfig().rootDir, adapterDir);
 
-      const uploadsController = new Elysia().get("/uploads/*", async ({ params }) => {
-        // Elysia leaves wildcard params percent-encoded — decode before touching the filesystem.
-        let decoded: string;
-        try {
-          decoded = decodeURIComponent(params["*"]);
-        } catch {
-          return new Response("Not Found", { status: 404 });
-        }
+      const uploadsController = new Elysia().get(
+        "/uploads/*",
+        async ({ params }) => {
+          // Elysia leaves wildcard params percent-encoded — decode before touching the filesystem.
+          let decoded: string;
+          try {
+            decoded = decodeURIComponent(params["*"]);
+          } catch {
+            return new Response("Not Found", { status: 404 });
+          }
 
-        const requested = resolveSafePath(uploadsDir, decoded);
-        if (!requested) return new Response("Not Found", { status: 404 });
+          const requested = resolveSafePath(uploadsDir, decoded);
+          if (!requested) return new Response("Not Found", { status: 404 });
 
-        const file = Bun.file(requested);
-        if (!(await file.exists())) return new Response("Not Found", { status: 404 });
+          const file = Bun.file(requested);
+          if (!(await file.exists()))
+            return new Response("Not Found", { status: 404 });
 
-        return file;
-      });
+          return file;
+        },
+      );
 
       elysia().use(controller).use(uploadsController);
     } else {

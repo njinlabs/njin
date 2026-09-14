@@ -1,5 +1,5 @@
 import { describe, expect, it, mock } from "bun:test";
-import { RecordId, Table } from "surrealdb";
+import { RecordId, type Table } from "surrealdb";
 import realUserModel from "../../src/models/user";
 import * as realElysiaModule from "../../src/modules/elysia";
 import * as realSurrealModule from "../../src/modules/surreal";
@@ -28,7 +28,8 @@ const fakeDb = {
       return {
         // token creation (setup.ts) awaits .content(...) directly; user.create()
         // (via core/model/index.ts) chains .output("after").then(...) on top of it.
-        then: (resolve: (value: [Record<string, unknown>]) => unknown) => resolve([record]),
+        then: (resolve: (value: [Record<string, unknown>]) => unknown) =>
+          resolve([record]),
         output: (_mode: string) => Promise.resolve([record]),
       };
     },
@@ -41,10 +42,16 @@ const fakeDb = {
 // Spreading real exports below — without --isolate, mock.module() replaces the module
 // in a registry shared across the whole test run, so a partial mock would otherwise
 // break other files that import isRemotePath/injectBracketQuery from these specifiers.
-mock.module("../../src/modules/surreal", () => ({ ...realSurrealModule, default: () => fakeDb }));
+mock.module("../../src/modules/surreal", () => ({
+  ...realSurrealModule,
+  default: () => fakeDb,
+}));
 
 const fakeElysia = makeFakeElysia();
-mock.module("../../src/modules/elysia", () => ({ ...realElysiaModule, default: fakeElysia.fn }));
+mock.module("../../src/modules/elysia", () => ({
+  ...realElysiaModule,
+  default: fakeElysia.fn,
+}));
 
 const { default: setup } = await import("../../src/modules/setup");
 
@@ -54,14 +61,18 @@ const app = fakeElysia.buildApp();
 describe("GET /api/setup/status", () => {
   it("reports needsSetup: true when there are no users", async () => {
     userCount = 0;
-    const res = await app.handle(new Request("http://localhost/api/setup/status"));
+    const res = await app.handle(
+      new Request("http://localhost/api/setup/status"),
+    );
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ needsSetup: true });
   });
 
   it("reports needsSetup: false when a user already exists", async () => {
     userCount = 1;
-    const res = await app.handle(new Request("http://localhost/api/setup/status"));
+    const res = await app.handle(
+      new Request("http://localhost/api/setup/status"),
+    );
     expect(await res.json()).toEqual({ needsSetup: false });
   });
 });
@@ -73,7 +84,11 @@ describe("POST /api/setup", () => {
       new Request("http://localhost/api/setup", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: "Admin", email: "admin@example.com", password: "password123" }),
+        body: JSON.stringify({
+          name: "Admin",
+          email: "admin@example.com",
+          password: "password123",
+        }),
       }),
     );
     expect(res.status).toBe(403);
@@ -88,12 +103,18 @@ describe("POST /api/setup", () => {
       new Request("http://localhost/api/setup", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: "Admin", email: "admin@example.com", password: "password123" }),
+        body: JSON.stringify({
+          name: "Admin",
+          email: "admin@example.com",
+          password: "password123",
+        }),
       }),
     );
 
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { data: { token: string; user: Record<string, unknown> } };
+    const body = (await res.json()) as {
+      data: { token: string; user: Record<string, unknown> };
+    };
     expect(body.data.token).toMatch(/^token:tok\d+:.+$/);
     expect(body.data.user.password).toBeUndefined();
     expect(body.data.user.email).toBe("admin@example.com");

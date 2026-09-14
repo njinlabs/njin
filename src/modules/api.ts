@@ -1,7 +1,7 @@
-import { getConfig } from "../core/config";
-import { makeModule } from "../core/module";
 import Elysia from "elysia";
 import z from "zod";
+import { getConfig } from "../core/config";
+import { makeModule } from "../core/module";
 import auth from "./auth";
 import elysia from "./elysia";
 
@@ -11,7 +11,9 @@ const stripHiddenFields = (node: any): void => {
   if (!node || typeof node !== "object") return;
 
   if (node.properties) {
-    for (const [key, prop] of Object.entries(node.properties as Record<string, any>)) {
+    for (const [key, prop] of Object.entries(
+      node.properties as Record<string, any>,
+    )) {
       if (prop?.hideForm) {
         delete node.properties[key];
         if (Array.isArray(node.required)) {
@@ -75,43 +77,45 @@ const api = makeModule(() => {
     // every listener file's .listen() registration before any route goes live.
     for (const promise of events) await promise();
 
-    const controller = new Elysia({ prefix: "/api/schema" }).use(authPlugin.plugin).get(
-      "/",
-      async () => {
-        const allModels = await Promise.all(
-          models.map((model) =>
-            (async () => {
-              const { default: data } = await model();
+    const controller = new Elysia({ prefix: "/api/schema" })
+      .use(authPlugin.plugin)
+      .get(
+        "/",
+        async () => {
+          const allModels = await Promise.all(
+            models.map((model) =>
+              (async () => {
+                const { default: data } = await model();
 
-              return {
-                name: data.name,
-                prefix: data.prefix,
-                schema: toAdminSchema(data.validation),
-              };
-            })(),
-          ),
-        );
+                return {
+                  name: data.name,
+                  prefix: data.prefix,
+                  schema: toAdminSchema(data.validation),
+                };
+              })(),
+            ),
+          );
 
-        const allVars = await Promise.all(
-          varsGroups.map((varsGroup) =>
-            (async () => {
-              const { default: group } = await varsGroup();
+          const allVars = await Promise.all(
+            varsGroups.map((varsGroup) =>
+              (async () => {
+                const { default: group } = await varsGroup();
 
-              return {
-                name: group.name,
-                prefix: group.prefix,
-                schema: toAdminSchema(group.validation),
-              };
-            })(),
-          ),
-        );
+                return {
+                  name: group.name,
+                  prefix: group.prefix,
+                  schema: toAdminSchema(group.validation),
+                };
+              })(),
+            ),
+          );
 
-        return { data: allModels, vars: allVars };
-      },
-      {
-        auth: true,
-      },
-    );
+          return { data: allModels, vars: allVars };
+        },
+        {
+          auth: true,
+        },
+      );
 
     elysia().use(controller);
 
@@ -185,11 +189,25 @@ const api = makeModule(() => {
         )
         .get(
           "/",
-          async ({ query: { search, page, limit, sort, order, populate, filters } }) => {
+          async ({
+            query: { search, page, limit, sort, order, populate, filters },
+          }) => {
             const populateOpt =
-              populate === "none" ? ("none" as const) : populate ? populate.split(",").map((s) => s.trim()) : undefined;
+              populate === "none"
+                ? ("none" as const)
+                : populate
+                  ? populate.split(",").map((s) => s.trim())
+                  : undefined;
 
-            return model.read({ search, page, limit, sort, order, populate: populateOpt, filters });
+            return model.read({
+              search,
+              page,
+              limit,
+              sort,
+              order,
+              populate: populateOpt,
+              filters,
+            });
           },
           {
             auth: true,
@@ -201,7 +219,13 @@ const api = makeModule(() => {
               order: z.enum(["asc", "desc"]).default("asc"),
               populate: z.coerce.string().optional(),
               filters: z
-                .record(z.string(), z.union([z.coerce.string(), z.record(z.string(), z.coerce.string())]))
+                .record(
+                  z.string(),
+                  z.union([
+                    z.coerce.string(),
+                    z.record(z.string(), z.coerce.string()),
+                  ]),
+                )
                 .optional(),
             }),
           },

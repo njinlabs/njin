@@ -1,10 +1,13 @@
-import { makeModule } from "../core/module";
 import Elysia, { status } from "elysia";
 import z from "zod";
+import { makeModule } from "../core/module";
 import auth from "./auth";
 import elysia from "./elysia";
 
-const stripPassword = <T extends { password: unknown }>({ password: _, ...rest }: T) => rest;
+const stripPassword = <T extends { password: unknown }>({
+  password: _,
+  ...rest
+}: T) => rest;
 
 const users = makeModule(() => {
   const fn = () => {};
@@ -18,7 +21,14 @@ const users = makeModule(() => {
       .get(
         "/",
         async ({ query: { search, page, limit, sort, order, filters } }) => {
-          const result = await user.read({ search, page, limit, sort, order, filters });
+          const result = await user.read({
+            search,
+            page,
+            limit,
+            sort,
+            order,
+            filters,
+          });
 
           return { data: result.data.map(stripPassword), meta: result.meta };
         },
@@ -31,7 +41,13 @@ const users = makeModule(() => {
             sort: z.coerce.string().optional(),
             order: z.enum(["asc", "desc"]).default("asc"),
             filters: z
-              .record(z.string(), z.union([z.coerce.string(), z.record(z.string(), z.coerce.string())]))
+              .record(
+                z.string(),
+                z.union([
+                  z.coerce.string(),
+                  z.record(z.string(), z.coerce.string()),
+                ]),
+              )
               .optional(),
           }),
         },
@@ -73,7 +89,9 @@ const users = makeModule(() => {
           // The only recovery path for a locked-out instance is a manual DB edit —
           // setup is permanently disabled once any user exists, so block self-delete.
           if (params.id === actingUser.id.id) {
-            return status(400, { message: "You cannot delete your own account" });
+            return status(400, {
+              message: "You cannot delete your own account",
+            });
           }
 
           const deleted = await user.destroy(params.id);

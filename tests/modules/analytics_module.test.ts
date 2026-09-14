@@ -26,38 +26,56 @@ const fakeDb = {
 // Spreading real exports below — without --isolate, mock.module() replaces the module
 // in a registry shared across the whole test run, so a partial mock would otherwise
 // break other files that import isRemotePath/injectBracketQuery from these specifiers.
-mock.module("../../src/modules/surreal", () => ({ ...realSurrealModule, default: () => fakeDb }));
+mock.module("../../src/modules/surreal", () => ({
+  ...realSurrealModule,
+  default: () => fakeDb,
+}));
 
 const loggerErrorCalls: unknown[] = [];
 mock.module("../../src/modules/logger", () => ({
-  default: () => ({ error: (...args: unknown[]) => loggerErrorCalls.push(args) }),
+  default: () => ({
+    error: (...args: unknown[]) => loggerErrorCalls.push(args),
+  }),
 }));
 
 mock.module("geoip-lite", () => ({
-  default: { lookup: (ip: string) => (ip === "1.2.3.4" ? { country: "US" } : null) },
+  default: {
+    lookup: (ip: string) => (ip === "1.2.3.4" ? { country: "US" } : null),
+  },
 }));
 
 const fakeAuthPlugin = makeFakeAuthPlugin();
-mock.module("../../src/modules/auth", () => ({ default: async () => ({ plugin: fakeAuthPlugin }) }));
+mock.module("../../src/modules/auth", () => ({
+  default: async () => ({ plugin: fakeAuthPlugin }),
+}));
 
 const fakeElysia = makeFakeElysia();
-mock.module("../../src/modules/elysia", () => ({ ...realElysiaModule, default: fakeElysia.fn }));
+mock.module("../../src/modules/elysia", () => ({
+  ...realElysiaModule,
+  default: fakeElysia.fn,
+}));
 
-const { resolveClientIp, resolveRequestOrigin, default: analytics } = await import(
-  "../../src/modules/analytics"
-);
+const {
+  resolveClientIp,
+  resolveRequestOrigin,
+  default: analytics,
+} = await import("../../src/modules/analytics");
 
 const initResult = await analytics.init();
 const app = fakeElysia.buildApp();
 
 describe("resolveClientIp", () => {
   it("prefers x-forwarded-for, taking the first entry", () => {
-    const req = new Request("http://x", { headers: { "x-forwarded-for": "9.9.9.9, 1.1.1.1" } });
+    const req = new Request("http://x", {
+      headers: { "x-forwarded-for": "9.9.9.9, 1.1.1.1" },
+    });
     expect(resolveClientIp(req, null)).toBe("9.9.9.9");
   });
 
   it("falls back to x-real-ip", () => {
-    const req = new Request("http://x", { headers: { "x-real-ip": "8.8.8.8" } });
+    const req = new Request("http://x", {
+      headers: { "x-real-ip": "8.8.8.8" },
+    });
     expect(resolveClientIp(req, null)).toBe("8.8.8.8");
   });
 
@@ -77,7 +95,10 @@ describe("resolveClientIp", () => {
 describe("resolveRequestOrigin", () => {
   it("uses x-forwarded-proto and x-forwarded-host when present", () => {
     const req = new Request("http://127.0.0.1:3000/blog", {
-      headers: { "x-forwarded-proto": "https", "x-forwarded-host": "mysite.com" },
+      headers: {
+        "x-forwarded-proto": "https",
+        "x-forwarded-host": "mysite.com",
+      },
     });
     expect(resolveRequestOrigin(req)).toBe("https://mysite.com");
   });
@@ -129,7 +150,13 @@ describe("analytics().track", () => {
   it("swallows errors and logs them instead of throwing", async () => {
     createShouldThrow = true;
     loggerErrorCalls.length = 0;
-    await analytics().track({ path: "/x", referrer: null, userAgent: null, ip: null, requestUrl: "https://mysite.com/x" });
+    await analytics().track({
+      path: "/x",
+      referrer: null,
+      userAgent: null,
+      ip: null,
+      requestUrl: "https://mysite.com/x",
+    });
     expect(loggerErrorCalls).toHaveLength(1);
     createShouldThrow = false;
   });
@@ -137,15 +164,22 @@ describe("analytics().track", () => {
 
 describe("analytics routes", () => {
   it("GET /api/analytics/summary aggregates total and unique visitors", async () => {
-    queryResult = [[{ visitorHash: "a" }, { visitorHash: "a" }, { visitorHash: null }]];
+    queryResult = [
+      [{ visitorHash: "a" }, { visitorHash: "a" }, { visitorHash: null }],
+    ];
     queryCalls.length = 0;
     const res = await app.handle(
-      new Request("http://localhost/api/analytics/summary?from=2024-01-01T00:00:00Z&to=2024-02-01T00:00:00Z&path=/x", {
-        headers: { Authorization: "Bearer x" },
-      }),
+      new Request(
+        "http://localhost/api/analytics/summary?from=2024-01-01T00:00:00Z&to=2024-02-01T00:00:00Z&path=/x",
+        {
+          headers: { Authorization: "Bearer x" },
+        },
+      ),
     );
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ data: { totalPageviews: 3, uniqueVisitors: 1 } });
+    expect(await res.json()).toEqual({
+      data: { totalPageviews: 3, uniqueVisitors: 1 },
+    });
     expect(queryCalls[0]!.sql).toContain("createdAt >= $from");
     expect(queryCalls[0]!.sql).toContain("createdAt <= $to");
     expect(queryCalls[0]!.sql).toContain("path = $path");
@@ -154,26 +188,44 @@ describe("analytics routes", () => {
   it("GET /api/analytics/summary with no filters omits the WHERE clause", async () => {
     queryResult = [[]];
     queryCalls.length = 0;
-    const res = await app.handle(new Request("http://localhost/api/analytics/summary", { headers: { Authorization: "Bearer x" } }));
+    const res = await app.handle(
+      new Request("http://localhost/api/analytics/summary", {
+        headers: { Authorization: "Bearer x" },
+      }),
+    );
     expect(res.status).toBe(200);
     expect(queryCalls[0]!.sql).not.toContain("WHERE");
   });
 
   it("GET /api/analytics/by-country returns grouped rows", async () => {
     queryResult = [[{ country: "US", count: 5 }]];
-    const res = await app.handle(new Request("http://localhost/api/analytics/by-country", { headers: { Authorization: "Bearer x" } }));
+    const res = await app.handle(
+      new Request("http://localhost/api/analytics/by-country", {
+        headers: { Authorization: "Bearer x" },
+      }),
+    );
     expect(await res.json()).toEqual({ data: [{ country: "US", count: 5 }] });
   });
 
   it("GET /api/analytics/by-referrer returns grouped rows", async () => {
     queryResult = [[{ referrer: "https://google.com", count: 2 }]];
-    const res = await app.handle(new Request("http://localhost/api/analytics/by-referrer", { headers: { Authorization: "Bearer x" } }));
-    expect(await res.json()).toEqual({ data: [{ referrer: "https://google.com", count: 2 }] });
+    const res = await app.handle(
+      new Request("http://localhost/api/analytics/by-referrer", {
+        headers: { Authorization: "Bearer x" },
+      }),
+    );
+    expect(await res.json()).toEqual({
+      data: [{ referrer: "https://google.com", count: 2 }],
+    });
   });
 
   it("GET /api/analytics/by-page returns grouped rows", async () => {
     queryResult = [[{ path: "/blog", count: 9 }]];
-    const res = await app.handle(new Request("http://localhost/api/analytics/by-page", { headers: { Authorization: "Bearer x" } }));
+    const res = await app.handle(
+      new Request("http://localhost/api/analytics/by-page", {
+        headers: { Authorization: "Bearer x" },
+      }),
+    );
     expect(await res.json()).toEqual({ data: [{ path: "/blog", count: 9 }] });
   });
 
@@ -181,12 +233,22 @@ describe("analytics routes", () => {
     queryResult = [[{ date: "2024-01-01", count: 3 }]];
     queryCalls.length = 0;
 
-    const dayRes = await app.handle(new Request("http://localhost/api/analytics/timeseries", { headers: { Authorization: "Bearer x" } }));
-    expect(await dayRes.json()).toEqual({ data: [{ date: "2024-01-01", count: 3 }] });
+    const dayRes = await app.handle(
+      new Request("http://localhost/api/analytics/timeseries", {
+        headers: { Authorization: "Bearer x" },
+      }),
+    );
+    expect(await dayRes.json()).toEqual({
+      data: [{ date: "2024-01-01", count: 3 }],
+    });
     expect(queryCalls[0]!.sql).toContain("string::slice(createdAt, 0, 10)");
 
     queryCalls.length = 0;
-    await app.handle(new Request("http://localhost/api/analytics/timeseries?interval=hour", { headers: { Authorization: "Bearer x" } }));
+    await app.handle(
+      new Request("http://localhost/api/analytics/timeseries?interval=hour", {
+        headers: { Authorization: "Bearer x" },
+      }),
+    );
     expect(queryCalls[0]!.sql).toContain("string::slice(createdAt, 0, 13)");
   });
 });

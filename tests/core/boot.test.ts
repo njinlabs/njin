@@ -3,9 +3,17 @@ import { describe, expect, it, mock } from "bun:test";
 const calls: string[] = [];
 
 const fakeModules = [
-  { spin: async () => { calls.push("a"); } },
+  {
+    spin: async () => {
+      calls.push("a");
+    },
+  },
   {},
-  { spin: () => { calls.push("b"); } },
+  {
+    spin: () => {
+      calls.push("b");
+    },
+  },
 ];
 
 mock.module("../../src/config/module", () => ({

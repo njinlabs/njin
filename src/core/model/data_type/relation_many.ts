@@ -1,14 +1,32 @@
 import { RecordId } from "surrealdb";
 import z from "zod";
-import { type FormMeta, type makeModel, type RelationType } from "..";
+import type { FormMeta, makeModel, RelationType } from "..";
 
-type Return<Model extends ReturnType<typeof makeModel>> = z.ZodPreprocess<z.ZodArray<RelationType<ReturnType<Model["validation"]["partial"]>>>>;
+type Return<Model extends ReturnType<typeof makeModel>> = z.ZodPreprocess<
+  z.ZodArray<RelationType<ReturnType<Model["validation"]["partial"]>>>
+>;
 
-export function relationMany<Model extends ReturnType<typeof makeModel>>(meta: FormMeta, model: Model): Return<Model>;
+export function relationMany<Model extends ReturnType<typeof makeModel>>(
+  meta: FormMeta,
+  model: Model,
+): Return<Model>;
 
-export function relationMany<T extends z.ZodTypeAny, Model extends ReturnType<typeof makeModel>>(meta: FormMeta, model: Model, rule: (z: z.ZodArray<RelationType<ReturnType<Model["validation"]["partial"]>>>) => T): T;
+export function relationMany<
+  T extends z.ZodTypeAny,
+  Model extends ReturnType<typeof makeModel>,
+>(
+  meta: FormMeta,
+  model: Model,
+  rule: (
+    z: z.ZodArray<RelationType<ReturnType<Model["validation"]["partial"]>>>,
+  ) => T,
+): T;
 
-export function relationMany(meta: FormMeta, model: ReturnType<typeof makeModel>, rule?: (z: any) => any) {
+export function relationMany(
+  meta: FormMeta,
+  model: ReturnType<typeof makeModel>,
+  rule?: (z: any) => any,
+) {
   const baseRule = z.array(
     z.preprocess(
       (value) => {
@@ -41,7 +59,7 @@ export function relationMany(meta: FormMeta, model: ReturnType<typeof makeModel>
   return z
     .preprocess(
       (value) => {
-        if (!!value && !Array.isArray(value)) return [value];
+        if (value && !Array.isArray(value)) return [value];
 
         return value;
       },

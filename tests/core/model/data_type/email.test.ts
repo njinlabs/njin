@@ -7,7 +7,9 @@ describe("email", () => {
   });
 
   it("rejects an invalid email format", () => {
-    expect(email({ label: "Email" }).safeParse("not-an-email").success).toBe(false);
+    expect(email({ label: "Email" }).safeParse("not-an-email").success).toBe(
+      false,
+    );
   });
 
   it("rejects missing value by default (required)", () => {
@@ -19,10 +21,15 @@ describe("email", () => {
   });
 
   it("allows opting out of required via rule", () => {
-    expect(email({ label: "Email" }, (z) => z.optional()).parse(undefined)).toBeUndefined();
+    expect(
+      email({ label: "Email" }, (z) => z.optional()).parse(undefined),
+    ).toBeUndefined();
   });
 
   it("carries label/renderAs through to meta", () => {
-    expect(email({ label: "Email" }).meta()).toMatchObject({ label: "Email", renderAs: "text" });
+    expect(email({ label: "Email" }).meta()).toMatchObject({
+      label: "Email",
+      renderAs: "text",
+    });
   });
 });

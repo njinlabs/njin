@@ -6,7 +6,9 @@ import * as realViewModule from "../../src/modules/view";
 // A minimal valid 1x1 transparent PNG — Bun.Image is a native decoder, not something
 // that can be mocked, so route tests that reach pipeline.resize()/webp() need real bytes.
 const ONE_PX_PNG = Uint8Array.from(
-  atob("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="),
+  atob(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+  ),
   (c) => c.charCodeAt(0),
 );
 
@@ -31,7 +33,10 @@ mock.module("../../src/core/config", () => ({
 
 const { makeFakeElysia } = await import("../helpers/fake_elysia");
 const fakeElysia = makeFakeElysia();
-mock.module("../../src/modules/elysia", () => ({ ...realElysiaModule, default: fakeElysia.fn }));
+mock.module("../../src/modules/elysia", () => ({
+  ...realElysiaModule,
+  default: fakeElysia.fn,
+}));
 
 const { default: img } = await import("../../src/modules/img");
 
@@ -42,20 +47,28 @@ await img.init();
 // network fetch, so exercising that path needs a real registered route to hit, the same way a
 // static-file/public-asset handler would exist in a real app.
 const { default: RealElysia } = await import("elysia");
-fakeElysia.fn().use(new RealElysia().get("/a.png", () => new Response(ONE_PX_PNG)));
+fakeElysia
+  .fn()
+  .use(new RealElysia().get("/a.png", () => new Response(ONE_PX_PNG)));
 
 const app = fakeElysia.buildApp();
 
 afterEach(() => {
   // @ts-expect-error — restoring the global between tests
-  if (globalThis.fetch?.mockRestore) (globalThis.fetch as unknown as { mockRestore: () => void }).mockRestore();
+  if (globalThis.fetch?.mockRestore)
+    (globalThis.fetch as unknown as { mockRestore: () => void }).mockRestore();
 });
 
 describe("GET /img", () => {
   it("registers the imgOptimize view global", () => {
     expect(typeof fakeViewGlobals.imgOptimize).toBe("function");
-    const helper = fakeViewGlobals.imgOptimize as (url: string, opts?: { w?: number; h?: number; q?: number }) => string;
-    expect(helper("/a.png", { w: 100, h: 50, q: 70 })).toBe("/img?url=%2Fa.png&w=100&h=50&q=70");
+    const helper = fakeViewGlobals.imgOptimize as (
+      url: string,
+      opts?: { w?: number; h?: number; q?: number },
+    ) => string;
+    expect(helper("/a.png", { w: 100, h: 50, q: 70 })).toBe(
+      "/img?url=%2Fa.png&w=100&h=50&q=70",
+    );
   });
 
   it("returns 400 when url is missing", async () => {
@@ -64,58 +77,84 @@ describe("GET /img", () => {
   });
 
   it("returns 400 for an invalid q parameter", async () => {
-    const res = await app.handle(new Request("http://localhost/img?url=/a.png&q=abc"));
+    const res = await app.handle(
+      new Request("http://localhost/img?url=/a.png&q=abc"),
+    );
     expect(res.status).toBe(400);
   });
 
   it("returns 403 for a disallowed host", async () => {
-    const res = await app.handle(new Request("http://localhost/img?url=https://evil.com/a.png"));
+    const res = await app.handle(
+      new Request("http://localhost/img?url=https://evil.com/a.png"),
+    );
     expect(res.status).toBe(403);
   });
 
   it("returns 304 when If-None-Match matches the computed ETag", async () => {
     // Local path — resolved via the registered "/a.png" test route (see setup above), not fetch.
-    const first = await app.handle(new Request("http://localhost/img?url=/a.png"));
+    const first = await app.handle(
+      new Request("http://localhost/img?url=/a.png"),
+    );
     const etag = first.headers.get("etag")!;
     expect(etag).toBeTruthy();
 
     // The ETag is derived purely from the query params, so the 304 branch short-circuits
     // before the local route is ever hit for this second request.
-    const res = await app.handle(new Request("http://localhost/img?url=/a.png", { headers: { "If-None-Match": etag } }));
+    const res = await app.handle(
+      new Request("http://localhost/img?url=/a.png", {
+        headers: { "If-None-Match": etag },
+      }),
+    );
     expect(res.status).toBe(304);
   });
 
   it("resolves a local path via the app's own routing and resizes width-only", async () => {
-    const res = await app.handle(new Request("http://localhost/img?url=/a.png&w=10"));
+    const res = await app.handle(
+      new Request("http://localhost/img?url=/a.png&w=10"),
+    );
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toBe("image/webp");
   });
 
   it("resizes height-only, deriving width from the source aspect ratio", async () => {
-    const res = await app.handle(new Request("http://localhost/img?url=/a.png&h=10"));
+    const res = await app.handle(
+      new Request("http://localhost/img?url=/a.png&h=10"),
+    );
     expect(res.status).toBe(200);
   });
 
   it("returns 404 when a local path has no matching route", async () => {
-    const res = await app.handle(new Request("http://localhost/img?url=/missing.png"));
+    const res = await app.handle(
+      new Request("http://localhost/img?url=/missing.png"),
+    );
     expect(res.status).toBe(404);
   });
 
   it("fetches an allowed external host", async () => {
-    spyOn(globalThis, "fetch").mockResolvedValue(new Response(ONE_PX_PNG, { status: 200 }));
-    const res = await app.handle(new Request("http://localhost/img?url=https://cdn.example.com/a.png"));
+    spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(ONE_PX_PNG, { status: 200 }),
+    );
+    const res = await app.handle(
+      new Request("http://localhost/img?url=https://cdn.example.com/a.png"),
+    );
     expect(res.status).toBe(200);
   });
 
   it("returns 502 when the external fetch throws (e.g. blocked redirect)", async () => {
     spyOn(globalThis, "fetch").mockRejectedValue(new Error("redirect blocked"));
-    const res = await app.handle(new Request("http://localhost/img?url=https://cdn.example.com/a.png"));
+    const res = await app.handle(
+      new Request("http://localhost/img?url=https://cdn.example.com/a.png"),
+    );
     expect(res.status).toBe(502);
   });
 
   it("returns 502 when the external fetch is not ok", async () => {
-    spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 500 }));
-    const res = await app.handle(new Request("http://localhost/img?url=https://cdn.example.com/a.png"));
+    spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(null, { status: 500 }),
+    );
+    const res = await app.handle(
+      new Request("http://localhost/img?url=https://cdn.example.com/a.png"),
+    );
     expect(res.status).toBe(502);
   });
 });

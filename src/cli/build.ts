@@ -1,7 +1,7 @@
-import type { BunPlugin } from "bun";
 import { cp, mkdir, rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import type { BunPlugin } from "bun";
 import { stageBuildAssets } from "./build-assets";
 
 const root = process.cwd();
@@ -53,15 +53,21 @@ const NATIVE_FILE: Record<string, string> = {
 
 let surrealNativePlugin: BunPlugin | undefined;
 if (isRemoteBuild) {
-  console.log("• Remote db.path detected — skipping @surrealdb/node native binding");
+  console.log(
+    "• Remote db.path detected — skipping @surrealdb/node native binding",
+  );
 } else {
   const nativeFile = NATIVE_FILE[`${process.platform}-${process.arch}`];
   if (!nativeFile) {
-    console.error(`\n✗ Unsupported platform for @surrealdb/node: ${process.platform}-${process.arch}`);
+    console.error(
+      `\n✗ Unsupported platform for @surrealdb/node: ${process.platform}-${process.arch}`,
+    );
     process.exit(1);
   }
 
-  const surrealNodeDistDir = dirname(fileURLToPath(import.meta.resolve("@surrealdb/node")));
+  const surrealNodeDistDir = dirname(
+    fileURLToPath(import.meta.resolve("@surrealdb/node")),
+  );
   const bindingsDir = join(outDir, "bindings");
   await mkdir(bindingsDir, { recursive: true });
   await cp(join(surrealNodeDistDir, nativeFile), join(bindingsDir, nativeFile));
@@ -74,7 +80,9 @@ if (isRemoteBuild) {
         const original = await Bun.file(args.path).text();
         const marker = "const require = createRequire(import.meta.url);";
         if (!original.includes(marker)) {
-          throw new Error("@surrealdb/node's loader shape changed — expected createRequire marker not found");
+          throw new Error(
+            "@surrealdb/node's loader shape changed — expected createRequire marker not found",
+          );
         }
         // Wrap `require` so the host platform's own .node lookup is redirected to the copy in
         // out/bindings/; every other platform's file and the optional sibling npm packages fall
@@ -119,28 +127,42 @@ const geoipLibDir = dirname(fileURLToPath(import.meta.resolve("geoip-lite")));
 const geoipDataDir = join(geoipLibDir, "..", "data");
 const outGeoipDataDir = join(outDir, "geoip-data");
 await mkdir(outGeoipDataDir, { recursive: true });
-await cp(join(geoipDataDir, "geoip-country.dat"), join(outGeoipDataDir, "geoip-country.dat"));
-await cp(join(geoipDataDir, "geoip-country6.dat"), join(outGeoipDataDir, "geoip-country6.dat"));
+await cp(
+  join(geoipDataDir, "geoip-country.dat"),
+  join(outGeoipDataDir, "geoip-country.dat"),
+);
+await cp(
+  join(geoipDataDir, "geoip-country6.dat"),
+  join(outGeoipDataDir, "geoip-country6.dat"),
+);
 console.log("✓ Copied geoip-lite country data -> out/geoip-data");
 
 const geoipDataPlugin: BunPlugin = {
   name: "geoip-lite-data-dir",
   setup(build) {
-    build.onLoad({ filter: /geoip-lite[\\/]lib[\\/]geoip\.js$/ }, async (args) => {
-      const original = await Bun.file(args.path).text();
-      const marker = "global.geodatadir || process.env.GEODATADIR || '../data/'";
-      if (!original.includes(marker)) {
-        throw new Error("geoip-lite's data dir resolution changed — expected marker not found");
-      }
-      const patched = original.replace(
-        "var geodatadir = path.resolve(\n\t__dirname,\n\t" + marker + "\n);",
-        "var geodatadir = require('path').join(require('path').dirname(process.execPath), 'geoip-data');",
-      );
-      if (patched === original) {
-        throw new Error("geoip-lite's geodatadir block didn't match expected shape — patch did not apply");
-      }
-      return { contents: patched, loader: "js" };
-    });
+    build.onLoad(
+      { filter: /geoip-lite[\\/]lib[\\/]geoip\.js$/ },
+      async (args) => {
+        const original = await Bun.file(args.path).text();
+        const marker =
+          "global.geodatadir || process.env.GEODATADIR || '../data/'";
+        if (!original.includes(marker)) {
+          throw new Error(
+            "geoip-lite's data dir resolution changed — expected marker not found",
+          );
+        }
+        const patched = original.replace(
+          "var geodatadir = path.resolve(\n\t__dirname,\n\t" + marker + "\n);",
+          "var geodatadir = require('path').join(require('path').dirname(process.execPath), 'geoip-data');",
+        );
+        if (patched === original) {
+          throw new Error(
+            "geoip-lite's geodatadir block didn't match expected shape — patch did not apply",
+          );
+        }
+        return { contents: patched, loader: "js" };
+      },
+    );
   },
 };
 
@@ -173,7 +195,9 @@ printBanner({ mode: "production" });
     // reasoning for @surrealdb/node on a remote build — surreal.ts's dynamic import of it is
     // unreachable when db.path is remote, so it's safe to leave unresolved.
     external: isRemoteBuild ? ["vite", "@surrealdb/node"] : ["vite"],
-    plugins: [surrealNativePlugin, geoipDataPlugin].filter((p): p is BunPlugin => p !== undefined),
+    plugins: [surrealNativePlugin, geoipDataPlugin].filter(
+      (p): p is BunPlugin => p !== undefined,
+    ),
     // The CLI's `bun build --compile` implicitly inlines process.env.NODE_ENV as "production";
     // the Bun.build() JS API doesn't, so view.ts's top-level `isDev` check would otherwise read
     // undefined and take the dev branch (importing the externalized, not-on-disk `vite`).

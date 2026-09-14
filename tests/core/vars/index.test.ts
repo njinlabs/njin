@@ -24,7 +24,9 @@ mock.module("../../../src/modules/surreal", () => ({
 }));
 
 const { makeVars } = await import("../../../src/core/vars/index");
-const { afterVarsUpdate, beforeVarsUpdate } = await import("../../../src/core/model/hooks");
+const { afterVarsUpdate, beforeVarsUpdate } = await import(
+  "../../../src/core/model/hooks"
+);
 const { text } = await import("../../../src/core/model/data_type/text");
 const { boolean } = await import("../../../src/core/model/data_type/boolean");
 const z = (await import("zod")).default;
@@ -34,20 +36,32 @@ const uniquePrefix = () => `vars_${crypto.randomUUID().replace(/-/g, "")}`;
 const schema = () =>
   z.object({
     siteName: text({ label: "Site Name" }, (z) => z.default("My Site")),
-    maintenanceMode: boolean({ label: "Maintenance Mode" }, (z) => z.default(false)),
+    maintenanceMode: boolean({ label: "Maintenance Mode" }, (z) =>
+      z.default(false),
+    ),
   });
 
 describe("makeVars", () => {
   it("returns schema defaults with a null updatedAt when never saved", async () => {
-    const general = makeVars(uniquePrefix(), { name: "General", schema: schema() });
+    const general = makeVars(uniquePrefix(), {
+      name: "General",
+      schema: schema(),
+    });
 
     const result = await general.get();
 
-    expect(result).toEqual({ siteName: "My Site", maintenanceMode: false, updatedAt: null });
+    expect(result).toEqual({
+      siteName: "My Site",
+      maintenanceMode: false,
+      updatedAt: null,
+    });
   });
 
   it("update() upserts the row and returns a non-null updatedAt", async () => {
-    const general = makeVars(uniquePrefix(), { name: "General", schema: schema() });
+    const general = makeVars(uniquePrefix(), {
+      name: "General",
+      schema: schema(),
+    });
 
     const result = await general.update({ siteName: "Playground" });
 
@@ -57,7 +71,10 @@ describe("makeVars", () => {
   });
 
   it("merges on subsequent updates instead of resetting other fields", async () => {
-    const general = makeVars(uniquePrefix(), { name: "General", schema: schema() });
+    const general = makeVars(uniquePrefix(), {
+      name: "General",
+      schema: schema(),
+    });
 
     await general.update({ siteName: "First" });
     const second = await general.update({ maintenanceMode: true });
@@ -67,7 +84,10 @@ describe("makeVars", () => {
   });
 
   it("keeps separate groups' rows isolated by prefix", async () => {
-    const general = makeVars(uniquePrefix(), { name: "General", schema: schema() });
+    const general = makeVars(uniquePrefix(), {
+      name: "General",
+      schema: schema(),
+    });
     const seo = makeVars(uniquePrefix(), { name: "SEO", schema: schema() });
 
     await general.update({ siteName: "General site" });
@@ -85,13 +105,20 @@ describe("makeVars", () => {
     const general = makeVars(prefix, { name: "General", schema: schema() });
     const result = await general.get();
 
-    expect(result).toEqual({ siteName: "Existing", maintenanceMode: false, updatedAt: null });
+    expect(result).toEqual({
+      siteName: "Existing",
+      maintenanceMode: false,
+      updatedAt: null,
+    });
   });
 });
 
 describe("makeVars hook wiring", () => {
   it("runs beforeVarsUpdate/afterVarsUpdate around update()", async () => {
-    const general = makeVars(uniquePrefix(), { name: "General", schema: schema() });
+    const general = makeVars(uniquePrefix(), {
+      name: "General",
+      schema: schema(),
+    });
 
     const events: string[] = [];
     let updatedRecord: unknown;
@@ -113,18 +140,29 @@ describe("makeVars hook wiring", () => {
   });
 
   it("aborts update() when a beforeVarsUpdate hook throws", async () => {
-    const general = makeVars(uniquePrefix(), { name: "General", schema: schema() });
+    const general = makeVars(uniquePrefix(), {
+      name: "General",
+      schema: schema(),
+    });
 
     beforeVarsUpdate(general, () => {
       throw new Error("nope");
     });
 
-    await expect(general.update({ siteName: "My Site" })).rejects.toThrow("nope");
+    await expect(general.update({ siteName: "My Site" })).rejects.toThrow(
+      "nope",
+    );
   });
 
   it("does not fire hooks registered for a different vars group's prefix", async () => {
-    const groupA = makeVars(uniquePrefix(), { name: "General", schema: schema() });
-    const groupB = makeVars(uniquePrefix(), { name: "General", schema: schema() });
+    const groupA = makeVars(uniquePrefix(), {
+      name: "General",
+      schema: schema(),
+    });
+    const groupB = makeVars(uniquePrefix(), {
+      name: "General",
+      schema: schema(),
+    });
 
     let calledForB = false;
     afterVarsUpdate(groupB, () => {

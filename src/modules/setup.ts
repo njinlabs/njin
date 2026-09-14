@@ -1,8 +1,8 @@
-import { makeModule } from "../core/module";
 import Elysia, { status } from "elysia";
 import moment from "moment";
-import { RecordId, Table, Uuid } from "surrealdb";
+import { type RecordId, Table, Uuid } from "surrealdb";
 import z from "zod";
+import { makeModule } from "../core/module";
 import elysia from "./elysia";
 import surreal from "./surreal";
 
@@ -52,15 +52,23 @@ const setup = makeModule(() => {
           const [token] = await surreal()
             .create<Token>(tokenTable)
             .content({
-              hash: new Bun.CryptoHasher("sha256").update(plainToken).digest("utf8"),
+              hash: new Bun.CryptoHasher("sha256")
+                .update(plainToken)
+                .digest("utf8"),
               user: created.id,
               createdAt: moment().toISOString(),
               updatedAt: moment().toISOString(),
             });
 
-          await surreal().relate(token!.id, new Table("user_token"), created.id);
+          await surreal().relate(
+            token!.id,
+            new Table("user_token"),
+            created.id,
+          );
 
-          const { password: _, ...safeUser } = created as typeof created & { password: string };
+          const { password: _, ...safeUser } = created as typeof created & {
+            password: string;
+          };
 
           return {
             data: {

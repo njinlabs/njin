@@ -1,9 +1,9 @@
 import bearer from "@elysia/bearer";
-import { makeModule } from "../core/module";
 import Elysia, { status } from "elysia";
 import moment from "moment";
 import { eq, RecordId, Table, Uuid } from "surrealdb";
 import z from "zod";
+import { makeModule } from "../core/module";
 import elysia from "./elysia";
 import surreal from "./surreal";
 
@@ -30,19 +30,26 @@ const auth = makeModule(() => {
 
             const [_table, tokenId, plainToken] = bearer.split(":");
 
-            const token = await surreal().select<Token>(new RecordId(table, tokenId!)).fetch("user");
+            const token = await surreal()
+              .select<Token>(new RecordId(table, tokenId!))
+              .fetch("user");
 
             if (!token) {
               throw new Error("Unauthorized");
             }
 
-            const hash = new Bun.CryptoHasher("sha256").update(plainToken!).digest("utf8");
+            const hash = new Bun.CryptoHasher("sha256")
+              .update(plainToken!)
+              .digest("utf8");
 
             if (hash !== token.hash) {
               throw new Error("Unauthorized");
             }
 
-            const { password: _, ...safeUser } = token.user as typeof token.user & { password: string };
+            const { password: _, ...safeUser } =
+              token.user as typeof token.user & {
+                password: string;
+              };
 
             return {
               user: { ...safeUser, tokenId: token.id },
@@ -79,7 +86,11 @@ const auth = makeModule(() => {
       prefix: "/api/auth",
     })
       .use((await fn()).plugin)
-      .get("/check-token", ({ user: { tokenId: _, ...user } }) => ({ data: user }), { auth: true })
+      .get(
+        "/check-token",
+        ({ user: { tokenId: _, ...user } }) => ({ data: user }),
+        { auth: true },
+      )
       .delete(
         "/logout",
         async ({ user: { tokenId, ...user } }) => {
@@ -93,7 +104,9 @@ const auth = makeModule(() => {
         "/login",
         async ({ body }) => {
           try {
-            const [data] = await surreal().select<Token["user"]>(user.table).where(eq("email", body.email));
+            const [data] = await surreal()
+              .select<Token["user"]>(user.table)
+              .where(eq("email", body.email));
 
             if (!data) {
               throw new Error("Unauthorized");
@@ -108,7 +121,9 @@ const auth = makeModule(() => {
             const [token] = await surreal()
               .create<Token>(table)
               .content({
-                hash: new Bun.CryptoHasher("sha256").update(plainToken).digest("utf8"),
+                hash: new Bun.CryptoHasher("sha256")
+                  .update(plainToken)
+                  .digest("utf8"),
                 user: data.id as unknown as Token["user"],
                 createdAt: moment().toISOString(),
                 updatedAt: moment().toISOString(),
@@ -116,7 +131,9 @@ const auth = makeModule(() => {
 
             await surreal().relate(token!.id, new Table("user_token"), data.id);
 
-            const { password: _, ...safeData } = data as typeof data & { password: string };
+            const { password: _, ...safeData } = data as typeof data & {
+              password: string;
+            };
 
             return {
               data: {

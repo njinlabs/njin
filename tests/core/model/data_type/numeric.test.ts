@@ -7,7 +7,9 @@ describe("numeric", () => {
   });
 
   it("rejects missing value by default (required)", () => {
-    expect(numeric({ label: "Price" }).safeParse(undefined).success).toBe(false);
+    expect(numeric({ label: "Price" }).safeParse(undefined).success).toBe(
+      false,
+    );
   });
 
   it("does not coerce numeric strings (no string -> number coercion)", () => {
@@ -23,10 +25,17 @@ describe("numeric", () => {
   });
 
   it("supports .default() to make the field effectively optional", () => {
-    expect(numeric({ label: "Quantity" }, (z) => z.int().nonnegative().default(0)).parse(undefined)).toBe(0);
+    expect(
+      numeric({ label: "Quantity" }, (z) =>
+        z.int().nonnegative().default(0),
+      ).parse(undefined),
+    ).toBe(0);
   });
 
   it("carries label/renderAs through to meta", () => {
-    expect(numeric({ label: "Price" }).meta()).toMatchObject({ label: "Price", renderAs: "numeric" });
+    expect(numeric({ label: "Price" }).meta()).toMatchObject({
+      label: "Price",
+      renderAs: "numeric",
+    });
   });
 });

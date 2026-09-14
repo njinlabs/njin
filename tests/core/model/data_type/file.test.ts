@@ -1,9 +1,9 @@
 import { beforeAll, describe, expect, it } from "bun:test";
+import { RecordId } from "surrealdb";
 import { loadConfig } from "../../../../src/core/config";
 import { file } from "../../../../src/core/model/data_type/file";
 import elysia from "../../../../src/modules/elysia";
 import fileModule from "../../../../src/modules/file";
-import { RecordId } from "surrealdb";
 
 // file() reads the file module's internal model lazily, so the module must be
 // initialized first — registering routes here has no network/DB side effects
@@ -17,15 +17,21 @@ beforeAll(async () => {
 
 describe("file", () => {
   it("transforms a plain string id into a RecordId", () => {
-    expect(file({ label: "Thumbnail" }).parse("abc123")).toBeInstanceOf(RecordId);
+    expect(file({ label: "Thumbnail" }).parse("abc123")).toBeInstanceOf(
+      RecordId,
+    );
   });
 
   it("rejects missing value by default (required)", () => {
-    expect(file({ label: "Thumbnail" }).safeParse(undefined).success).toBe(false);
+    expect(file({ label: "Thumbnail" }).safeParse(undefined).success).toBe(
+      false,
+    );
   });
 
   it("supports .optional()", () => {
-    expect(file({ label: "Thumbnail" }, (z) => z.optional()).parse(undefined)).toBeUndefined();
+    expect(
+      file({ label: "Thumbnail" }, (z) => z.optional()).parse(undefined),
+    ).toBeUndefined();
   });
 
   it("carries renderAs: file and model: file through to meta (regression: model used to get dropped)", () => {

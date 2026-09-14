@@ -45,7 +45,10 @@ export type WorkerReadyMessage = {
   type: "ready";
 };
 
-export type WorkerOutboundMessage = WorkerResponseMessage | WorkerErrorMessage | WorkerReadyMessage;
+export type WorkerOutboundMessage =
+  | WorkerResponseMessage
+  | WorkerErrorMessage
+  | WorkerReadyMessage;
 
 // Bounds how long shutdown waits for in-flight requests to finish before exiting anyway —
 // the supervisor can terminate a worker at any time, so this is a safety net, not the
@@ -54,14 +57,21 @@ const SHUTDOWN_DRAIN_TIMEOUT_MS = 10_000;
 const SHUTDOWN_POLL_INTERVAL_MS = 50;
 
 const isRequestMessage = (raw: unknown): raw is WorkerRequestMessage =>
-  typeof raw === "object" && raw !== null && (raw as { type?: unknown }).type === "request";
+  typeof raw === "object" &&
+  raw !== null &&
+  (raw as { type?: unknown }).type === "request";
 
 const isShutdownMessage = (raw: unknown): raw is WorkerShutdownMessage =>
-  typeof raw === "object" && raw !== null && (raw as { type?: unknown }).type === "shutdown";
+  typeof raw === "object" &&
+  raw !== null &&
+  (raw as { type?: unknown }).type === "shutdown";
 
 // Pure request/response conversion, split out from serveWorker()'s self/postMessage wiring
 // so it can be unit tested directly without spinning up a real Worker thread.
-export const buildResponseMessage = async (app: AnyElysia, msg: WorkerRequestMessage): Promise<WorkerResponseMessage> => {
+export const buildResponseMessage = async (
+  app: AnyElysia,
+  msg: WorkerRequestMessage,
+): Promise<WorkerResponseMessage> => {
   const request = new Request(msg.url, {
     method: msg.method,
     headers: msg.headers,
@@ -90,7 +100,9 @@ export const buildResponseMessage = async (app: AnyElysia, msg: WorkerRequestMes
 // real socket connections; app.handle() is the same Elysia entrypoint either way.
 export const serveWorker = (app: AnyElysia): void => {
   if (Bun.isMainThread) {
-    throw new Error('serveWorker() must run inside a Worker thread (new Worker("out/worker.js")), not the main thread.');
+    throw new Error(
+      'serveWorker() must run inside a Worker thread (new Worker("out/worker.js")), not the main thread.',
+    );
   }
 
   let inFlight = 0;
@@ -98,7 +110,11 @@ export const serveWorker = (app: AnyElysia): void => {
 
   const handleRequest = async (msg: WorkerRequestMessage): Promise<void> => {
     if (shuttingDown) {
-      self.postMessage({ type: "error", id: msg.id, message: "worker is shutting down" } satisfies WorkerErrorMessage);
+      self.postMessage({
+        type: "error",
+        id: msg.id,
+        message: "worker is shutting down",
+      } satisfies WorkerErrorMessage);
       return;
     }
 

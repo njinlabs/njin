@@ -1,6 +1,6 @@
-import { makeModule } from "../core/module";
 import pino from "pino";
 import pretty from "pino-pretty";
+import { makeModule } from "../core/module";
 
 const logger = makeModule(() => {
   let p: pino.Logger;

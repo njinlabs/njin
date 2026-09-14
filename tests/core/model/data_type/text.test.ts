@@ -15,7 +15,9 @@ describe("text", () => {
   });
 
   it("allows opting out of required via rule", () => {
-    expect(text({ label: "Title" }, (z) => z.optional()).parse(undefined)).toBeUndefined();
+    expect(
+      text({ label: "Title" }, (z) => z.optional()).parse(undefined),
+    ).toBeUndefined();
   });
 
   it("supports chained validators (.min/.max) on the underlying ZodString", () => {
@@ -34,7 +36,9 @@ describe("text", () => {
   });
 
   it("carries hideForm through to meta", () => {
-    expect(text({ label: "Internal Flag", hideForm: true }).meta()).toMatchObject({
+    expect(
+      text({ label: "Internal Flag", hideForm: true }).meta(),
+    ).toMatchObject({
       hideForm: true,
       renderAs: "text",
     });

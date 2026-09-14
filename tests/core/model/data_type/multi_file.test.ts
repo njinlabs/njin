@@ -1,9 +1,9 @@
 import { beforeAll, describe, expect, it } from "bun:test";
+import { RecordId } from "surrealdb";
 import { loadConfig } from "../../../../src/core/config";
 import { multiFile } from "../../../../src/core/model/data_type/multi_file";
 import elysia from "../../../../src/modules/elysia";
 import fileModule from "../../../../src/modules/file";
-import { RecordId } from "surrealdb";
 
 // models/file.ts reads the configured adapter via getConfig(), so config must load first.
 beforeAll(async () => {
@@ -14,7 +14,10 @@ beforeAll(async () => {
 
 describe("multiFile", () => {
   it("transforms an array of string ids into RecordId instances", () => {
-    const result = multiFile({ label: "Gallery" }).parse(["a", "b"]) as unknown[];
+    const result = multiFile({ label: "Gallery" }).parse([
+      "a",
+      "b",
+    ]) as unknown[];
     expect(result).toHaveLength(2);
     expect(result[0]).toBeInstanceOf(RecordId);
   });
@@ -24,7 +27,9 @@ describe("multiFile", () => {
   });
 
   it("rejects missing value by default (required)", () => {
-    expect(multiFile({ label: "Gallery" }).safeParse(undefined).success).toBe(false);
+    expect(multiFile({ label: "Gallery" }).safeParse(undefined).success).toBe(
+      false,
+    );
   });
 
   it("supports chained validators (.min/.max)", () => {

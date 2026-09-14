@@ -20,9 +20,15 @@ const fakeModel = {
     owner: z.string().meta({ renderAs: "relation" }).optional(),
     tags: z.array(z.string()).meta({ renderAs: "multi_relation" }).optional(),
     cover: z.string().meta({ renderAs: "file" }).optional(),
-    internalFlag: z.boolean().meta({ renderAs: "boolean", hideForm: true }).optional(),
+    internalFlag: z
+      .boolean()
+      .meta({ renderAs: "boolean", hideForm: true })
+      .optional(),
   }),
-  read: async (opts: Record<string, unknown>) => ({ data: Array.from(records.values()), opts }),
+  read: async (opts: Record<string, unknown>) => ({
+    data: Array.from(records.values()),
+    opts,
+  }),
   show: async (id: string) => records.get(id) ?? null,
   create: async (body: Record<string, unknown>) => {
     const record = { id: "p2", ...body };
@@ -59,8 +65,16 @@ mock.module("../../src/core/config", () => ({
   getConfig: () => ({
     models: [async () => ({ default: fakeModel })],
     vars: [async () => ({ default: fakeVarsGroup })],
-    hooks: [async () => { hookCalls.push("hook1"); }],
-    events: [async () => { eventCalls.push("event1"); }],
+    hooks: [
+      async () => {
+        hookCalls.push("hook1");
+      },
+    ],
+    events: [
+      async () => {
+        eventCalls.push("event1");
+      },
+    ],
     routes: [
       async () => {
         customRouteMounted = true;
@@ -71,10 +85,15 @@ mock.module("../../src/core/config", () => ({
 }));
 
 const fakeAuthPlugin = makeFakeAuthPlugin();
-mock.module("../../src/modules/auth", () => ({ default: async () => ({ plugin: fakeAuthPlugin }) }));
+mock.module("../../src/modules/auth", () => ({
+  default: async () => ({ plugin: fakeAuthPlugin }),
+}));
 
 const fakeElysia = makeFakeElysia();
-mock.module("../../src/modules/elysia", () => ({ ...realElysiaModule, default: fakeElysia.fn }));
+mock.module("../../src/modules/elysia", () => ({
+  ...realElysiaModule,
+  default: fakeElysia.fn,
+}));
 
 const { default: api } = await import("../../src/modules/api");
 
@@ -97,7 +116,11 @@ describe("api.init() wiring", () => {
 
 describe("GET /api/schema", () => {
   it("returns admin-friendly JSON schema for models and vars, remapping relation/file types", async () => {
-    const res = await app.handle(new Request("http://localhost/api/schema", { headers: { Authorization: "Bearer x" } }));
+    const res = await app.handle(
+      new Request("http://localhost/api/schema", {
+        headers: { Authorization: "Bearer x" },
+      }),
+    );
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
       data: { name: string; prefix: string; schema: Record<string, unknown> }[];
@@ -106,13 +129,19 @@ describe("GET /api/schema", () => {
 
     expect(body.data).toHaveLength(1);
     expect(body.data[0]!.prefix).toBe("post");
-    const props = (body.data[0]!.schema as { properties: Record<string, { type?: string; properties?: unknown }> }).properties;
+    const props = (
+      body.data[0]!.schema as {
+        properties: Record<string, { type?: string; properties?: unknown }>;
+      }
+    ).properties;
     expect(props.owner!.type).toBe("object");
     expect((props.owner as { required?: string[] }).required).toEqual(["id"]);
     expect(props.cover!.type).toBe("string");
 
     expect(props.internalFlag).toBeUndefined();
-    expect((body.data[0]!.schema as { required?: string[] }).required).not.toContain("internalFlag");
+    expect(
+      (body.data[0]!.schema as { required?: string[] }).required,
+    ).not.toContain("internalFlag");
 
     expect(body.vars).toHaveLength(1);
     expect(body.vars[0]!.prefix).toBe("seo");
@@ -122,7 +151,9 @@ describe("GET /api/schema", () => {
 describe("model CRUD routes", () => {
   it("GET /api/post lists records and parses populate=none", async () => {
     const res = await app.handle(
-      new Request("http://localhost/api/post?populate=none", { headers: { Authorization: "Bearer x" } }),
+      new Request("http://localhost/api/post?populate=none", {
+        headers: { Authorization: "Bearer x" },
+      }),
     );
     expect(res.status).toBe(200);
     const body = (await res.json()) as { opts: { populate: unknown } };
@@ -131,14 +162,20 @@ describe("model CRUD routes", () => {
 
   it("GET /api/post parses a comma-separated populate list", async () => {
     const res = await app.handle(
-      new Request("http://localhost/api/post?populate=owner,tags", { headers: { Authorization: "Bearer x" } }),
+      new Request("http://localhost/api/post?populate=owner,tags", {
+        headers: { Authorization: "Bearer x" },
+      }),
     );
     const body = (await res.json()) as { opts: { populate: unknown } };
     expect(body.opts.populate).toEqual(["owner", "tags"]);
   });
 
   it("GET /api/post/:id shows a single record", async () => {
-    const res = await app.handle(new Request("http://localhost/api/post/p1", { headers: { Authorization: "Bearer x" } }));
+    const res = await app.handle(
+      new Request("http://localhost/api/post/p1", {
+        headers: { Authorization: "Bearer x" },
+      }),
+    );
     expect(await res.json()).toEqual({ data: { id: "p1", title: "Hello" } });
   });
 
@@ -146,7 +183,10 @@ describe("model CRUD routes", () => {
     const res = await app.handle(
       new Request("http://localhost/api/post", {
         method: "POST",
-        headers: { Authorization: "Bearer x", "Content-Type": "application/json" },
+        headers: {
+          Authorization: "Bearer x",
+          "Content-Type": "application/json",
+        },
         body: JSON.stringify({ title: "New Post" }),
       }),
     );
@@ -159,7 +199,10 @@ describe("model CRUD routes", () => {
     const res = await app.handle(
       new Request("http://localhost/api/post/p1", {
         method: "PUT",
-        headers: { Authorization: "Bearer x", "Content-Type": "application/json" },
+        headers: {
+          Authorization: "Bearer x",
+          "Content-Type": "application/json",
+        },
         body: JSON.stringify({ title: "Updated" }),
       }),
     );
@@ -169,7 +212,10 @@ describe("model CRUD routes", () => {
 
   it("DELETE /api/post/:id destroys a record", async () => {
     const res = await app.handle(
-      new Request("http://localhost/api/post/p1", { method: "DELETE", headers: { Authorization: "Bearer x" } }),
+      new Request("http://localhost/api/post/p1", {
+        method: "DELETE",
+        headers: { Authorization: "Bearer x" },
+      }),
     );
     const body = (await res.json()) as { data: Record<string, unknown> };
     expect(body.data.id).toBe("p1");

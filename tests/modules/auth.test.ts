@@ -1,5 +1,5 @@
 import { describe, expect, it, mock } from "bun:test";
-import { RecordId, Table } from "surrealdb";
+import { RecordId, type Table } from "surrealdb";
 import realUserModel from "../../src/models/user";
 import * as realElysiaModule from "../../src/modules/elysia";
 import * as realSurrealModule from "../../src/modules/surreal";
@@ -51,10 +51,16 @@ const fakeDb = {
 // Spreading real exports below — without --isolate, mock.module() replaces the module
 // in a registry shared across the whole test run, so a partial mock would otherwise
 // break other files that import isRemotePath/injectBracketQuery from these specifiers.
-mock.module("../../src/modules/surreal", () => ({ ...realSurrealModule, default: () => fakeDb }));
+mock.module("../../src/modules/surreal", () => ({
+  ...realSurrealModule,
+  default: () => fakeDb,
+}));
 
 const fakeElysia = makeFakeElysia();
-mock.module("../../src/modules/elysia", () => ({ ...realElysiaModule, default: fakeElysia.fn }));
+mock.module("../../src/modules/elysia", () => ({
+  ...realElysiaModule,
+  default: fakeElysia.fn,
+}));
 
 const { default: auth } = await import("../../src/modules/auth");
 
@@ -86,13 +92,17 @@ const controller = fakeElysia.buildApp();
 
 describe("auth macro (via /check-token)", () => {
   it("returns 401 when no bearer token is supplied", async () => {
-    const res = await controller.handle(new Request("http://localhost/api/auth/check-token"));
+    const res = await controller.handle(
+      new Request("http://localhost/api/auth/check-token"),
+    );
     expect(res.status).toBe(401);
   });
 
   it("returns 401 when the token id does not exist", async () => {
     const res = await controller.handle(
-      new Request("http://localhost/api/auth/check-token", { headers: { Authorization: "Bearer token:nope:whatever" } }),
+      new Request("http://localhost/api/auth/check-token", {
+        headers: { Authorization: "Bearer token:nope:whatever" },
+      }),
     );
     expect(res.status).toBe(401);
   });
@@ -100,7 +110,9 @@ describe("auth macro (via /check-token)", () => {
   it("returns 401 when the token hash does not match", async () => {
     setValidToken();
     const res = await controller.handle(
-      new Request("http://localhost/api/auth/check-token", { headers: { Authorization: "Bearer token:tok-valid:wrong-plain" } }),
+      new Request("http://localhost/api/auth/check-token", {
+        headers: { Authorization: "Bearer token:tok-valid:wrong-plain" },
+      }),
     );
     expect(res.status).toBe(401);
   });
@@ -108,7 +120,9 @@ describe("auth macro (via /check-token)", () => {
   it("passes through and strips the password/tokenId for a valid bearer", async () => {
     const bearer = setValidToken();
     const res = await controller.handle(
-      new Request("http://localhost/api/auth/check-token", { headers: { Authorization: `Bearer ${bearer}` } }),
+      new Request("http://localhost/api/auth/check-token", {
+        headers: { Authorization: `Bearer ${bearer}` },
+      }),
     );
     expect(res.status).toBe(200);
     const body = (await res.json()) as { data: Record<string, unknown> };
@@ -121,7 +135,10 @@ describe("DELETE /logout", () => {
   it("deletes the token and returns the user", async () => {
     const bearer = setValidToken();
     const res = await controller.handle(
-      new Request("http://localhost/api/auth/logout", { method: "DELETE", headers: { Authorization: `Bearer ${bearer}` } }),
+      new Request("http://localhost/api/auth/logout", {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${bearer}` },
+      }),
     );
     expect(res.status).toBe(200);
     const body = (await res.json()) as { data: Record<string, unknown> };
@@ -137,7 +154,10 @@ describe("POST /login", () => {
       new Request("http://localhost/api/auth/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: "nobody@example.com", password: "whatever" }),
+        body: JSON.stringify({
+          email: "nobody@example.com",
+          password: "whatever",
+        }),
       }),
     );
 
@@ -145,25 +165,35 @@ describe("POST /login", () => {
   });
 
   it("returns 401 when the password is wrong", async () => {
-    userQueryResult = [users.get(String(userRecordId)) as Record<string, unknown>];
+    userQueryResult = [
+      users.get(String(userRecordId)) as Record<string, unknown>,
+    ];
     const res = await controller.handle(
       new Request("http://localhost/api/auth/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: "alice@example.com", password: "wrong-password" }),
+        body: JSON.stringify({
+          email: "alice@example.com",
+          password: "wrong-password",
+        }),
       }),
     );
     expect(res.status).toBe(401);
   });
 
   it("logs in successfully and returns a token string without the password", async () => {
-    userQueryResult = [users.get(String(userRecordId)) as Record<string, unknown>];
+    userQueryResult = [
+      users.get(String(userRecordId)) as Record<string, unknown>,
+    ];
     relateCalls.length = 0;
     const res = await controller.handle(
       new Request("http://localhost/api/auth/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: "alice@example.com", password: plainPassword }),
+        body: JSON.stringify({
+          email: "alice@example.com",
+          password: plainPassword,
+        }),
       }),
     );
 

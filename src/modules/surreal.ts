@@ -1,15 +1,16 @@
 import { createHash } from "node:crypto";
+import type { Engines } from "surrealdb";
+import { createRemoteEngines, Surreal } from "surrealdb";
+import type { z } from "zod";
 import { getConfig } from "../core/config";
 import { resolveSearchPlan } from "../core/model";
 import { makeModule } from "../core/module";
-import { Surreal, createRemoteEngines } from "surrealdb";
-import type { Engines } from "surrealdb";
-import type { z } from "zod";
 
 const REMOTE_SCHEMES = ["ws://", "wss://", "http://", "https://"];
 const EMBEDDED_SCHEMES = ["mem://", "rocksdb://", "surrealkv://"];
 
-export const isRemotePath = (path: string) => REMOTE_SCHEMES.some((scheme) => path.startsWith(scheme));
+export const isRemotePath = (path: string) =>
+  REMOTE_SCHEMES.some((scheme) => path.startsWith(scheme));
 
 // Shared by every model's search index (see ../core/model/index.ts's read()) — `blank`
 // tokenizer splits on whitespace only (unlike `class`, which also splits on punctuation:
@@ -28,7 +29,8 @@ const SEARCH_ANALYZER = "njin_search";
 // schemaHash, so any future change here (e.g. a different ngram range) automatically
 // invalidates the stored hash and re-runs the DEFINE on next boot instead of silently
 // leaving an already-migrated DB on the old analyzer definition.
-const SEARCH_ANALYZER_DEFINITION = "TOKENIZERS blank FILTERS lowercase,ngram(3,10)";
+const SEARCH_ANALYZER_DEFINITION =
+  "TOKENIZERS blank FILTERS lowercase,ngram(3,10)";
 
 // Records the hash of the last schema this DB was migrated to, so a worker booting against
 // an already-migrated DB (idle-evict/crash respawn — every DEFINE below is idempotent but
@@ -44,7 +46,11 @@ const ensureTables = async (db: Surreal) => {
   const { default: userModel } = await import("../models/user");
   const { default: fileModel } = await import("../models/file");
 
-  const models: { prefix: string; searchFields?: string[]; validation?: z.ZodObject }[] = [userModel, fileModel];
+  const models: {
+    prefix: string;
+    searchFields?: string[];
+    validation?: z.ZodObject;
+  }[] = [userModel, fileModel];
 
   for (const factory of getConfig().models) {
     const { default: model } = await factory();
@@ -67,8 +73,15 @@ const ensureTables = async (db: Surreal) => {
     // throwing here — an authoring bug in a dotted entry is makeModel()'s job to catch, not
     // table setup's.
     const plan = model.validation
-      ? resolveSearchPlan(model.validation, model.searchFields ?? [], model.prefix)
-      : (model.searchFields ?? []).map((field) => ({ kind: "flat" as const, field }));
+      ? resolveSearchPlan(
+          model.validation,
+          model.searchFields ?? [],
+          model.prefix,
+        )
+      : (model.searchFields ?? []).map((field) => ({
+          kind: "flat" as const,
+          field,
+        }));
 
     for (const entry of plan) {
       const target =
@@ -96,7 +109,9 @@ const ensureTables = async (db: Surreal) => {
   // N DEFINEs it's gating.
   await db.query(`DEFINE TABLE IF NOT EXISTS ${SCHEMA_META_TABLE} SCHEMALESS;`);
 
-  const [rows] = await db.query<[{ hash: string }[]]>(`SELECT hash FROM ${SCHEMA_META_TABLE}:current;`);
+  const [rows] = await db.query<[{ hash: string }[]]>(
+    `SELECT hash FROM ${SCHEMA_META_TABLE}:current;`,
+  );
   if (rows?.[0]?.hash === schemaHash) return;
 
   for (const prefix of prefixes) {
@@ -108,7 +123,9 @@ const ensureTables = async (db: Surreal) => {
   // definition is stale and needs replacing, not skipping. FULLTEXT, not SEARCH — this SurrealDB
   // version renamed the index-type keyword; SEARCH ANALYZER ... is a parse error here even though
   // older docs/examples use it.
-  await db.query(`DEFINE ANALYZER OVERWRITE ${SEARCH_ANALYZER} ${SEARCH_ANALYZER_DEFINITION};`);
+  await db.query(
+    `DEFINE ANALYZER OVERWRITE ${SEARCH_ANALYZER} ${SEARCH_ANALYZER_DEFINITION};`,
+  );
 
   for (const { prefix: targetPrefix, field } of searchIndexes.values()) {
     await db.query(
@@ -116,7 +133,9 @@ const ensureTables = async (db: Surreal) => {
     );
   }
 
-  await db.query(`UPSERT ${SCHEMA_META_TABLE}:current SET hash = '${schemaHash}';`);
+  await db.query(
+    `UPSERT ${SCHEMA_META_TABLE}:current SET hash = '${schemaHash}';`,
+  );
 };
 
 const surreal = makeModule(() => {
@@ -138,7 +157,9 @@ const surreal = makeModule(() => {
     let engines: Engines;
     if (isRemotePath(dbConfig.path)) {
       engines = createRemoteEngines();
-    } else if (EMBEDDED_SCHEMES.some((scheme) => dbConfig.path.startsWith(scheme))) {
+    } else if (
+      EMBEDDED_SCHEMES.some((scheme) => dbConfig.path.startsWith(scheme))
+    ) {
       // Dynamically imported (not a static top-level import) so a compiled build whose
       // config resolves to a remote db.path can exclude @surrealdb/node entirely — see
       // src/cli/build.ts, which externalizes this package for remote-only builds since its
@@ -163,7 +184,10 @@ const surreal = makeModule(() => {
     await db.query(`DEFINE NAMESPACE IF NOT EXISTS \`${dbConfig.namespace}\`;`);
     await db.use({ namespace: dbConfig.namespace });
     await db.query(`DEFINE DATABASE IF NOT EXISTS \`${dbConfig.database}\`;`);
-    await db.use({ namespace: dbConfig.namespace, database: dbConfig.database });
+    await db.use({
+      namespace: dbConfig.namespace,
+      database: dbConfig.database,
+    });
 
     return {
       // Deferred to spin(), not run here — ensureTables() imports every registered model

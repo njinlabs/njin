@@ -1,9 +1,9 @@
 import { describe, expect, it } from "bun:test";
+import { RecordId } from "surrealdb";
+import z from "zod";
 import { makeModel } from "../../../../src/core/model";
 import { relation } from "../../../../src/core/model/data_type/relation";
 import { text } from "../../../../src/core/model/data_type/text";
-import { RecordId } from "surrealdb";
-import z from "zod";
 
 const target = makeModel("relation_test_target", {
   name: "Target",
@@ -20,15 +20,23 @@ describe("relation", () => {
 
   it("passes through an existing RecordId instance", () => {
     const id = new RecordId(target.table, "xyz789");
-    expect(relation({ label: "Category" }, target).parse(id)).toBeInstanceOf(RecordId);
+    expect(relation({ label: "Category" }, target).parse(id)).toBeInstanceOf(
+      RecordId,
+    );
   });
 
   it("rejects missing value by default (required)", () => {
-    expect(relation({ label: "Category" }, target).safeParse(undefined).success).toBe(false);
+    expect(
+      relation({ label: "Category" }, target).safeParse(undefined).success,
+    ).toBe(false);
   });
 
   it("supports .optional()", () => {
-    expect(relation({ label: "Category" }, target, (z) => z.optional()).parse(undefined)).toBeUndefined();
+    expect(
+      relation({ label: "Category" }, target, (z) => z.optional()).parse(
+        undefined,
+      ),
+    ).toBeUndefined();
   });
 
   it("carries renderAs/model through to meta", () => {

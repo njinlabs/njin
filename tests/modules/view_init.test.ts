@@ -2,8 +2,8 @@ import { describe, expect, it, mock } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import * as realAnalyticsModule from "../../src/modules/analytics";
 import * as realConfig from "../../src/core/config";
+import * as realAnalyticsModule from "../../src/modules/analytics";
 import * as realElysiaModule from "../../src/modules/elysia";
 import { makeFakeElysia } from "../helpers/fake_elysia";
 
@@ -19,7 +19,12 @@ import { makeFakeElysia } from "../helpers/fake_elysia";
 // (loadConfig, injectBracketQuery, isSameOrigin, ...).
 mock.module("../../src/core/config", () => ({
   ...realConfig,
-  getConfig: () => ({ models: [], vars: [], helpers: [], rootDir: process.cwd() }),
+  getConfig: () => ({
+    models: [],
+    vars: [],
+    helpers: [],
+    rootDir: process.cwd(),
+  }),
 }));
 
 mock.module("vite", () => ({
@@ -32,7 +37,10 @@ mock.module("vite", () => ({
 }));
 
 const fakeElysia = makeFakeElysia();
-mock.module("../../src/modules/elysia", () => ({ ...realElysiaModule, default: fakeElysia.fn }));
+mock.module("../../src/modules/elysia", () => ({
+  ...realElysiaModule,
+  default: fakeElysia.fn,
+}));
 
 const { default: view } = await import("../../src/modules/view");
 
@@ -72,11 +80,25 @@ describe("view.init() — with a page and an errors/404.edge template", () => {
       mkdirSync(join(viewsDir, "pages"), { recursive: true });
       mkdirSync(join(viewsDir, "errors"), { recursive: true });
       writeFileSync(join(viewsDir, "pages", "about.edge"), "<h1>About</h1>");
-      writeFileSync(join(viewsDir, "errors", "404.edge"), "<h1>Custom not found</h1>");
+      writeFileSync(
+        join(viewsDir, "errors", "404.edge"),
+        "<h1>Custom not found</h1>",
+      );
 
       const isolatedElysia = makeFakeElysia();
-      mock.module("../../src/modules/elysia", () => ({ ...realElysiaModule, default: isolatedElysia.fn }));
-      mock.module("../../src/core/config", () => ({ ...realConfig, getConfig: () => ({ models: [], vars: [], helpers: [], rootDir: process.cwd() }) }));
+      mock.module("../../src/modules/elysia", () => ({
+        ...realElysiaModule,
+        default: isolatedElysia.fn,
+      }));
+      mock.module("../../src/core/config", () => ({
+        ...realConfig,
+        getConfig: () => ({
+          models: [],
+          vars: [],
+          helpers: [],
+          rootDir: process.cwd(),
+        }),
+      }));
       // The page route fire-and-forgets `analytics().track(...)` on every request (see
       // view.ts) — mocked here so it doesn't reach the real (unconfigured) surreal()/
       // logger() singletons and produce an unhandled rejection after this test returns.
@@ -90,7 +112,9 @@ describe("view.init() — with a page and an errors/404.edge template", () => {
 
       process.chdir(dir);
       // @ts-expect-error — query string forces a fresh module instance under Bun; not a resolvable TS module path
-      const { default: viewWithPages } = await import("../../src/modules/view?withpages");
+      const { default: viewWithPages } = await import(
+        "../../src/modules/view?withpages"
+      );
       await viewWithPages.init();
       process.chdir(cwd);
 
@@ -100,7 +124,9 @@ describe("view.init() — with a page and an errors/404.edge template", () => {
       expect(aboutRes.status).toBe(200);
       expect(await aboutRes.text()).toBe("<h1>About</h1>");
 
-      const notFoundRes = await app.handle(new Request("http://localhost/nowhere"));
+      const notFoundRes = await app.handle(
+        new Request("http://localhost/nowhere"),
+      );
       expect(notFoundRes.status).toBe(404);
       expect(await notFoundRes.text()).toBe("<h1>Custom not found</h1>");
     } finally {

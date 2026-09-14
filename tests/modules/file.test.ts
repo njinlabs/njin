@@ -21,7 +21,10 @@ const writeCalls: unknown[] = [];
 const unlinkCalls: unknown[] = [];
 
 const fakeDb = {
-  read: async () => ({ data: [], meta: { total: 0, page: 1, limit: 20, pageCount: 0 } }),
+  read: async () => ({
+    data: [],
+    meta: { total: 0, page: 1, limit: 20, pageCount: 0 },
+  }),
   delete: async (id: unknown) => {
     deleteCalls.push(id);
     return { id, name: "deleted.txt" };
@@ -38,7 +41,10 @@ const fakeDb = {
 // replaces the module in a registry shared across the whole test run, so a partial
 // mock would otherwise break other files importing the un-mocked exports from these
 // same specifiers (isRemotePath, loadConfig, injectBracketQuery).
-mock.module("../../src/modules/surreal", () => ({ ...realSurrealModule, default: () => fakeDb }));
+mock.module("../../src/modules/surreal", () => ({
+  ...realSurrealModule,
+  default: () => fakeDb,
+}));
 
 mock.module("../../src/models/file", () => ({
   default: { read: fakeDb.read, table: "file" },
@@ -53,7 +59,13 @@ mock.module("../../src/core/config", () => ({
         dir: "uploads",
         write: async (file: File) => {
           writeCalls.push(file);
-          return { name: file.name, size: file.size, type: file.type, meta: null, url: `/uploads/${file.name}` };
+          return {
+            name: file.name,
+            size: file.size,
+            type: file.type,
+            meta: null,
+            url: `/uploads/${file.name}`,
+          };
         },
         unlink: async (data: unknown) => {
           unlinkCalls.push(data);
@@ -64,10 +76,15 @@ mock.module("../../src/core/config", () => ({
 }));
 
 const fakeAuthPlugin = makeFakeAuthPlugin();
-mock.module("../../src/modules/auth", () => ({ default: async () => ({ plugin: fakeAuthPlugin }) }));
+mock.module("../../src/modules/auth", () => ({
+  default: async () => ({ plugin: fakeAuthPlugin }),
+}));
 
 const fakeElysia = makeFakeElysia();
-mock.module("../../src/modules/elysia", () => ({ ...realElysiaModule, default: fakeElysia.fn }));
+mock.module("../../src/modules/elysia", () => ({
+  ...realElysiaModule,
+  default: fakeElysia.fn,
+}));
 
 const { default: file } = await import("../../src/modules/file");
 
@@ -76,16 +93,26 @@ const app = fakeElysia.buildApp();
 
 describe("GET /api/file", () => {
   it("lists files", async () => {
-    const res = await app.handle(new Request("http://localhost/api/file", { headers: { Authorization: "Bearer x" } }));
+    const res = await app.handle(
+      new Request("http://localhost/api/file", {
+        headers: { Authorization: "Bearer x" },
+      }),
+    );
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ data: [], meta: { total: 0, page: 1, limit: 20, pageCount: 0 } });
+    expect(await res.json()).toEqual({
+      data: [],
+      meta: { total: 0, page: 1, limit: 20, pageCount: 0 },
+    });
   });
 });
 
 describe("DELETE /api/file/:id", () => {
   it("deletes the record and unlinks the underlying file via the adapter", async () => {
     const res = await app.handle(
-      new Request("http://localhost/api/file/f1", { method: "DELETE", headers: { Authorization: "Bearer x" } }),
+      new Request("http://localhost/api/file/f1", {
+        method: "DELETE",
+        headers: { Authorization: "Bearer x" },
+      }),
     );
     expect(res.status).toBe(200);
     expect(deleteCalls).toHaveLength(1);
@@ -99,7 +126,11 @@ describe("POST /api/file", () => {
     form.set("file", new File(["hello"], "upload.txt", { type: "text/plain" }));
 
     const res = await app.handle(
-      new Request("http://localhost/api/file", { method: "POST", headers: { Authorization: "Bearer x" }, body: form }),
+      new Request("http://localhost/api/file", {
+        method: "POST",
+        headers: { Authorization: "Bearer x" },
+        body: form,
+      }),
     );
 
     expect(res.status).toBe(200);
@@ -112,23 +143,31 @@ describe("POST /api/file", () => {
 
 describe("GET /uploads/*", () => {
   it("serves an existing uploaded file", async () => {
-    const res = await app.handle(new Request("http://localhost/uploads/existing.txt"));
+    const res = await app.handle(
+      new Request("http://localhost/uploads/existing.txt"),
+    );
     expect(res.status).toBe(200);
     expect(await res.text()).toBe("already here");
   });
 
   it("returns 404 for a file that doesn't exist", async () => {
-    const res = await app.handle(new Request("http://localhost/uploads/nope.txt"));
+    const res = await app.handle(
+      new Request("http://localhost/uploads/nope.txt"),
+    );
     expect(res.status).toBe(404);
   });
 
   it("returns 404 for a path-traversal attempt", async () => {
-    const res = await app.handle(new Request("http://localhost/uploads/..%2f..%2fetc%2fpasswd"));
+    const res = await app.handle(
+      new Request("http://localhost/uploads/..%2f..%2fetc%2fpasswd"),
+    );
     expect(res.status).toBe(404);
   });
 
   it("returns 404 when the wildcard segment fails to decode", async () => {
-    const res = await app.handle(new Request("http://localhost/uploads/%E0%A4%A"));
+    const res = await app.handle(
+      new Request("http://localhost/uploads/%E0%A4%A"),
+    );
     expect(res.status).toBe(404);
   });
 });

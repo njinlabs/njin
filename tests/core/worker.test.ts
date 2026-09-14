@@ -1,25 +1,45 @@
 import { describe, expect, it } from "bun:test";
 import { join } from "node:path";
 import type { AnyElysia } from "elysia";
-import { buildResponseMessage, type WorkerErrorMessage, type WorkerOutboundMessage, type WorkerRequestMessage, type WorkerResponseMessage } from "../../src/core/worker";
+import {
+  buildResponseMessage,
+  type WorkerErrorMessage,
+  type WorkerOutboundMessage,
+  type WorkerRequestMessage,
+  type WorkerResponseMessage,
+} from "../../src/core/worker";
 
-const makeFakeApp = (handle: (request: Request) => Promise<Response> | Response): AnyElysia => ({ handle }) as unknown as AnyElysia;
+const makeFakeApp = (
+  handle: (request: Request) => Promise<Response> | Response,
+): AnyElysia => ({ handle }) as unknown as AnyElysia;
 
 describe("buildResponseMessage", () => {
   it("round-trips a request message through app.handle() into a response message", async () => {
     const app = makeFakeApp((request) => {
       expect(request.method).toBe("GET");
       expect(request.url).toBe("http://x/api/ping");
-      return new Response(JSON.stringify({ ok: true }), { status: 200, headers: { "content-type": "application/json" } });
+      return new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
     });
 
-    const msg: WorkerRequestMessage = { type: "request", id: "1", method: "GET", url: "http://x/api/ping", headers: [], body: null };
+    const msg: WorkerRequestMessage = {
+      type: "request",
+      id: "1",
+      method: "GET",
+      url: "http://x/api/ping",
+      headers: [],
+      body: null,
+    };
     const response = await buildResponseMessage(app, msg);
 
     expect(response.type).toBe("response");
     expect(response.id).toBe("1");
     expect(response.status).toBe(200);
-    expect(Buffer.from(response.body as ArrayBuffer).toString()).toBe(JSON.stringify({ ok: true }));
+    expect(Buffer.from(response.body as ArrayBuffer).toString()).toBe(
+      JSON.stringify({ ok: true }),
+    );
   });
 
   it("passes an ArrayBuffer request body straight onto the reconstructed Request", async () => {
@@ -43,7 +63,14 @@ describe("buildResponseMessage", () => {
 
   it("returns a null body for empty responses", async () => {
     const app = makeFakeApp(() => new Response(null, { status: 204 }));
-    const msg: WorkerRequestMessage = { type: "request", id: "3", method: "GET", url: "http://x/api/empty", headers: [], body: null };
+    const msg: WorkerRequestMessage = {
+      type: "request",
+      id: "3",
+      method: "GET",
+      url: "http://x/api/empty",
+      headers: [],
+      body: null,
+    };
     const response = await buildResponseMessage(app, msg);
 
     expect(response.status).toBe(204);
@@ -76,7 +103,14 @@ describe("serveWorker (real Worker thread)", () => {
           const msg = event.data as WorkerOutboundMessage;
           if (msg.type === "response") resolve(msg);
         };
-        worker.postMessage({ type: "request", id: "smoke-1", method: "GET", url: "http://x/ping", headers: [], body: null });
+        worker.postMessage({
+          type: "request",
+          id: "smoke-1",
+          method: "GET",
+          url: "http://x/ping",
+          headers: [],
+          body: null,
+        });
       });
 
       expect(response.status).toBe(200);
@@ -116,7 +150,14 @@ describe("serveWorker (real Worker thread)", () => {
       });
 
       worker.postMessage({ type: "shutdown" });
-      worker.postMessage({ type: "request", id: "late-1", method: "GET", url: "http://x/ping", headers: [], body: null });
+      worker.postMessage({
+        type: "request",
+        id: "late-1",
+        method: "GET",
+        url: "http://x/ping",
+        headers: [],
+        body: null,
+      });
 
       const errorMsg = await rejected;
       expect(errorMsg.id).toBe("late-1");

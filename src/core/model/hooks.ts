@@ -62,34 +62,51 @@ export const beforeCreate = <M extends AnyModel>(
   model: M,
   fn: (
     data: Partial<CreateDataOf<M>>,
-  ) => void | Partial<CreateDataOf<M>> | Promise<void | Partial<CreateDataOf<M>>>,
+  ) =>
+    | void
+    | Partial<CreateDataOf<M>>
+    | Promise<void | Partial<CreateDataOf<M>>>,
 ): void => register("beforeCreate", model.prefix, fn);
 
-export const afterCreate = <M extends AnyModel>(model: M, fn: (record: RecordOf<M>) => void | Promise<void>): void =>
-  register("afterCreate", model.prefix, fn);
+export const afterCreate = <M extends AnyModel>(
+  model: M,
+  fn: (record: RecordOf<M>) => void | Promise<void>,
+): void => register("afterCreate", model.prefix, fn);
 
 export const beforeUpdate = <M extends AnyModel>(
   model: M,
   fn: (
     data: Partial<UpdateDataOf<M>>,
     context: { id: string },
-  ) => void | Partial<UpdateDataOf<M>> | Promise<void | Partial<UpdateDataOf<M>>>,
+  ) =>
+    | void
+    | Partial<UpdateDataOf<M>>
+    | Promise<void | Partial<UpdateDataOf<M>>>,
 ): void => register("beforeUpdate", model.prefix, fn);
 
-export const afterUpdate = <M extends AnyModel>(model: M, fn: (record: RecordOf<M>) => void | Promise<void>): void =>
-  register("afterUpdate", model.prefix, fn);
+export const afterUpdate = <M extends AnyModel>(
+  model: M,
+  fn: (record: RecordOf<M>) => void | Promise<void>,
+): void => register("afterUpdate", model.prefix, fn);
 
-export const beforeDestroy = <M extends AnyModel>(model: M, fn: (id: string) => void | Promise<void>): void =>
-  register("beforeDestroy", model.prefix, fn);
+export const beforeDestroy = <M extends AnyModel>(
+  model: M,
+  fn: (id: string) => void | Promise<void>,
+): void => register("beforeDestroy", model.prefix, fn);
 
-export const afterDestroy = <M extends AnyModel>(model: M, fn: (record: RecordOf<M>) => void | Promise<void>): void =>
-  register("afterDestroy", model.prefix, fn);
+export const afterDestroy = <M extends AnyModel>(
+  model: M,
+  fn: (record: RecordOf<M>) => void | Promise<void>,
+): void => register("afterDestroy", model.prefix, fn);
 
 export const beforeVarsUpdate = <V extends AnyVars>(
   vars: V,
   fn: (
     data: Partial<VarsUpdateDataOf<V>>,
-  ) => void | Partial<VarsUpdateDataOf<V>> | Promise<void | Partial<VarsUpdateDataOf<V>>>,
+  ) =>
+    | void
+    | Partial<VarsUpdateDataOf<V>>
+    | Promise<void | Partial<VarsUpdateDataOf<V>>>,
 ): void => register("beforeVarsUpdate", vars.prefix, fn);
 
 export const afterVarsUpdate = <V extends AnyVars>(
@@ -107,7 +124,10 @@ export const runBeforeHooks = async <T extends Record<string, unknown>>(
   context: { id?: string },
 ): Promise<Partial<T>> => {
   const handlers = registry.get(prefix)?.get(event) as
-    | ((data: Partial<T>, context: { id?: string }) => void | Partial<T> | Promise<void | Partial<T>>)[]
+    | ((
+        data: Partial<T>,
+        context: { id?: string },
+      ) => void | Partial<T> | Promise<void | Partial<T>>)[]
     | undefined;
   if (!handlers?.length) return data;
 
@@ -125,7 +145,9 @@ export const runAfterHooks = async <T>(
   prefix: string,
   record: T,
 ): Promise<void> => {
-  const handlers = registry.get(prefix)?.get(event) as ((record: T) => void | Promise<void>)[] | undefined;
+  const handlers = registry.get(prefix)?.get(event) as
+    | ((record: T) => void | Promise<void>)[]
+    | undefined;
   if (!handlers?.length) return;
 
   for (const handler of handlers) {
@@ -133,8 +155,13 @@ export const runAfterHooks = async <T>(
   }
 };
 
-export const runBeforeDestroyHooks = async (prefix: string, id: string): Promise<void> => {
-  const handlers = registry.get(prefix)?.get("beforeDestroy") as ((id: string) => void | Promise<void>)[] | undefined;
+export const runBeforeDestroyHooks = async (
+  prefix: string,
+  id: string,
+): Promise<void> => {
+  const handlers = registry.get(prefix)?.get("beforeDestroy") as
+    | ((id: string) => void | Promise<void>)[]
+    | undefined;
   if (!handlers?.length) return;
 
   for (const handler of handlers) {

@@ -1,7 +1,7 @@
-import surreal from "../../modules/surreal";
 import moment from "moment";
 import { RecordId, Table, type Values } from "surrealdb";
-import { z } from "zod";
+import type { z } from "zod";
+import surreal from "../../modules/surreal";
 import { runAfterHooks, runBeforeDestroyHooks, runBeforeHooks } from "./hooks";
 
 // See the containment-boost comment in read()'s relevanceSelect below for why this exists and
@@ -53,18 +53,20 @@ export type ReadOptions = {
   filters?: Record<string, FilterValue>;
 };
 
-
 // Whitelist of operators — unknown operators are silently dropped, never interpolated.
-const OPERATORS: Record<FilterOperator, (field: string, param: string) => string> = {
-  $eq:         (f, p) => `${f} = $${p}`,
-  $ne:         (f, p) => `${f} != $${p}`,
-  $gt:         (f, p) => `${f} > $${p}`,
-  $gte:        (f, p) => `${f} >= $${p}`,
-  $lt:         (f, p) => `${f} < $${p}`,
-  $lte:        (f, p) => `${f} <= $${p}`,
-  $contains:   (f, p) => `string::contains(string::lowercase(${f}), $${p})`,
+const OPERATORS: Record<
+  FilterOperator,
+  (field: string, param: string) => string
+> = {
+  $eq: (f, p) => `${f} = $${p}`,
+  $ne: (f, p) => `${f} != $${p}`,
+  $gt: (f, p) => `${f} > $${p}`,
+  $gte: (f, p) => `${f} >= $${p}`,
+  $lt: (f, p) => `${f} < $${p}`,
+  $lte: (f, p) => `${f} <= $${p}`,
+  $contains: (f, p) => `string::contains(string::lowercase(${f}), $${p})`,
   $startsWith: (f, p) => `string::starts_with(string::lowercase(${f}), $${p})`,
-  $in:         (f, p) => `${f} CONTAINS $${p}`,
+  $in: (f, p) => `${f} CONTAINS $${p}`,
 };
 
 const RELATION_RENDER_AS = ["relation", "multi_relation", "file", "multi_file"];
@@ -78,19 +80,31 @@ const schemaRegistry = new Map<string, z.ZodObject>();
 
 export type ResolvedSearchField =
   | { kind: "flat"; field: string }
-  | { kind: "nested"; local: string; targetPrefix: string; targetField: string; multi: boolean };
+  | {
+      kind: "nested";
+      local: string;
+      targetPrefix: string;
+      targetField: string;
+      multi: boolean;
+    };
 
 // Parses searchFields entries into flat field names and single-hop nested
 // "relationField.targetField" references, validating relation-family fields and
 // (when the target model has already registered itself) the target field's existence
 // synchronously — so a bad reference throws at model-definition time, not per-request.
-export const resolveSearchPlan = (schema: z.ZodObject, searchFields: string[], modelName: string): ResolvedSearchField[] => {
+export const resolveSearchPlan = (
+  schema: z.ZodObject,
+  searchFields: string[],
+  modelName: string,
+): ResolvedSearchField[] => {
   return searchFields.map((raw): ResolvedSearchField => {
     const dot = raw.indexOf(".");
     if (dot === -1) return { kind: "flat", field: raw };
 
     if (raw.indexOf(".", dot + 1) !== -1) {
-      throw new Error(`Model "${modelName}": searchFields entry "${raw}" has more than one level of nesting — only a single relation hop is supported.`);
+      throw new Error(
+        `Model "${modelName}": searchFields entry "${raw}" has more than one level of nesting — only a single relation hop is supported.`,
+      );
     }
 
     const local = raw.slice(0, dot);
@@ -98,13 +112,17 @@ export const resolveSearchPlan = (schema: z.ZodObject, searchFields: string[], m
     const meta = (schema.shape[local] as z.ZodType | undefined)?.meta() as any;
 
     if (!meta || !RELATION_RENDER_AS.includes(meta.renderAs)) {
-      throw new Error(`Model "${modelName}": searchFields entry "${raw}" references "${local}", which is not a relation/file field on this model's schema.`);
+      throw new Error(
+        `Model "${modelName}": searchFields entry "${raw}" references "${local}", which is not a relation/file field on this model's schema.`,
+      );
     }
 
     const targetPrefix = meta.model as string;
     const targetSchema = schemaRegistry.get(targetPrefix);
     if (targetSchema && !(targetField in targetSchema.shape)) {
-      throw new Error(`Model "${modelName}": searchFields entry "${raw}" references field "${targetField}", which does not exist on model "${targetPrefix}".`);
+      throw new Error(
+        `Model "${modelName}": searchFields entry "${raw}" references field "${targetField}", which does not exist on model "${targetPrefix}".`,
+      );
     }
 
     return {
@@ -112,7 +130,8 @@ export const resolveSearchPlan = (schema: z.ZodObject, searchFields: string[], m
       local,
       targetPrefix,
       targetField,
-      multi: meta.renderAs === "multi_relation" || meta.renderAs === "multi_file",
+      multi:
+        meta.renderAs === "multi_relation" || meta.renderAs === "multi_file",
     };
   });
 };
@@ -145,7 +164,11 @@ export const makeModel = <Rules extends z.ZodObject>(
 
   const relationFieldSet = new Set(relationFields);
 
-  const searchPlan = resolveSearchPlan(config.schema, config.searchFields, config.name);
+  const searchPlan = resolveSearchPlan(
+    config.schema,
+    config.searchFields,
+    config.name,
+  );
 
   const uniqueFields = Object.entries(config.schema.shape)
     .filter(([, v]) => (v as z.ZodType).meta()?.unique === true)
@@ -161,19 +184,29 @@ export const makeModel = <Rules extends z.ZodObject>(
   const filterableFieldSet = new Set(Object.keys(config.schema.shape));
 
   // field must be a known unique field — prevents arbitrary field injection
-  const isDuplicate = async (field: string, value: unknown, excludeId?: string) => {
+  const isDuplicate = async (
+    field: string,
+    value: unknown,
+    excludeId?: string,
+  ) => {
     if (!uniqueFieldSet.has(field)) return false;
 
     const excludeClause = excludeId ? "AND id != $excludeId" : "";
     const [[row]] = await surreal().query<[{ count: number }[]]>(
       `SELECT count() AS count FROM ${prefix} WHERE ${field} = $value ${excludeClause} GROUP ALL`,
-      { value, excludeId: excludeId ? new RecordId(table, excludeId) : undefined },
+      {
+        value,
+        excludeId: excludeId ? new RecordId(table, excludeId) : undefined,
+      },
     );
 
     return (row?.count ?? 0) > 0;
   };
 
-  const assertUnique = async (data: Record<string, unknown>, excludeId?: string) => {
+  const assertUnique = async (
+    data: Record<string, unknown>,
+    excludeId?: string,
+  ) => {
     for (const field of uniqueFields) {
       const value = data[field];
       if (value === undefined) continue; // partial update without this field — nothing to check
@@ -185,13 +218,22 @@ export const makeModel = <Rules extends z.ZodObject>(
   };
 
   const create = async (data: Values<Data>) => {
-    const merged = (await runBeforeHooks("beforeCreate", prefix, data as Record<string, unknown>, {})) as Values<Data>;
+    const merged = (await runBeforeHooks(
+      "beforeCreate",
+      prefix,
+      data as Record<string, unknown>,
+      {},
+    )) as Values<Data>;
 
     await assertUnique(merged);
 
     const record = (await surreal()
       .create<Data>(table)
-      .content({ ...merged, createdAt: moment().toISOString(), updatedAt: moment().toISOString() })
+      .content({
+        ...merged,
+        createdAt: moment().toISOString(),
+        updatedAt: moment().toISOString(),
+      })
       .output("after")
       .then(([data]) => data)) as Returning;
 
@@ -246,7 +288,10 @@ export const makeModel = <Rules extends z.ZodObject>(
           whereParts.push(`${key} = $f_${key}`);
         } else {
           // Operator form: filters[field][$op]=value
-          for (const [op, opValue] of Object.entries(value) as [FilterOperator, string][]) {
+          for (const [op, opValue] of Object.entries(value) as [
+            FilterOperator,
+            string,
+          ][]) {
             const builder = OPERATORS[op]; // strict whitelist — unknown ops get undefined
             if (!builder || opValue === undefined) continue;
 
@@ -264,7 +309,12 @@ export const makeModel = <Rules extends z.ZodObject>(
     const where = whereParts.length ? `WHERE ${whereParts.join(" AND ")}` : "";
     // id/createdAt/updatedAt are always present on every record but aren't part of the
     // user-defined schema shape (they're injected in create()/update()) — allow sorting by them too.
-    const sortableFields = new Set([...Object.keys(config.schema.shape), "id", "createdAt", "updatedAt"]);
+    const sortableFields = new Set([
+      ...Object.keys(config.schema.shape),
+      "id",
+      "createdAt",
+      "updatedAt",
+    ]);
     const hasExplicitSort = Boolean(sort && sortableFields.has(sort));
     // An explicit sort always wins; otherwise, when searching, rank by relevance instead of
     // leaving result order unspecified. `ORDER BY` only accepts a bare identifier here, not a
@@ -296,7 +346,8 @@ export const makeModel = <Rules extends z.ZodObject>(
     // data routinely writes a multi-word term as one run-together token (e.g. "REDWING 2415..."
     // for "Red Wing") — a plain substring check against "red wing" (with the space) would miss
     // that despite it being a stronger match than most ngram overlaps.
-    const useRelevance = !hasExplicitSort && Boolean(search && searchPlan.length);
+    const useRelevance =
+      !hasExplicitSort && Boolean(search && searchPlan.length);
     const orderBy = hasExplicitSort
       ? `ORDER BY ${sort} ${order === "desc" ? "DESC" : "ASC"}`
       : useRelevance
@@ -308,11 +359,14 @@ export const makeModel = <Rules extends z.ZodObject>(
       ? `, (${searchPlan
           .map((e, i) => {
             const n = i + 1;
-            const boost = (field: string) => `(IF ${containmentCheck(field)} THEN ${CONTAINMENT_BOOST} ELSE 0 END)`;
+            const boost = (field: string) =>
+              `(IF ${containmentCheck(field)} THEN ${CONTAINMENT_BOOST} ELSE 0 END)`;
             if (e.kind === "flat") {
               return `(search::score(${n}) + ${boost(e.field)})`;
             }
-            const idFilter = e.multi ? `id IN $parent.${e.local}` : `id = $parent.${e.local}`;
+            const idFilter = e.multi
+              ? `id IN $parent.${e.local}`
+              : `id = $parent.${e.local}`;
             return `math::sum((SELECT VALUE (search::score(${n}) + ${boost(e.targetField)}) FROM ${e.targetPrefix} WHERE ${idFilter} AND ${e.targetField} @${n}@ $search))`;
           })
           .join(" + ")}) AS __relevance`
@@ -328,7 +382,9 @@ export const makeModel = <Rules extends z.ZodObject>(
     const fetch = fetchFields.length ? `FETCH ${fetchFields.join(", ")}` : "";
     const start = (page - 1) * pageLimit;
 
-    const [rows, [countRow]] = await surreal().query<[(Returning & { __relevance?: number })[], { count: number }[]]>(
+    const [rows, [countRow]] = await surreal().query<
+      [(Returning & { __relevance?: number })[], { count: number }[]]
+    >(
       `SELECT *${relevanceSelect} FROM ${prefix} ${where} ${orderBy} LIMIT ${pageLimit} START ${start} ${fetch};
        SELECT count() as count FROM ${prefix} ${where} GROUP ALL`,
       params,
@@ -355,14 +411,20 @@ export const makeModel = <Rules extends z.ZodObject>(
 
   const show = (id: string) => {
     let q = surreal().select<Data>(new RecordId(table, id));
-    if (relationFields.length) q = q.fetch(...(relationFields as [string, ...string[]])) as typeof q;
+    if (relationFields.length)
+      q = q.fetch(...(relationFields as [string, ...string[]])) as typeof q;
     return q as unknown as Promise<Returning>;
   };
 
   const update = async (id: string, data: Values<Partial<Data>>) => {
-    const merged = (await runBeforeHooks("beforeUpdate", prefix, data as Record<string, unknown>, {
-      id,
-    })) as Values<Partial<Data>>;
+    const merged = (await runBeforeHooks(
+      "beforeUpdate",
+      prefix,
+      data as Record<string, unknown>,
+      {
+        id,
+      },
+    )) as Values<Partial<Data>>;
 
     await assertUnique(merged, id);
 
@@ -381,7 +443,9 @@ export const makeModel = <Rules extends z.ZodObject>(
   const destroy = async (id: string) => {
     await runBeforeDestroyHooks(prefix, id);
 
-    const record = (await (surreal().delete<Data>(new RecordId(table, id)) as unknown as Promise<Returning>)) as Returning;
+    const record = (await (surreal().delete<Data>(
+      new RecordId(table, id),
+    ) as unknown as Promise<Returning>)) as Returning;
 
     await runAfterHooks("afterDestroy", prefix, record);
 
@@ -402,10 +466,10 @@ export const makeModel = <Rules extends z.ZodObject>(
   };
 };
 
-export * from "./data_type";
-export * from "./hooks";
 export * from "../event";
 export * from "../helper";
 export * from "../plugin";
 export * from "../route";
 export * from "../vars";
+export * from "./data_type";
+export * from "./hooks";

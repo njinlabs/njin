@@ -15,7 +15,11 @@ const PKG_VERSION: string = (() => {
   try {
     // Safe to use import.meta.dir here — this looks up njin's OWN version,
     // not anything project-specific (unlike view.ts's views lookup).
-    return (require(join(import.meta.dir, "../../package.json")) as { version: string }).version;
+    return (
+      require(join(import.meta.dir, "../../package.json")) as {
+        version: string;
+      }
+    ).version;
   } catch {
     return "0.0.0";
   }
@@ -35,9 +39,17 @@ export const printBanner = ({ mode }: BootSummary): void => {
 
   const rows: [string, string][] = [
     ["Local", `http://localhost:${port}`],
-    ["Database", `${config.db.path} ${c.dim}(${config.db.namespace}/${config.db.database})${c.reset}`],
+    [
+      "Database",
+      `${config.db.path} ${c.dim}(${config.db.namespace}/${config.db.database})${c.reset}`,
+    ],
     ["Models", `${config.models.length} registered`],
-    hasAdmin ? ["Admin", `http://localhost:${port}/_admin`] : ["Admin", `${c.dim}not found — drop a built admin panel into /_admin${c.reset}`],
+    hasAdmin
+      ? ["Admin", `http://localhost:${port}/_admin`]
+      : [
+          "Admin",
+          `${c.dim}not found — drop a built admin panel into /_admin${c.reset}`,
+        ],
   ];
 
   const label = (text: string) => `${c.dim}${text.padEnd(9)}${c.reset}`;
@@ -46,7 +58,9 @@ export const printBanner = ({ mode }: BootSummary): void => {
     "",
     `  ${c.bold}${c.cyan}njin${c.reset} ${c.dim}v${PKG_VERSION}${c.reset}  ${mode === "production" ? c.green : c.yellow}${mode}${c.reset}`,
     "",
-    ...rows.map(([key, value]) => `  ${c.green}➜${c.reset}  ${label(key)} ${value}`),
+    ...rows.map(
+      ([key, value]) => `  ${c.green}➜${c.reset}  ${label(key)} ${value}`,
+    ),
     "",
   ];
 

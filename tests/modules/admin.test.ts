@@ -10,7 +10,10 @@ import { makeFakeElysia } from "../helpers/fake_elysia";
 // mock.module() replaces the module in a registry shared across the whole test run, so
 // a partial mock would otherwise break other files that import it by name.
 const fakeElysia = makeFakeElysia();
-mock.module("../../src/modules/elysia", () => ({ ...realElysiaModule, default: fakeElysia.fn }));
+mock.module("../../src/modules/elysia", () => ({
+  ...realElysiaModule,
+  default: fakeElysia.fn,
+}));
 
 const dir = mkdtempSync(join(tmpdir(), "njin-admin-"));
 mkdirSync(join(dir, "_admin"));
@@ -38,25 +41,33 @@ describe("admin", () => {
   });
 
   it("serves an existing static asset under /_admin/*", async () => {
-    const res = await app.handle(new Request("http://localhost/_admin/assets/app.js"));
+    const res = await app.handle(
+      new Request("http://localhost/_admin/assets/app.js"),
+    );
     expect(res.status).toBe(200);
     expect(await res.text()).toBe("console.log(1)");
   });
 
   it("falls back to the admin shell (SPA) for an unknown path", async () => {
-    const res = await app.handle(new Request("http://localhost/_admin/some/client/route"));
+    const res = await app.handle(
+      new Request("http://localhost/_admin/some/client/route"),
+    );
     expect(res.status).toBe(200);
     expect(await res.text()).toBe("<html>admin shell</html>");
   });
 
   it("falls back to the admin shell for a path-traversal attempt", async () => {
-    const res = await app.handle(new Request("http://localhost/_admin/..%2f..%2fetc%2fpasswd"));
+    const res = await app.handle(
+      new Request("http://localhost/_admin/..%2f..%2fetc%2fpasswd"),
+    );
     expect(res.status).toBe(200);
     expect(await res.text()).toBe("<html>admin shell</html>");
   });
 
   it("falls back to the admin shell when the wildcard segment fails to decode", async () => {
-    const res = await app.handle(new Request("http://localhost/_admin/%E0%A4%A"));
+    const res = await app.handle(
+      new Request("http://localhost/_admin/%E0%A4%A"),
+    );
     expect(res.status).toBe(200);
     expect(await res.text()).toBe("<html>admin shell</html>");
   });

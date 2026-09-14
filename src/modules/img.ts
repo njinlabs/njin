@@ -1,10 +1,13 @@
+import Elysia from "elysia";
 import { getConfig } from "../core/config";
 import { makeModule } from "../core/module";
-import Elysia from "elysia";
 import elysia from "./elysia";
 import view from "./view";
 
-export function isAllowed(imageUrl: string, allowedHosts: string[] = getConfig().img.hosts): boolean {
+export function isAllowed(
+  imageUrl: string,
+  allowedHosts: string[] = getConfig().img.hosts,
+): boolean {
   if (imageUrl.startsWith("/")) return true;
 
   let parsed: URL;
@@ -21,7 +24,11 @@ export function isAllowed(imageUrl: string, allowedHosts: string[] = getConfig()
   // header, or allowing loopback unconditionally, would turn this into an SSRF
   // primitive (an attacker controls both the `url` query param and their own
   // request's `Host` header), so neither is honored here.
-  if (process.env.NODE_ENV !== "production" && (imageHostname === "localhost" || imageHostname === "127.0.0.1")) return true;
+  if (
+    process.env.NODE_ENV !== "production" &&
+    (imageHostname === "localhost" || imageHostname === "127.0.0.1")
+  )
+    return true;
 
   // Every other host: require explicit whitelist
   return allowedHosts.includes(imageHostname);
@@ -42,13 +49,16 @@ const img = makeModule(() => {
   const fn = () => {};
 
   fn.init = async () => {
-    view().global("imgOptimize", (url: string, options?: { w?: number; h?: number; q?: number }) => {
-      const params = new URLSearchParams({ url });
-      if (options?.w != null) params.set("w", String(options.w));
-      if (options?.h != null) params.set("h", String(options.h));
-      if (options?.q != null) params.set("q", String(options.q));
-      return `/img?${params.toString()}`;
-    });
+    view().global(
+      "imgOptimize",
+      (url: string, options?: { w?: number; h?: number; q?: number }) => {
+        const params = new URLSearchParams({ url });
+        if (options?.w != null) params.set("w", String(options.w));
+        if (options?.h != null) params.set("h", String(options.h));
+        if (options?.q != null) params.set("q", String(options.q));
+        return `/img?${params.toString()}`;
+      },
+    );
 
     const controller = new Elysia();
 
@@ -95,7 +105,9 @@ const img = makeModule(() => {
         // pathname+query, but a handler further down that inspects request.url (absolute-URL
         // generation, host-based logic, ...) should see the same scheme/host this request
         // actually arrived on, not a fake one that may not match across environments.
-        const resp = await elysia().handle(new Request(`${new URL(request.url).origin}${url}`));
+        const resp = await elysia().handle(
+          new Request(`${new URL(request.url).origin}${url}`),
+        );
         if (!resp.ok) return new Response("Image not found", { status: 404 });
         imageData = await resp.arrayBuffer();
       } else {
@@ -107,7 +119,8 @@ const img = makeModule(() => {
         } catch {
           return new Response("Failed to fetch image", { status: 502 });
         }
-        if (!resp.ok) return new Response("Failed to fetch image", { status: 502 });
+        if (!resp.ok)
+          return new Response("Failed to fetch image", { status: 502 });
         imageData = await resp.arrayBuffer();
       }
 
@@ -117,13 +130,19 @@ const img = makeModule(() => {
         // Bun.Image.resize() takes width first and derives height from aspect ratio
         // when height is omitted — there's no height-only equivalent, so width-only
         // and width+height both go through this branch unchanged.
-        pipeline.resize(width, height, { fit: "inside", withoutEnlargement: true });
+        pipeline.resize(width, height, {
+          fit: "inside",
+          withoutEnlargement: true,
+        });
       } else if (height) {
         // Height-only request — derive a proportional width from the source dimensions
         // since resize() requires a width argument.
         const meta = await pipeline.metadata();
         const derivedWidth = Math.round((meta.width / meta.height) * height);
-        pipeline.resize(derivedWidth, height, { fit: "inside", withoutEnlargement: true });
+        pipeline.resize(derivedWidth, height, {
+          fit: "inside",
+          withoutEnlargement: true,
+        });
       }
 
       const output = await pipeline.webp({ quality }).buffer();

@@ -1,5 +1,5 @@
-import { defineConfig } from "@njinlabs/njin/config";
 import bunFilesystemAdapter from "@njinlabs/njin/adapters/bun_filesystem";
+import { defineConfig } from "@njinlabs/njin/config";
 
 export default defineConfig({
   port: Number(process.env.PORT ?? 3000),
@@ -16,7 +16,9 @@ export default defineConfig({
   },
   img: {
     hosts: process.env.IMG_HOSTS
-      ? process.env.IMG_HOSTS.split(",").map((h) => h.trim()).filter(Boolean)
+      ? process.env.IMG_HOSTS.split(",")
+          .map((h) => h.trim())
+          .filter(Boolean)
       : [],
   },
   adapters: {

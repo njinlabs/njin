@@ -1,12 +1,14 @@
 import { describe, expect, it } from "bun:test";
-import { resolveSafePath, sanitizeFileName } from "../../src/core/path_guard";
 import { join } from "node:path";
+import { resolveSafePath, sanitizeFileName } from "../../src/core/path_guard";
 
 const baseDir = join("d:/njin", "uploads");
 
 describe("resolveSafePath", () => {
   it("resolves a normal nested path", () => {
-    expect(resolveSafePath(baseDir, "photo.png")).toBe(join(baseDir, "photo.png"));
+    expect(resolveSafePath(baseDir, "photo.png")).toBe(
+      join(baseDir, "photo.png"),
+    );
   });
 
   it("rejects path traversal that escapes baseDir", () => {
@@ -18,7 +20,9 @@ describe("resolveSafePath", () => {
   });
 
   it("allows a path that merely starts similarly but stays inside baseDir", () => {
-    expect(resolveSafePath(baseDir, "sub/dir/file.txt")).toBe(join(baseDir, "sub/dir/file.txt"));
+    expect(resolveSafePath(baseDir, "sub/dir/file.txt")).toBe(
+      join(baseDir, "sub/dir/file.txt"),
+    );
   });
 
   it("rejects a sibling directory that merely shares baseDir as a string prefix", () => {

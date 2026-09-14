@@ -37,7 +37,10 @@ describe("hooks", () => {
       received = record;
     });
 
-    await runAfterHooks("afterCreate", model.prefix, { id: "1", title: "hello" });
+    await runAfterHooks("afterCreate", model.prefix, {
+      id: "1",
+      title: "hello",
+    });
 
     expect(received).toEqual({ id: "1", title: "hello" });
   });
@@ -70,7 +73,12 @@ describe("hooks", () => {
       seenBySecond.push({ ...data });
     });
 
-    const result = await runBeforeHooks<Record<string, unknown>>("beforeCreate", model.prefix, { title: "Hello" }, {});
+    const result = await runBeforeHooks<Record<string, unknown>>(
+      "beforeCreate",
+      model.prefix,
+      { title: "Hello" },
+      {},
+    );
 
     expect(seenByFirst).toEqual([{ title: "Hello" }]);
     expect(seenBySecond).toEqual([{ title: "Hello", slug: "auto-slug" }]);
@@ -85,7 +93,12 @@ describe("hooks", () => {
       receivedContext = context;
     });
 
-    await runBeforeHooks("beforeUpdate", model.prefix, { title: "Hello" }, { id: "42" });
+    await runBeforeHooks(
+      "beforeUpdate",
+      model.prefix,
+      { title: "Hello" },
+      { id: "42" },
+    );
 
     expect(receivedContext).toEqual({ id: "42" });
   });
@@ -109,7 +122,9 @@ describe("hooks", () => {
       throw new Error("boom");
     });
 
-    await expect(runAfterHooks("afterCreate", model.prefix, { id: "1" })).rejects.toThrow("boom");
+    await expect(
+      runAfterHooks("afterCreate", model.prefix, { id: "1" }),
+    ).rejects.toThrow("boom");
   });
 
   it("propagates errors thrown by a beforeCreate handler", async () => {
@@ -118,9 +133,9 @@ describe("hooks", () => {
       throw new Error("validation failed");
     });
 
-    await expect(runBeforeHooks("beforeCreate", model.prefix, { title: "x" }, {})).rejects.toThrow(
-      "validation failed",
-    );
+    await expect(
+      runBeforeHooks("beforeCreate", model.prefix, { title: "x" }, {}),
+    ).rejects.toThrow("validation failed");
   });
 
   it("does not call hooks registered for a different model's prefix", async () => {
@@ -170,7 +185,9 @@ describe("hooks", () => {
       received = record;
     });
 
-    await runAfterHooks("afterVarsUpdate", vars.prefix, { siteName: "My Site" });
+    await runAfterHooks("afterVarsUpdate", vars.prefix, {
+      siteName: "My Site",
+    });
 
     expect(received).toEqual({ siteName: "My Site" });
   });
@@ -221,7 +238,9 @@ describe("hooks", () => {
       modelHookCalled = true;
     });
 
-    await runAfterHooks("afterVarsUpdate", vars.prefix, { siteName: "My Site" });
+    await runAfterHooks("afterVarsUpdate", vars.prefix, {
+      siteName: "My Site",
+    });
 
     expect(modelHookCalled).toBe(false);
   });

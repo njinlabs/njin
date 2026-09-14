@@ -1,11 +1,20 @@
 import { existsSync, mkdirSync, readdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 
-const c = { reset: "\x1b[0m", bold: "\x1b[1m", dim: "\x1b[2m", cyan: "\x1b[36m", green: "\x1b[32m" };
+const c = {
+  reset: "\x1b[0m",
+  bold: "\x1b[1m",
+  dim: "\x1b[2m",
+  cyan: "\x1b[36m",
+  green: "\x1b[32m",
+};
 
 const targetArg = process.argv[3] ?? ".";
 const targetDir = resolve(process.cwd(), targetArg);
-const projectName = targetArg === "." ? "njin-app" : targetArg.split(/[\\/]/).filter(Boolean).pop()!;
+const projectName =
+  targetArg === "."
+    ? "njin-app"
+    : targetArg.split(/[\\/]/).filter(Boolean).pop()!;
 
 if (existsSync(targetDir) && readdirSync(targetDir).length > 0) {
   console.error(`✖ Directory "${targetArg}" already exists and is not empty.`);
@@ -35,11 +44,23 @@ mkdirSync(targetDir, { recursive: true });
 
 // `--strip-components=2` drops the `njin-<version>/template/` prefix baked into
 // GitHub's tag-tarball layout, so template/ contents land directly in targetDir.
-const tar = Bun.spawn(["tar", "-xz", "-f", "-", "--strip-components=2", "-C", targetDir, `njin-${pkg.version}/template`], {
-  stdin: res.body,
-  stdout: "inherit",
-  stderr: "inherit",
-});
+const tar = Bun.spawn(
+  [
+    "tar",
+    "-xz",
+    "-f",
+    "-",
+    "--strip-components=2",
+    "-C",
+    targetDir,
+    `njin-${pkg.version}/template`,
+  ],
+  {
+    stdin: res.body,
+    stdout: "inherit",
+    stderr: "inherit",
+  },
+);
 
 const tarExitCode = await tar.exited;
 
@@ -54,7 +75,10 @@ if (tarExitCode !== 0) {
 const pkgPath = join(targetDir, "package.json");
 const scaffoldedPkg = await Bun.file(pkgPath).json();
 scaffoldedPkg.name = projectName;
-scaffoldedPkg.dependencies = { "@njinlabs/njin": `^${pkg.version}`, ...scaffoldedPkg.dependencies };
+scaffoldedPkg.dependencies = {
+  "@njinlabs/njin": `^${pkg.version}`,
+  ...scaffoldedPkg.dependencies,
+};
 await Bun.write(pkgPath, JSON.stringify(scaffoldedPkg, null, 2) + "\n");
 
 console.log("Installing dependencies...\n");
@@ -69,7 +93,9 @@ const installExitCode = await install.exited;
 
 if (installExitCode !== 0) {
   console.error(`\n✖ "bun install" failed (exit code ${installExitCode}).`);
-  console.error(`  The project was scaffolded at ${targetDir}, but dependencies are not installed.`);
+  console.error(
+    `  The project was scaffolded at ${targetDir}, but dependencies are not installed.`,
+  );
   console.error(`  Run "cd ${targetArg} && bun install" manually to retry.\n`);
   process.exit(installExitCode);
 }

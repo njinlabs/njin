@@ -1,4 +1,11 @@
-import type { EventFactory, HelperFactory, HookFactory, ModelFactory, RouteFactory, VarsFactory } from "./config";
+import type {
+  EventFactory,
+  HelperFactory,
+  HookFactory,
+  ModelFactory,
+  RouteFactory,
+  VarsFactory,
+} from "./config";
 
 export type Plugin = {
   models?: ModelFactory[];

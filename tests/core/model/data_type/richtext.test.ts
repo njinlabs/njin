@@ -7,11 +7,15 @@ describe("richtext", () => {
   });
 
   it("rejects missing value by default (required)", () => {
-    expect(richtext({ label: "Body" }).safeParse(undefined).success).toBe(false);
+    expect(richtext({ label: "Body" }).safeParse(undefined).success).toBe(
+      false,
+    );
   });
 
   it("allows opting out of required via rule", () => {
-    expect(richtext({ label: "Body" }, (z) => z.optional()).parse(undefined)).toBeUndefined();
+    expect(
+      richtext({ label: "Body" }, (z) => z.optional()).parse(undefined),
+    ).toBeUndefined();
   });
 
   it("supports chained validators on the underlying ZodString", () => {
@@ -21,6 +25,9 @@ describe("richtext", () => {
   });
 
   it("carries renderAs: richtext through to meta (distinct from text)", () => {
-    expect(richtext({ label: "Body" }).meta()).toMatchObject({ label: "Body", renderAs: "richtext" });
+    expect(richtext({ label: "Body" }).meta()).toMatchObject({
+      label: "Body",
+      renderAs: "richtext",
+    });
   });
 });

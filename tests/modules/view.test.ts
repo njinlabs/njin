@@ -17,7 +17,8 @@ mock.module("vite", () => ({
   }),
 }));
 
-const { fileToRoute, renderErrorPage, renderHttpError, buildViteGlobal } = await import("../../src/modules/view");
+const { fileToRoute, renderErrorPage, renderHttpError, buildViteGlobal } =
+  await import("../../src/modules/view");
 
 describe("fileToRoute", () => {
   it("converts a plain file to a route", () => {
@@ -63,16 +64,26 @@ describe("renderHttpError", () => {
   });
 
   it("renders the matching errors/<code>.edge template when it exists", async () => {
-    writeFileSync(join(errorsDir, "404.edge"), "not used directly — edge.render is mocked below");
+    writeFileSync(
+      join(errorsDir, "404.edge"),
+      "not used directly — edge.render is mocked below",
+    );
     const fakeEdge = { render: async () => "<h1>404 rendered</h1>" };
 
-    const html = await renderHttpError(fakeEdge as never, dir, new (await import("../../src/core/http_error")).HttpError(404));
+    const html = await renderHttpError(
+      fakeEdge as never,
+      dir,
+      new (await import("../../src/core/http_error")).HttpError(404),
+    );
 
     expect(html).toBe("<h1>404 rendered</h1>");
   });
 
   it("falls back to the generic error page when edge.render throws", async () => {
-    writeFileSync(join(errorsDir, "500.edge"), "template exists but rendering fails");
+    writeFileSync(
+      join(errorsDir, "500.edge"),
+      "template exists but rendering fails",
+    );
     const errorSpy = spyOn(console, "error").mockImplementation(() => {});
     const fakeEdge = {
       render: async () => {
@@ -82,7 +93,11 @@ describe("renderHttpError", () => {
 
     try {
       const { HttpError } = await import("../../src/core/http_error");
-      const html = await renderHttpError(fakeEdge as never, dir, new HttpError(500));
+      const html = await renderHttpError(
+        fakeEdge as never,
+        dir,
+        new HttpError(500),
+      );
 
       expect(html).toContain("500");
       expect(html).toContain("Internal Server Error");
@@ -96,7 +111,11 @@ describe("renderHttpError", () => {
     const fakeEdge = { render: async () => "should never be called" };
     const { HttpError } = await import("../../src/core/http_error");
 
-    const html = await renderHttpError(fakeEdge as never, dir, new HttpError(403, "No access"));
+    const html = await renderHttpError(
+      fakeEdge as never,
+      dir,
+      new HttpError(403, "No access"),
+    );
 
     expect(html).toContain("403");
     expect(html).toContain("No access");
@@ -112,7 +131,9 @@ describe("buildViteGlobal — dev mode", () => {
     expect(script).toContain('src="http://localhost:5173/src/main.ts"');
 
     const style = vite.asset("src/main.css");
-    expect(style).toBe('<link rel="stylesheet" href="http://localhost:5173/src/main.css">');
+    expect(style).toBe(
+      '<link rel="stylesheet" href="http://localhost:5173/src/main.css">',
+    );
   });
 
   it("resolves a static asset path against the dev server URL", async () => {

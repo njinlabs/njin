@@ -4,7 +4,9 @@ import * as realConfig from "../../src/core/config";
 
 const loggerErrorCalls: unknown[] = [];
 mock.module("../../src/modules/logger", () => ({
-  default: () => ({ error: (...args: unknown[]) => loggerErrorCalls.push(args) }),
+  default: () => ({
+    error: (...args: unknown[]) => loggerErrorCalls.push(args),
+  }),
 }));
 
 const serveWorkerCalls: unknown[] = [];
@@ -26,7 +28,9 @@ const { default: elysia } = await import("../../src/modules/elysia");
 
 elysia.init();
 const app = elysia()
-  .get("/boom-validation", () => "unreachable", { query: z.object({ n: z.coerce.number() }) })
+  .get("/boom-validation", () => "unreachable", {
+    query: z.object({ n: z.coerce.number() }),
+  })
   .get("/boom-unique", () => {
     throw new UniqueConstraintError("email", "a@a.com");
   })
@@ -42,7 +46,9 @@ afterEach(() => {
 
 describe("elysia() error handling", () => {
   it("maps a validation error to 422 with stripped error details", async () => {
-    const res = await app.handle(new Request("http://localhost/boom-validation"));
+    const res = await app.handle(
+      new Request("http://localhost/boom-validation"),
+    );
     expect(res.status).toBe(422);
     const body = (await res.json()) as { message: string; errors: unknown[] };
     expect(body.message).toBe("Validation error");
@@ -66,7 +72,9 @@ describe("elysia() error handling", () => {
 describe("elysia().spin", () => {
   it("listens on the configured port without binding a real socket", async () => {
     const result = await elysia.init();
-    const listenSpy = spyOn(elysia(), "listen").mockImplementation(() => elysia());
+    const listenSpy = spyOn(elysia(), "listen").mockImplementation(() =>
+      elysia(),
+    );
     try {
       result.spin!();
       expect(listenSpy).toHaveBeenCalledWith(5555);
@@ -78,7 +86,9 @@ describe("elysia().spin", () => {
   it("routes to serveWorker() instead of listen() when NJIN_WORKER=1", async () => {
     process.env.NJIN_WORKER = "1";
     const result = await elysia.init();
-    const listenSpy = spyOn(elysia(), "listen").mockImplementation(() => elysia());
+    const listenSpy = spyOn(elysia(), "listen").mockImplementation(() =>
+      elysia(),
+    );
     try {
       result.spin!();
       expect(listenSpy).not.toHaveBeenCalled();

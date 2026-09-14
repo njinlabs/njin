@@ -30,7 +30,11 @@ describe("buildViteGlobal — production mode", () => {
     writeFileSync(
       join(dir, "public", "manifest.json"),
       JSON.stringify({
-        "src/main.ts": { file: "assets/main-abc123.js", css: ["assets/main-abc123.css"], isEntry: true },
+        "src/main.ts": {
+          file: "assets/main-abc123.js",
+          css: ["assets/main-abc123.css"],
+          isEntry: true,
+        },
         "src/main.css": { file: "assets/main-def456.css" },
       }),
     );
@@ -38,10 +42,16 @@ describe("buildViteGlobal — production mode", () => {
     const vite = await buildViteGlobal();
 
     const script = vite.asset("src/main.ts");
-    expect(script).toContain('<link rel="stylesheet" href="/assets/main-abc123.css">');
-    expect(script).toContain('<script type="module" src="/assets/main-abc123.js"></script>');
+    expect(script).toContain(
+      '<link rel="stylesheet" href="/assets/main-abc123.css">',
+    );
+    expect(script).toContain(
+      '<script type="module" src="/assets/main-abc123.js"></script>',
+    );
 
-    expect(vite.asset("src/main.css")).toBe('<link rel="stylesheet" href="/assets/main-def456.css">');
+    expect(vite.asset("src/main.css")).toBe(
+      '<link rel="stylesheet" href="/assets/main-def456.css">',
+    );
     expect(vite.asset("src/unknown.ts")).toContain("not found in manifest");
     expect(vite.static("/logo.png")).toBe("/logo.png");
   });

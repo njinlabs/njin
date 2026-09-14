@@ -1,5 +1,5 @@
 import { describe, expect, it, mock } from "bun:test";
-import { RecordId, Table } from "surrealdb";
+import { RecordId, type Table } from "surrealdb";
 
 // makeModel's create/update/destroy talk to SurrealDB via `surreal()` — replace it with
 // an in-memory fake so hook wiring can be verified without a live database connection.
@@ -30,7 +30,7 @@ const fakeDb = {
     return record;
   },
   queries: [] as { sql: string; params: Record<string, unknown> }[],
-  query: async function (sql: string, params: Record<string, unknown> = {}) {
+  query: async (sql: string, params: Record<string, unknown> = {}) => {
     fakeDb.queries.push({ sql, params });
     return [[], [{ count: 0 }]];
   },
@@ -40,12 +40,20 @@ mock.module("../../../src/modules/surreal", () => ({
   default: () => fakeDb,
 }));
 
-const { makeModel, afterCreate, afterDestroy, afterUpdate, beforeCreate, beforeDestroy, beforeUpdate } = await import(
-  "../../../src/core/model/index"
-);
+const {
+  makeModel,
+  afterCreate,
+  afterDestroy,
+  afterUpdate,
+  beforeCreate,
+  beforeDestroy,
+  beforeUpdate,
+} = await import("../../../src/core/model/index");
 const { text } = await import("../../../src/core/model/data_type/text");
 const { relation } = await import("../../../src/core/model/data_type/relation");
-const { relationMany } = await import("../../../src/core/model/data_type/relation_many");
+const { relationMany } = await import(
+  "../../../src/core/model/data_type/relation_many"
+);
 const z = (await import("zod")).default;
 
 describe("makeModel hook wiring", () => {
@@ -188,14 +196,23 @@ describe("makeModel read() search", () => {
     const post = makeModel(`post_${crypto.randomUUID().replace(/-/g, "")}`, {
       name: "Post",
       searchFields: ["title", "body"],
-      schema: z.object({ title: text({ label: "Title" }), body: text({ label: "Body" }) }),
+      schema: z.object({
+        title: text({ label: "Title" }),
+        body: text({ label: "Body" }),
+      }),
     });
 
     fakeDb.queries.length = 0;
     const originalQuery = fakeDb.query;
-    fakeDb.query = (async (sql: string, params: Record<string, unknown> = {}) => {
+    fakeDb.query = (async (
+      sql: string,
+      params: Record<string, unknown> = {},
+    ) => {
       fakeDb.queries.push({ sql, params });
-      return [[{ title: "Hello", body: "World", __relevance: 1.5 }], [{ count: 1 }]];
+      return [
+        [{ title: "Hello", body: "World", __relevance: 1.5 }],
+        [{ count: 1 }],
+      ];
     }) as typeof fakeDb.query;
 
     try {
@@ -240,11 +257,14 @@ describe("makeModel read() search", () => {
 
 describe("makeModel read() nested relation search", () => {
   it("turns a relation searchField into an IN subquery, contributing its own BM25 + containment boost to relevance via $parent", async () => {
-    const author = makeModel(`author_${crypto.randomUUID().replace(/-/g, "")}`, {
-      name: "Author",
-      searchFields: [],
-      schema: z.object({ name: text({ label: "Name" }) }),
-    });
+    const author = makeModel(
+      `author_${crypto.randomUUID().replace(/-/g, "")}`,
+      {
+        name: "Author",
+        searchFields: [],
+        schema: z.object({ name: text({ label: "Name" }) }),
+      },
+    );
 
     const post = makeModel(`post_${crypto.randomUUID().replace(/-/g, "")}`, {
       name: "Post",
@@ -328,11 +348,14 @@ describe("makeModel read() nested relation search", () => {
   });
 
   it("throws at model-definition time when the target field doesn't exist on an already-registered target model", () => {
-    const author = makeModel(`author_${crypto.randomUUID().replace(/-/g, "")}`, {
-      name: "Author",
-      searchFields: [],
-      schema: z.object({ name: text({ label: "Name" }) }),
-    });
+    const author = makeModel(
+      `author_${crypto.randomUUID().replace(/-/g, "")}`,
+      {
+        name: "Author",
+        searchFields: [],
+        schema: z.object({ name: text({ label: "Name" }) }),
+      },
+    );
 
     expect(() =>
       makeModel(`post_${crypto.randomUUID().replace(/-/g, "")}`, {

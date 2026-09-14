@@ -1,9 +1,9 @@
-import { getConfig } from "../core/config";
-import { HttpError } from "../core/http_error";
-import { makeModule } from "../core/module";
 import { Edge } from "edge.js";
 import Elysia from "elysia";
 import { join } from "path";
+import { getConfig } from "../core/config";
+import { HttpError } from "../core/http_error";
+import { makeModule } from "../core/module";
 import elysia from "./elysia";
 
 const isDev = process.env.NODE_ENV !== "production";
@@ -31,7 +31,9 @@ export const buildViteGlobal = async (): Promise<ViteGlobal> => {
     await server.listen();
     server.printUrls();
 
-    const url = server.resolvedUrls?.local[0]?.replace(/\/$/, "") ?? "http://localhost:5173";
+    const url =
+      server.resolvedUrls?.local[0]?.replace(/\/$/, "") ??
+      "http://localhost:5173";
 
     process.once("SIGINT", () => server.close());
     process.once("SIGTERM", () => server.close());
@@ -59,7 +61,10 @@ export const buildViteGlobal = async (): Promise<ViteGlobal> => {
     };
   }
 
-  const manifest = (await manifestFile.json()) as Record<string, ViteManifestChunk>;
+  const manifest = (await manifestFile.json()) as Record<
+    string,
+    ViteManifestChunk
+  >;
 
   return {
     asset: (entry) => {
@@ -68,7 +73,10 @@ export const buildViteGlobal = async (): Promise<ViteGlobal> => {
       if (entry.endsWith(".css")) {
         return `<link rel="stylesheet" href="/${chunk.file}">`;
       }
-      const styles = chunk.css?.map((f) => `<link rel="stylesheet" href="/${f}">`).join("\n") ?? "";
+      const styles =
+        chunk.css
+          ?.map((f) => `<link rel="stylesheet" href="/${f}">`)
+          .join("\n") ?? "";
       const script = `<script type="module" src="/${chunk.file}"></script>`;
       return [styles, script].filter(Boolean).join("\n");
     },
@@ -117,7 +125,8 @@ const view = makeModule(() => {
     if (!isDev) {
       controller.get("/assets/*", async ({ params }) => {
         const file = Bun.file(join(publicDir(), "assets", params["*"]));
-        if (!(await file.exists())) return new Response("Not Found", { status: 404 });
+        if (!(await file.exists()))
+          return new Response("Not Found", { status: 404 });
         return file;
       });
     }
@@ -138,48 +147,57 @@ const view = makeModule(() => {
       const route = fileToRoute(file);
       const template = `pages/${file.replace(/\\/g, "/").replace(/\.edge$/, "")}`;
 
-      controller.get(route, async ({ params, query, path, request, server }) => {
-        // Object property — avoids TypeScript's overly-aggressive narrowing of
-        // closure-assigned variables to `never`.
-        const ctx: { abortErr: HttpError | null } = { abortErr: null };
+      controller.get(
+        route,
+        async ({ params, query, path, request, server }) => {
+          // Object property — avoids TypeScript's overly-aggressive narrowing of
+          // closure-assigned variables to `never`.
+          const ctx: { abortErr: HttpError | null } = { abortErr: null };
 
-        try {
-          const html = await edge.render(template, {
-            params,
-            query,
-            request: { path, url: request.url },
-            abort: (statusCode: number, message?: string) => {
-              ctx.abortErr = new HttpError(statusCode, message);
-              throw ctx.abortErr;
-            },
-          });
+          try {
+            const html = await edge.render(template, {
+              params,
+              query,
+              request: { path, url: request.url },
+              abort: (statusCode: number, message?: string) => {
+                ctx.abortErr = new HttpError(statusCode, message);
+                throw ctx.abortErr;
+              },
+            });
 
-          // Fire-and-forget — never awaited, so it can't add latency to the response.
-          import("./analytics").then(({ default: analytics, resolveClientIp, resolveRequestOrigin }) =>
-            analytics().track({
-              path,
-              referrer: request.headers.get("referer"),
-              userAgent: request.headers.get("user-agent"),
-              ip: resolveClientIp(request, server),
-              requestUrl: resolveRequestOrigin(request),
-            }),
-          );
+            // Fire-and-forget — never awaited, so it can't add latency to the response.
+            import("./analytics").then(
+              ({ default: analytics, resolveClientIp, resolveRequestOrigin }) =>
+                analytics().track({
+                  path,
+                  referrer: request.headers.get("referer"),
+                  userAgent: request.headers.get("user-agent"),
+                  ip: resolveClientIp(request, server),
+                  requestUrl: resolveRequestOrigin(request),
+                }),
+            );
 
-          return new Response(html, { headers: { "Content-Type": "text/html; charset=utf-8" } });
-        } catch (err) {
-          if (ctx.abortErr) {
-            return new Response(await renderHttpError(edge, viewsDir, ctx.abortErr), {
-              status: ctx.abortErr.statusCode,
+            return new Response(html, {
+              headers: { "Content-Type": "text/html; charset=utf-8" },
+            });
+          } catch (err) {
+            if (ctx.abortErr) {
+              return new Response(
+                await renderHttpError(edge, viewsDir, ctx.abortErr),
+                {
+                  status: ctx.abortErr.statusCode,
+                  headers: { "Content-Type": "text/html; charset=utf-8" },
+                },
+              );
+            }
+            if (!isDev) throw err;
+            return new Response(renderErrorPage(err as Error, template, path), {
+              status: 500,
               headers: { "Content-Type": "text/html; charset=utf-8" },
             });
           }
-          if (!isDev) throw err;
-          return new Response(renderErrorPage(err as Error, template, path), {
-            status: 500,
-            headers: { "Content-Type": "text/html; charset=utf-8" },
-          });
-        }
-      });
+        },
+      );
     }
 
     // Catch-all — must be registered last so specific routes take priority
@@ -189,10 +207,13 @@ const view = makeModule(() => {
         if (await staticFile.exists()) return staticFile;
       }
 
-      return new Response(await renderHttpError(edge, viewsDir, new HttpError(404)), {
-        status: 404,
-        headers: { "Content-Type": "text/html; charset=utf-8" },
-      });
+      return new Response(
+        await renderHttpError(edge, viewsDir, new HttpError(404)),
+        {
+          status: 404,
+          headers: { "Content-Type": "text/html; charset=utf-8" },
+        },
+      );
     });
 
     elysia().use(controller);
@@ -203,8 +224,14 @@ const view = makeModule(() => {
   return fn;
 });
 
-export async function renderHttpError(edge: Edge, viewsDir: string, error: HttpError): Promise<string> {
-  const templateFile = Bun.file(join(viewsDir, `errors/${error.statusCode}.edge`));
+export async function renderHttpError(
+  edge: Edge,
+  viewsDir: string,
+  error: HttpError,
+): Promise<string> {
+  const templateFile = Bun.file(
+    join(viewsDir, `errors/${error.statusCode}.edge`),
+  );
   if (await templateFile.exists()) {
     try {
       return await edge.render(`errors/${error.statusCode}`, {
@@ -212,7 +239,10 @@ export async function renderHttpError(edge: Edge, viewsDir: string, error: HttpE
         message: error.message,
       });
     } catch (e) {
-      console.error(`[view] failed to render errors/${error.statusCode}.edge:`, e);
+      console.error(
+        `[view] failed to render errors/${error.statusCode}.edge:`,
+        e,
+      );
     }
   }
   const code = error.statusCode;
@@ -222,7 +252,11 @@ export async function renderHttpError(edge: Edge, viewsDir: string, error: HttpE
 </head><body><div class="c"><div class="n">${code}</div><p class="m">${error.message}</p><a href="/">← Back to home</a></div></body></html>`;
 }
 
-export function renderErrorPage(error: Error, template: string, path: string): string {
+export function renderErrorPage(
+  error: Error,
+  template: string,
+  path: string,
+): string {
   const stack = (error.stack ?? "").replace(/</g, "&lt;").replace(/>/g, "&gt;");
   const message = error.message.replace(/</g, "&lt;").replace(/>/g, "&gt;");
 

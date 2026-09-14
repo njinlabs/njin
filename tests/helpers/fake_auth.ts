@@ -14,6 +14,8 @@ export const fakeUser = {
 export const makeFakeAuthPlugin = () =>
   new Elysia({ name: "auth" }).macro({
     auth: {
-      resolve: () => ({ user: { ...fakeUser, tokenId: new RecordId("token", "fixedtoken1") } }),
+      resolve: () => ({
+        user: { ...fakeUser, tokenId: new RecordId("token", "fixedtoken1") },
+      }),
     },
   });
