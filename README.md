@@ -349,6 +349,8 @@ njin exposes a remote [MCP](https://modelcontextprotocol.io) server at `POST /mc
 | `create_upload_url`, `check_upload` | Add files (below) |
 | `list_files`, `get_file`, `delete_file` | Manage uploaded files |
 
+**Links.** A relation or file field takes the related record's id as a plain string, and that is what `list_models` tells the agent. If an agent sends an object instead (`{ "id": "..." }`, or a whole record read earlier) it is reduced to the id before saving — otherwise njin would store a dead embedded copy rather than a link. Created and updated records come back with their relations expanded, with a `_warnings` entry if a link points at nothing, and reads flag records that already hold an embedded `{ id }` copy so they can be repaired.
+
 **Files.** File bytes can't go through a tool call, so `create_upload_url` returns a short-lived link (10 minutes, up to 10 files of 10 MB). The agent uploads with `curl -F file=@photo.jpg <url>`, or — if it has no shell or network — shows the link so you can open it and drop the file. `check_upload` then returns the file ids to put in a model's file field. Only safe types are accepted (images except SVG, PDF, Office documents, audio, video, zip, fonts); HTML, SVG and scripts are rejected because `/uploads` is served from the site's own origin.
 
 **Managing connections.** Every connected agent is a token you can revoke:

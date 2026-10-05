@@ -21,7 +21,7 @@ const INSTRUCTIONS = `Manage the content of an njin website.
 Start with list_models: it returns every content model and settings (vars) group with its JSON schema. Then use read_records / get_record to look at existing content before changing it.
 
 Field conventions:
-- A relation field takes the id of the related record (a string, not the whole record). Records you read, create or update come back with their relations expanded one level; a "_warnings" entry means a link you sent points at a record that does not exist.
+- A relation or file field takes the id of the related record as a plain string — never an object and never the whole record (an object is stored as a dead copy, not a link). Records you read, create or update come back with their relations expanded one level. A "_warnings" entry means a link points at a record that does not exist, or holds an embedded {id} object instead of a link: fix it with update_record, sending the plain id string.
 - A field with renderAs "file" takes the id of a file record, not a URL.
 - update_record and update_vars only change the fields you send; omitted fields are kept.
 - Validation errors name the offending field — fix it and retry instead of guessing.
@@ -59,12 +59,74 @@ const RELATION_KINDS = new Set([
   "multi_file",
 ]);
 
-const relationFieldsOf = (model: Model) =>
-  Object.entries(model.validation.shape)
-    .filter(([, field]) =>
-      RELATION_KINDS.has((field as z.ZodType).meta()?.renderAs as string),
+type RelationField = { name: string; many: boolean; target: string };
+
+const relationFieldsOf = (model: Model): RelationField[] =>
+  Object.entries(model.validation.shape).flatMap(([name, field]) => {
+    const meta = (field as z.ZodType).meta() as
+      | { renderAs?: string; model?: string }
+      | undefined;
+    if (!RELATION_KINDS.has(meta?.renderAs ?? "")) return [];
+
+    return [
+      {
+        name,
+        many:
+          meta?.renderAs === "multi_relation" ||
+          meta?.renderAs === "multi_file",
+        target: meta?.model ?? "",
+      },
+    ];
+  });
+
+const toLinkId = (target: string, value: unknown) => {
+  const raw =
+    value && typeof value === "object" && "id" in value
+      ? (value as { id: unknown }).id
+      : value;
+
+  return typeof raw === "string" ? bareId(target, raw) : value;
+};
+
+// A relation written as an object (`{ id }`, or a whole record echoed back from a read) is stored
+// by njin as an embedded copy, not a link — it never expands and goes stale. Agents do send that
+// shape, so reduce every link field to the plain id string before validation turns it into a
+// real record link. Also drops a "table:" prefix that doesn't belong in a link.
+const normalizeRelations = (model: Model, data: Record<string, unknown>) => {
+  const next = { ...data };
+
+  for (const { name, many, target } of relationFieldsOf(model)) {
+    const value = next[name];
+    if (value === undefined || value === null) continue;
+
+    next[name] =
+      many && Array.isArray(value)
+        ? value.map((item) => toLinkId(target, item))
+        : toLinkId(target, value);
+  }
+
+  return next;
+};
+
+// An expanded link always carries the target's own fields; a bare `{ id }` is what an embedded
+// stub looks like (a link written as an object before this was normalised).
+const isStub = (value: unknown) =>
+  !!value &&
+  typeof value === "object" &&
+  !Array.isArray(value) &&
+  Object.keys(value).every((key) => key === "id");
+
+const stubFieldsOf = (model: Model, row: Record<string, unknown>) =>
+  relationFieldsOf(model)
+    .filter(({ name, many }) =>
+      many
+        ? Array.isArray(row[name]) && (row[name] as unknown[]).some(isStub)
+        : isStub(row[name]),
     )
-    .map(([name]) => name);
+    .map(({ name }) => name);
+
+const stubWarning = (field: string, recordId?: string) =>
+  `${recordId ? `Record ${recordId}: ` : ""}"${field}" holds an embedded {id} object, not a link, so it cannot expand. Fix it with update_record, sending "${field}" as the plain id string.`;
 
 // create()/update() hand back the row exactly as stored, so every relation field is a bare id —
 // the agent can't tell a link that resolved from one pointing at nothing (SurrealDB drops a
@@ -76,7 +138,7 @@ const readBack = async (model: Model, written: Record<string, unknown>) => {
   const shown = ((await model.show(id)) ?? written) as Record<string, unknown>;
 
   const warnings: string[] = [];
-  for (const field of relationFieldsOf(model)) {
+  for (const { name: field } of relationFieldsOf(model)) {
     const stored = written[field];
     if (stored === null || stored === undefined) continue;
 
@@ -143,12 +205,12 @@ const mcp = makeModule(() => {
       models: [...models.values()].map((model) => ({
         name: model.name,
         prefix: model.prefix,
-        schema: toAdminSchema(model.validation),
+        schema: toAdminSchema(model.validation, { forAgent: true }),
       })),
       vars: [...groups.values()].map((group) => ({
         name: group.name,
         prefix: group.prefix,
-        schema: toAdminSchema(group.validation),
+        schema: toAdminSchema(group.validation, { forAgent: true }),
       })),
     };
 
@@ -238,7 +300,24 @@ const mcp = makeModule(() => {
               Array.isArray(options.populate) && options.populate.length === 0
                 ? undefined
                 : options.populate;
-            return getModel(model).read({ ...options, populate });
+            const target = getModel(model);
+            const result = await target.read({ ...options, populate });
+
+            const warnings = (result.data as Record<string, unknown>[]).flatMap(
+              (row) =>
+                stubFieldsOf(target, row).map((field) =>
+                  stubWarning(
+                    field,
+                    row.id instanceof RecordId
+                      ? String(row.id.id)
+                      : String(row.id),
+                  ),
+                ),
+            );
+
+            return warnings.length
+              ? { ...result, _warnings: warnings.slice(0, 20) }
+              : result;
           }),
       );
 
@@ -253,9 +332,16 @@ const mcp = makeModule(() => {
         async ({ model, id }) =>
           run(async () => {
             audit("get_record", model, id);
-            const record = await getModel(model).show(bareId(model, id));
+            const target = getModel(model);
+            const record = (await target.show(bareId(model, id))) as
+              | Record<string, unknown>
+              | undefined;
             if (!record) throw new Error(`No ${model} record with id "${id}"`);
-            return record;
+
+            const stubs = stubFieldsOf(target, record);
+            return stubs.length
+              ? { ...record, _warnings: stubs.map((f) => stubWarning(f)) }
+              : record;
           }),
       );
 
@@ -277,7 +363,9 @@ const mcp = makeModule(() => {
             return readBack(
               target,
               (await target.create(
-                target.validation.parse(data) as never,
+                target.validation.parse(
+                  normalizeRelations(target, data),
+                ) as never,
               )) as Record<string, unknown>,
             );
           }),
@@ -304,7 +392,9 @@ const mcp = makeModule(() => {
               target,
               (await target.update(
                 bareId(model, id),
-                target.validation.partial().parse(data) as never,
+                target.validation
+                  .partial()
+                  .parse(normalizeRelations(target, data)) as never,
               )) as Record<string, unknown>,
             );
           }),
