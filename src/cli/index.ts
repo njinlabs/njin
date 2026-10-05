@@ -28,6 +28,7 @@ switch (command) {
   build         Build for production -> ./out (public/, _admin/, views/, server)
   build:worker  Build a headless worker for production -> ./out (public/, _admin/, views/, worker.js)
   start         Run from source in production mode (no compile)
-  update        Update @njinlabs/njin to the latest version and refresh _admin/`);
+  update        Update @njinlabs/njin to the latest version and refresh _admin/
+                (--beta, or --tag <name>, follows a prerelease channel instead)`);
     process.exit(command ? 1 : 0);
 }

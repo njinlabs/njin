@@ -45,6 +45,15 @@ jobs:
           fi
 
       - name: Publish
-        run: npm publish --access public --provenance
+        run: |
+          VERSION="$(node -p "require('./package.json').version")"
+          # A prerelease (e.g. 0.11.0-beta.1) is published under its own dist-tag (beta) so it
+          # never takes over `latest`, which `njin update` and `njin create` follow.
+          if [[ "$VERSION" == *-* ]]; then
+            PRERELEASE="${VERSION#*-}"
+            npm publish --access public --provenance --tag "${PRERELEASE%%.*}"
+          else
+            npm publish --access public --provenance
+          fi
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

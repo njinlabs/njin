@@ -40,20 +40,58 @@ const currentPinned = String(pkg[depKey]["@njinlabs/njin"]).replace(
   "",
 );
 
-console.log("Checking latest njin version...\n");
+// `--beta` is shorthand for `--tag beta`. Without either, only the stable channel (`latest`)
+// is followed — a prerelease is published under its own dist-tag and never becomes `latest`.
+const args = process.argv.slice(3);
+const tagIndex = args.indexOf("--tag");
+const requestedTag = args.includes("--beta")
+  ? "beta"
+  : tagIndex !== -1
+    ? args[tagIndex + 1]
+    : undefined;
+
+if (tagIndex !== -1 && (!requestedTag || requestedTag.startsWith("-"))) {
+  console.error(`✖ --tag needs a dist-tag name, e.g. "--tag beta".`);
+  process.exit(1);
+}
+
+const distTag = requestedTag ?? "latest";
+
+console.log(
+  `Checking ${distTag === "latest" ? "latest" : `"${distTag}"`} njin version...\n`,
+);
 
 const registryRes = await fetch(
-  "https://registry.npmjs.org/@njinlabs/njin/latest",
+  `https://registry.npmjs.org/@njinlabs/njin/${encodeURIComponent(distTag)}`,
 );
 if (!registryRes.ok) {
   console.error(
-    `✖ Could not reach the npm registry (HTTP ${registryRes.status}).`,
+    registryRes.status === 404
+      ? `✖ There is no "${distTag}" release of njin on npm.`
+      : `✖ Could not reach the npm registry (HTTP ${registryRes.status}).`,
   );
   process.exit(1);
 }
 
 const { version: latest } = (await registryRes.json()) as { version: string };
 const adminDir = join(root, "_admin");
+
+// A project already on a prerelease would otherwise be moved *back* to the older stable
+// version by a plain `njin update` — only an explicit --beta/--tag may change channel.
+const isBehindCurrent = (() => {
+  try {
+    return Bun.semver.order(latest, currentPinned) === -1;
+  } catch {
+    return false;
+  }
+})();
+
+if (!requestedTag && isBehindCurrent) {
+  console.log(
+    `${c.green}✓${c.reset} This project is on ${currentPinned}, ahead of the latest stable (${latest}) — nothing to update. Use "--beta" to follow the beta channel.`,
+  );
+  process.exit(0);
+}
 
 if (currentPinned === latest && existsSync(adminDir)) {
   console.log(
@@ -64,7 +102,9 @@ if (currentPinned === latest && existsSync(adminDir)) {
 
 console.log(`Updating njin ${currentPinned} -> ${latest}...\n`);
 
-pkg[depKey]["@njinlabs/njin"] = `^${latest}`;
+// A prerelease is pinned exactly: "^0.11.0-beta.1" would also accept later stable 0.x releases
+// on the next install, silently leaving the beta channel the user chose.
+pkg[depKey]["@njinlabs/njin"] = distTag === "latest" ? `^${latest}` : latest;
 await Bun.write(pkgPath, JSON.stringify(pkg, null, 2) + "\n");
 
 console.log("Installing dependencies...\n");
