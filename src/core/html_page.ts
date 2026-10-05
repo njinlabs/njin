@@ -45,7 +45,7 @@ label{display:block;font-size:14px;margin:12px 0 4px}
 input[type=email],input[type=password]{width:100%;padding:10px 12px;border:1px solid var(--line);border-radius:8px;background:transparent;color:inherit;font:inherit}
 .row{display:flex;gap:8px;margin-top:20px}
 button{flex:1;padding:10px 12px;border-radius:8px;border:1px solid var(--line);background:transparent;color:inherit;font:inherit;cursor:pointer}
-button.primary{background:var(--accent);color:var(--accent-fg);border-color:var(--accent)}
+button.primary{background:var(--accent);color:var(--accent-fg);border-color:var(--accent);order:1}
 .error{color:var(--danger);font-size:14px;margin:0 0 12px}
 input[type=file]{width:100%;padding:32px 12px;border:2px dashed var(--line);border-radius:8px;background:transparent;color:inherit;font:inherit;cursor:pointer}
 .ok{color:var(--fg)}
