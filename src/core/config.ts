@@ -40,6 +40,11 @@ export type HelperFactory = () => Promise<{ default: Helper }>;
 
 export type NjinConfig = {
   port?: number;
+  // Public base URL of the site as clients reach it (e.g. "https://example.com") — used for
+  // the OAuth/MCP discovery documents, which must name the exact host an agent connects to.
+  // Optional: falls back to the request's own origin (see core/public_url.ts), which is
+  // enough for a single-host setup without a proxy rewriting Host.
+  publicUrl?: string;
   // Base directory every project-relative path (src/views, _admin, public, upload dirs)
   // resolves against. Defaults to process.cwd() — only needs overriding by a build step
   // (see build-worker.ts) that bakes in an absolute path for a runtime whose cwd isn't
@@ -72,6 +77,7 @@ export type NjinConfig = {
 
 export type ResolvedConfig = {
   port: number;
+  publicUrl?: string;
   rootDir: string;
   db: {
     path: string;
@@ -142,6 +148,7 @@ export const loadConfig = async (preloaded?: NjinConfig): Promise<void> => {
   // prefix fails the same way it already does today — naturally, at runtime.
   resolved = {
     port: userConfig.port ?? 3000,
+    publicUrl: userConfig.publicUrl,
     rootDir: userConfig.rootDir ?? process.cwd(),
     db: {
       path: userConfig.db?.path ?? "rocksdb://data",
