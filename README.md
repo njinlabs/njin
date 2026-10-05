@@ -334,6 +334,33 @@ DELETE /api/auth/logout        # Bearer <token>
 
 All `/api/*` endpoints require `Authorization: Bearer <token>`.
 
+## MCP — manage the site with AI agents
+
+njin exposes a remote [MCP](https://modelcontextprotocol.io) server at `POST /mcp` (Streamable HTTP), so an agent such as Claude Cowork or Claude Desktop can read and edit content, change settings and upload files.
+
+**Connecting Claude:** add a custom connector and enter only the URL, `https://your-site.com/mcp`. Claude opens an njin sign-in page, you log in with your normal njin account and click **Allow** — no token to copy. The site must be reachable from the internet over HTTPS; set `publicUrl` in `config.ts` if it sits behind a proxy that rewrites the host.
+
+| Tool | |
+| --- | --- |
+| `list_models` | Every model and `vars` group with its JSON schema — agents call this first |
+| `read_records`, `get_record` | Search, filter, sort, paginate, populate |
+| `create_record`, `update_record`, `delete_record` | Validated through the model's own schema, so hooks and transforms run exactly as over REST |
+| `get_vars`, `update_vars` | Settings groups |
+| `create_upload_url`, `check_upload` | Add files (below) |
+| `list_files`, `get_file`, `delete_file` | Manage uploaded files |
+
+**Files.** File bytes can't go through a tool call, so `create_upload_url` returns a short-lived link (10 minutes, up to 10 files of 10 MB). The agent uploads with `curl -F file=@photo.jpg <url>`, or — if it has no shell or network — shows the link so you can open it and drop the file. `check_upload` then returns the file ids to put in a model's file field. Only safe types are accepted (images except SVG, PDF, Office documents, audio, video, zip, fonts); HTML, SVG and scripts are rejected because `/uploads` is served from the site's own origin.
+
+**Managing connections.** Every connected agent is a token you can revoke:
+
+```bash
+GET    /api/mcp-token       # connected agents (OAuth) and manually created tokens
+DELETE /api/mcp-token/:id   # revoke — takes effect immediately
+POST   /api/mcp-token       # { name } → a long-lived token, shown once, for clients that can send an Authorization header
+```
+
+These need an admin session token, never an MCP token. There is no per-agent permission scoping yet: an agent can do anything an admin can in the content API (it cannot touch users or sessions).
+
 ## Admin panel
 
 njin doesn't bundle an admin panel — `_admin/` at your project root is just a static folder the server looks for at startup (`GET /_admin`). Drop a built admin SPA's `index.html`/assets into it (your own, or one shared by the community) and it's served automatically; if it's missing, the startup banner just notes it wasn't found.
@@ -349,6 +376,7 @@ import bunFilesystemAdapter from "@njinlabs/njin/adapters/bun_filesystem";
 
 export default defineConfig({
   port: Number(process.env.PORT ?? 3000),
+  publicUrl: "https://your-site.com", // optional — only needed behind a proxy; used by the MCP/OAuth discovery documents
   db: {
     path: process.env.DB_PATH ?? "rocksdb://data",
     namespace: process.env.DB_NAMESPACE ?? "general",
@@ -404,7 +432,10 @@ bunx njin dev       # Start dev server (Elysia + Vite HMR)
 bunx njin build     # Build for production -> ./out (public/, _admin/, views/, compiled server)
 bunx njin start     # Run from source in production mode (no compile)
 bunx njin update    # Update @njinlabs/njin to the latest version and refresh _admin/
+bunx njin update --beta  # Follow the beta channel instead (or --tag <name>)
 ```
+
+**Trying a beta.** Prereleases never become `latest`, so a normal install or update never picks one up. New project: `bunx @njinlabs/njin@beta create my-web`. Existing project: `bunx njin update --beta` (the dependency is pinned to that exact version). To go back to stable, set `@njinlabs/njin` to a stable version in `package.json` and run `bunx njin update`.
 
 Wire these as `package.json` scripts (`"dev": "njin dev"`, etc.) if you'd rather run `bun run dev`.
 
