@@ -146,8 +146,10 @@ ${hidden("state", params.state)}
 <label for="password">Password</label>
 <input id="password" name="password" type="password" autocomplete="current-password" required>
 <div class="row">
-<button type="submit" name="action" value="deny" formnovalidate>Deny</button>
+<!-- Allow must come first in the markup: pressing Enter in a field submits with the form's
+first submit button, and that must never be Deny. CSS puts Deny back on the left. -->
 <button type="submit" name="action" value="approve" class="primary">Allow</button>
+<button type="submit" name="action" value="deny" formnovalidate>Deny</button>
 </div>
 </form>`,
     status,

@@ -229,6 +229,21 @@ describe("GET /oauth/authorize", () => {
     );
   });
 
+  it("makes Allow the form's default button, so pressing Enter never denies", async () => {
+    const { body: client } = await register();
+    const html = await (
+      await request(
+        `/oauth/authorize?${authorizeQuery(client.client_id, pkce().challenge)}`,
+      )
+    ).text();
+
+    // Implicit submission (Enter in the password field) uses the first submit button.
+    const firstAction = /<button[^>]*name="action"[^>]*value="(\w+)"/.exec(
+      html,
+    );
+    expect(firstAction?.[1]).toBe("approve");
+  });
+
   it("escapes the client name it displays", async () => {
     const res = await request("/oauth/register", {
       method: "POST",
