@@ -45,6 +45,13 @@ export type NjinConfig = {
   // Optional: falls back to the request's own origin (see core/public_url.ts), which is
   // enough for a single-host setup without a proxy rewriting Host.
   publicUrl?: string;
+  mcp?: {
+    // Extra OAuth callback URLs an MCP client may register, on top of the built-in ones (Claude,
+    // ChatGPT, Cursor, VS Code, and any loopback address). An entry is matched exactly, or as a
+    // path prefix when it ends in "*" ("https://app.example.com/oauth/*"). Only add callbacks of
+    // clients you trust: it is where the authorization code is sent after a user signs in.
+    redirectUris?: string[];
+  };
   // Base directory every project-relative path (src/views, _admin, public, upload dirs)
   // resolves against. Defaults to process.cwd() — only needs overriding by a build step
   // (see build-worker.ts) that bakes in an absolute path for a runtime whose cwd isn't
@@ -78,6 +85,7 @@ export type NjinConfig = {
 export type ResolvedConfig = {
   port: number;
   publicUrl?: string;
+  mcp: { redirectUris: string[] };
   rootDir: string;
   db: {
     path: string;
@@ -149,6 +157,7 @@ export const loadConfig = async (preloaded?: NjinConfig): Promise<void> => {
   resolved = {
     port: userConfig.port ?? 3000,
     publicUrl: userConfig.publicUrl,
+    mcp: { redirectUris: userConfig.mcp?.redirectUris ?? [] },
     rootDir: userConfig.rootDir ?? process.cwd(),
     db: {
       path: userConfig.db?.path ?? "rocksdb://data",

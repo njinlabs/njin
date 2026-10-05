@@ -2,6 +2,7 @@ import { createHash, randomBytes } from "node:crypto";
 import Elysia from "elysia";
 import moment from "moment";
 import { eq, RecordId, Table } from "surrealdb";
+import { getConfig } from "../core/config";
 import { escapeHtml, noStore, page } from "../core/html_page";
 import { makeModule } from "../core/module";
 import { publicBase } from "../core/public_url";
@@ -25,12 +26,19 @@ const CODE_TTL_MINUTES = 10;
 const UNUSED_CLIENT_TTL_HOURS = 24;
 
 // Dynamic registration is open to anyone who can reach the server, so the redirect URI is the
-// only thing stopping a rogue client from receiving an authorization code — only the hosted
-// Claude callbacks and loopback addresses (native/dev clients, RFC 8252) are accepted.
-const HOSTED_CALLBACKS = new Set([
+// only thing stopping a rogue client from receiving an authorization code. Only these known
+// callbacks, anything in config `mcp.redirectUris`, and loopback addresses (native/dev clients,
+// RFC 8252 — Gemini CLI, VS Code and others use these) are accepted. An entry ending in "*" is a
+// path prefix. Sources: each vendor's own docs (ChatGPT's callback carries a per-connector id).
+const BUILT_IN_REDIRECTS = [
   "https://claude.ai/api/mcp/auth_callback",
   "https://claude.com/api/mcp/auth_callback",
-]);
+  "https://chatgpt.com/connector_platform_oauth_redirect",
+  "https://chatgpt.com/connector/oauth/*",
+  "cursor://anysphere.cursor-mcp/oauth/callback",
+  "https://vscode.dev/redirect",
+  "https://insiders.vscode.dev/redirect",
+];
 const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
 
 const parseUrl = (value: string) => {
@@ -41,12 +49,31 @@ const parseUrl = (value: string) => {
   }
 };
 
+// Compares parsed parts, never raw strings: `https://chatgpt.com@evil.com/...` and
+// `https://chatgpt.com.evil.com/...` both start with an allowed string but are other hosts, and
+// `..` segments are already resolved by URL parsing before the path is compared.
+const matchesEntry = (url: URL, entry: string) => {
+  const wildcard = entry.endsWith("*");
+  const base = parseUrl(wildcard ? entry.slice(0, -1) : entry);
+  if (!base) return false;
+
+  if (url.protocol !== base.protocol || url.host !== base.host) return false;
+
+  return wildcard
+    ? url.pathname.startsWith(base.pathname)
+    : url.pathname === base.pathname && url.search === base.search;
+};
+
 const isAllowedRedirectUri = (value: string) => {
   const url = parseUrl(value);
-  if (!url || url.hash) return false;
-  if (HOSTED_CALLBACKS.has(value)) return true;
+  if (!url || url.hash || url.username || url.password) return false;
 
-  return url.protocol === "http:" && LOOPBACK_HOSTS.has(url.hostname);
+  if (url.protocol === "http:" && LOOPBACK_HOSTS.has(url.hostname)) return true;
+
+  const extra = getConfig().mcp?.redirectUris ?? [];
+  return [...BUILT_IN_REDIRECTS, ...extra].some((entry) =>
+    matchesEntry(url, entry),
+  );
 };
 
 // Exact match, except that a loopback client's ephemeral port is ignored (RFC 8252 §7.3) —
@@ -341,7 +368,7 @@ const oauth = makeModule(() => {
           ) {
             return oauthError(
               "invalid_redirect_uri",
-              "redirect_uris must be the Claude callback or a loopback address.",
+              "redirect_uris must be a known client callback or a loopback address (extra callbacks go in config mcp.redirectUris).",
             );
           }
 
