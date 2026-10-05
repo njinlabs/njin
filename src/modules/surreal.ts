@@ -59,6 +59,12 @@ const ensureTables = async (db: Surreal) => {
 
   const prefixes = new Set<string>(models.map((model) => model.prefix));
   prefixes.add("vars");
+  // Not a model, but queried by record id (see mcp_token.ts) — a never-DEFINE'd table makes
+  // that throw NotFoundError (see the note above the hash check below).
+  prefixes.add("mcp_token");
+  prefixes.add("oauth_client");
+  prefixes.add("oauth_code");
+  prefixes.add("mcp_upload");
 
   // Resolve every search index's target table+field up front (also dedupes prefix+field in
   // case two factories share a prefix, or a nested reference targets an already-indexed

@@ -65,6 +65,7 @@
   "dependencies": {
     "@elysia/bearer": "^1.4.4",
     "@elysia/cors": "^1.4.2",
+    "@modelcontextprotocol/sdk": "^1.32.0",
     "@paralleldrive/cuid2": "^3.3.0",
     "@surrealdb/node": "^3.0.3",
     "edge.js": "^6.5.1",

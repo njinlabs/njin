@@ -35,13 +35,32 @@ export interface FileAdapter<Meta> {
 
 const file = makeModule(() => {
   let model: ReturnType<typeof makeModel>;
+  // Set in init() once the file model is loaded — shared by the REST routes below and any
+  // other caller (e.g. the MCP upload flow) so every path goes through the same adapter.
+  let upload: (file: File) => Promise<unknown>;
+  let remove: (id: string) => Promise<unknown>;
 
-  const fn = () => ({ model });
+  const fn = () => ({ model, upload, remove });
 
   fn.init = async () => {
     const { default: baseModel } = await import("../models/file");
 
     type FileUploadCurrent = Awaited<ReturnType<typeof baseModel.create>>;
+
+    upload = async (file) =>
+      surreal()
+        .create<Omit<FileUploadCurrent, "id">>(baseModel.table)
+        .content(await getConfig().adapters.file.write(file));
+
+    remove = async (id) => {
+      const data = await surreal().delete<FileUploadCurrent>(
+        new RecordId(baseModel.table, id),
+      );
+
+      await getConfig().adapters.file.unlink(data);
+
+      return data;
+    };
 
     const controller = new Elysia({ prefix: "/api/file" })
       .use((await auth()).plugin)
@@ -64,13 +83,7 @@ const file = makeModule(() => {
       .delete(
         "/:id",
         async ({ params }) => {
-          const data = await surreal().delete<FileUploadCurrent>(
-            new RecordId(baseModel.table, params.id),
-          );
-
-          await getConfig().adapters.file.unlink(data);
-
-          return { data };
+          return { data: await remove(params.id) };
         },
         {
           params: z.object({
@@ -82,11 +95,7 @@ const file = makeModule(() => {
       .post(
         "/",
         async ({ body }) => {
-          const data = await surreal()
-            .create<Omit<FileUploadCurrent, "id">>(baseModel.table)
-            .content(await getConfig().adapters.file.write(body.file));
-
-          return { data };
+          return { data: await upload(body.file) };
         },
         {
           auth: true,

@@ -7,6 +7,10 @@ import elysia from "../modules/elysia";
 import file from "../modules/file";
 import img from "../modules/img";
 import logger from "../modules/logger";
+import mcp from "../modules/mcp";
+import mcpToken from "../modules/mcp_token";
+import mcpUpload from "../modules/mcp_upload";
+import oauth from "../modules/oauth";
 import plugin from "../modules/plugin";
 import setup from "../modules/setup";
 import surreal from "../modules/surreal";
@@ -31,9 +35,14 @@ const modules = [
   await plugin.init(),
   await file.init(),
   await auth.init(),
+  await mcpToken.init(),
   await setup.init(),
   await api.init(),
   await vars.init(),
+  // After api/vars so models' hooks and events are already registered (api.init drains them).
+  await mcp.init(),
+  await mcpUpload.init(),
+  await oauth.init(),
   await img.init(),
   await analytics.init(),
   await users.init(),
