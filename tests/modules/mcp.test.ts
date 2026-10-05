@@ -12,6 +12,17 @@ records.set("p1", { id: "p1", title: "Hello" });
 records.set("p3", { id: new RecordId("post", "p3"), title: "Linked" });
 const readCalls: Record<string, unknown>[] = [];
 
+const authors = new Map([["a1", { id: "a1", name: "Ann" }]]);
+
+// What the real show() does with FETCH: a resolvable link becomes the related record, a
+// dangling one disappears from the row altogether (verified against embedded SurrealDB).
+const expand = (record: Record<string, unknown>) => {
+  if (typeof record.author !== "string") return record;
+  const { author, ...rest } = record;
+  const found = authors.get(author);
+  return found ? { ...rest, author: found } : rest;
+};
+
 const fakeModel = {
   name: "Post",
   prefix: "post",
@@ -21,12 +32,17 @@ const fakeModel = {
     // just like it does for REST bodies, or secrets would be stored unhashed.
     slug: z.string().transform((v) => v.toLowerCase().replaceAll(" ", "-")),
     internalFlag: z.boolean().meta({ hideForm: true }).optional(),
+    // meta last, as the real relation()/file() fields do — .optional() would drop it.
+    author: z.string().optional().meta({ renderAs: "relation" }),
   }),
   read: async (opts: Record<string, unknown>) => {
     readCalls.push(opts);
     return { data: [...records.values()], meta: { total: records.size } };
   },
-  show: async (id: string) => records.get(id) ?? null,
+  show: async (id: string) => {
+    const record = records.get(id);
+    return record ? expand(record) : null;
+  },
   create: async (body: Record<string, unknown>) => {
     const record = { id: "p2", ...body };
     records.set("p2", record);
@@ -399,5 +415,65 @@ describe("record ids", () => {
     const { json } = await callTool("get_file", { id: "file:f1" });
 
     expect(json().name).toBe("logo.png");
+  });
+});
+
+describe("relations", () => {
+  it("returns a created record with its relations expanded, not bare ids", async () => {
+    const { json, isError } = await callTool("create_record", {
+      model: "post",
+      data: { title: "R", slug: "r", author: "a1" },
+    });
+
+    expect(isError).toBe(false);
+    expect(json().author).toEqual({ id: "a1", name: "Ann" });
+    expect(json()._warnings).toBeUndefined();
+  });
+
+  it("warns when a link points at a record that does not exist", async () => {
+    const { json, isError } = await callTool("create_record", {
+      model: "post",
+      data: { title: "R", slug: "r", author: "ghost" },
+    });
+
+    expect(isError).toBe(false);
+    expect(json()._warnings).toHaveLength(1);
+    expect(json()._warnings[0]).toContain('"author"');
+  });
+
+  it("expands relations on update as well", async () => {
+    const { json } = await callTool("update_record", {
+      model: "post",
+      id: "p1",
+      data: { author: "a1" },
+    });
+
+    expect(json().author.name).toBe("Ann");
+    expect(json().title).toBeDefined();
+  });
+
+  it("does not warn when the record has no link set", async () => {
+    const { json } = await callTool("create_record", {
+      model: "post",
+      data: { title: "No author", slug: "n" },
+    });
+
+    expect(json()._warnings).toBeUndefined();
+  });
+
+  it("treats an empty populate array as the default instead of suppressing relations", async () => {
+    readCalls.length = 0;
+    await callTool("read_records", { model: "post", populate: [] });
+
+    expect(readCalls[0]!.populate).toBeUndefined();
+  });
+
+  it("still honours populate 'none' and an explicit list", async () => {
+    readCalls.length = 0;
+    await callTool("read_records", { model: "post", populate: "none" });
+    await callTool("read_records", { model: "post", populate: ["author"] });
+
+    expect(readCalls[0]!.populate).toBe("none");
+    expect(readCalls[1]!.populate).toEqual(["author"]);
   });
 });
