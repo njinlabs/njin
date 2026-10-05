@@ -5,7 +5,12 @@ import { getConfig } from "./config";
 // only trusted for building discovery documents, never for any access decision.
 export const publicBase = (request: Request) => {
   const configured = getConfig().publicUrl;
-  if (configured) return configured.replace(/\/+$/, "");
+  if (configured) {
+    // Not a /\/+$/ regex — that is quadratic on a long run of slashes.
+    let base = configured;
+    while (base.endsWith("/")) base = base.slice(0, -1);
+    return base;
+  }
 
   const url = new URL(request.url);
   const first = (name: string) =>

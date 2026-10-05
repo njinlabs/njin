@@ -1,4 +1,4 @@
-import { beforeAll, describe, expect, it, mock } from "bun:test";
+import { afterAll, beforeAll, describe, expect, it, mock } from "bun:test";
 import { createHash } from "node:crypto";
 import { createNodeEngines } from "@surrealdb/node";
 import Elysia from "elysia";
@@ -56,6 +56,12 @@ const protectedApp = new Elysia()
 const CALLBACK = "https://claude.ai/api/mcp/auth_callback";
 const PASSWORD = "correct-horse";
 const EMAIL = "admin@example.com";
+
+// An embedded engine left open at exit crashed Bun with a segfault on Linux CI (after all
+// tests had passed) — close it explicitly.
+afterAll(async () => {
+  await db.close();
+});
 
 beforeAll(async () => {
   await db.create(new RecordId("user", "admin1")).content({
