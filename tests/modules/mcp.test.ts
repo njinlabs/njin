@@ -9,6 +9,8 @@ import { makeFakeElysia } from "../helpers/fake_elysia";
 
 const records = new Map<string, Record<string, unknown>>();
 records.set("p1", { id: "p1", title: "Hello" });
+// A link that was written as an {id} object — njin stored it as an embedded stub, not a link.
+records.set("p4", { id: "p4", title: "Legacy", author: { id: "a1" } });
 records.set("p3", { id: new RecordId("post", "p3"), title: "Linked" });
 const readCalls: Record<string, unknown>[] = [];
 
@@ -33,7 +35,14 @@ const fakeModel = {
     slug: z.string().transform((v) => v.toLowerCase().replaceAll(" ", "-")),
     internalFlag: z.boolean().meta({ hideForm: true }).optional(),
     // meta last, as the real relation()/file() fields do — .optional() would drop it.
-    author: z.string().optional().meta({ renderAs: "relation" }),
+    author: z
+      .string()
+      .optional()
+      .meta({ renderAs: "relation", model: "author" }),
+    reviewers: z
+      .array(z.string())
+      .optional()
+      .meta({ renderAs: "multi_relation", model: "author" }),
   }),
   read: async (opts: Record<string, unknown>) => {
     readCalls.push(opts);
@@ -249,7 +258,7 @@ describe("read / get", () => {
       filters: { title: "Hello" },
     });
 
-    expect(json().data).toHaveLength(2);
+    expect(json().data).toHaveLength(3);
     expect(readCalls[0]).toMatchObject({
       search: "hel",
       page: 1,
@@ -475,5 +484,119 @@ describe("relations", () => {
 
     expect(readCalls[0]!.populate).toBe("none");
     expect(readCalls[1]!.populate).toEqual(["author"]);
+  });
+});
+
+describe("relation input", () => {
+  const stored = () => records.get("p2") as Record<string, unknown>;
+
+  it("shows agents a link as a plain id string, not an object", async () => {
+    const { json } = await callTool("list_models");
+    const author = json().models[0].schema.properties.author;
+
+    expect(author.type).toBe("string");
+    expect(author.description).toContain("plain string");
+  });
+
+  it("accepts a relation sent as an {id} object and writes the plain id", async () => {
+    const { isError } = await callTool("create_record", {
+      model: "post",
+      data: { title: "T", slug: "t", author: { id: "a1" } },
+    });
+
+    expect(isError).toBe(false);
+    expect(stored().author).toBe("a1");
+  });
+
+  it("reduces a whole expanded record echoed back to its id", async () => {
+    await callTool("create_record", {
+      model: "post",
+      data: {
+        title: "T",
+        slug: "t",
+        author: { id: "a1", name: "Ann", createdAt: "2026-01-01" },
+      },
+    });
+
+    expect(stored().author).toBe("a1");
+  });
+
+  it("strips a table prefix that doesn't belong in a link", async () => {
+    await callTool("create_record", {
+      model: "post",
+      data: { title: "T", slug: "t", author: "author:a1" },
+    });
+
+    expect(stored().author).toBe("a1");
+  });
+
+  it("normalises every element of a multi relation", async () => {
+    await callTool("create_record", {
+      model: "post",
+      data: {
+        title: "T",
+        slug: "t",
+        reviewers: [{ id: "a1" }, "author:a2", "a3"],
+      },
+    });
+
+    expect(stored().reviewers).toEqual(["a1", "a2", "a3"]);
+  });
+
+  it("normalises on update as well", async () => {
+    const { json } = await callTool("update_record", {
+      model: "post",
+      id: "p1",
+      data: { author: { id: "a1" } },
+    });
+
+    expect(json().author.name).toBe("Ann");
+    expect(records.get("p1")!.author).toBe("a1");
+  });
+
+  it("leaves a null or omitted relation alone", async () => {
+    const { isError } = await callTool("create_record", {
+      model: "post",
+      data: { title: "T", slug: "t" },
+    });
+
+    expect(isError).toBe(false);
+    expect(stored().author).toBeUndefined();
+  });
+});
+
+describe("embedded-stub detection", () => {
+  it("flags a record whose link is an embedded {id} object", async () => {
+    const { json } = await callTool("get_record", { model: "post", id: "p4" });
+
+    expect(json()._warnings).toHaveLength(1);
+    expect(json()._warnings[0]).toContain('"author"');
+    expect(json()._warnings[0]).toContain("plain id string");
+  });
+
+  it("names the offending record when listing", async () => {
+    const { json } = await callTool("read_records", { model: "post" });
+
+    expect(json()._warnings.some((w: string) => w.includes("p4"))).toBe(true);
+  });
+
+  it("stays quiet for a properly expanded link", async () => {
+    records.set("p5", { id: "p5", title: "Good", author: "a1" });
+    const { json } = await callTool("get_record", { model: "post", id: "p5" });
+
+    expect(json().author.name).toBe("Ann");
+    expect(json()._warnings).toBeUndefined();
+  });
+
+  it("is repaired by re-sending the id", async () => {
+    await callTool("update_record", {
+      model: "post",
+      id: "p4",
+      data: { author: { id: "a1" } },
+    });
+    const { json } = await callTool("get_record", { model: "post", id: "p4" });
+
+    expect(json().author.name).toBe("Ann");
+    expect(json()._warnings).toBeUndefined();
   });
 });

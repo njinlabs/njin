@@ -27,10 +27,35 @@ const stripHiddenFields = (node: any): void => {
 // non-JSON-representable renderAs types (relation/multi_relation/file) into
 // plain JSON-schema shapes the admin panel can render a form from, and drops
 // any field marked hideForm: true so it never reaches the admin panel.
-export const toAdminSchema = (schema: z.ZodObject) => {
+//
+// `forAgent` describes every link (relation/file/multi_*) as what it takes on the wire: the
+// related record's id as a plain string. The admin shape for a single relation is an object
+// `{ id }`, which is right for the panel's form but wrong for an agent: a relation written as an
+// object is stored as an embedded copy instead of a link to the record, so it never expands.
+export const toAdminSchema = (
+  schema: z.ZodObject,
+  options: { forAgent?: boolean } = {},
+) => {
   const jsonSchema = schema.toJSONSchema({
     unrepresentable: "any",
     override: (ctx) => {
+      if (options.forAgent) {
+        const kind = ctx.jsonSchema.renderAs;
+        const target = String(ctx.jsonSchema.model ?? "");
+
+        if (kind === "relation" || kind === "file") {
+          ctx.jsonSchema.type = "string";
+          ctx.jsonSchema.description = `Id of a "${target}" record, as a plain string (not an object).`;
+          return;
+        }
+        if (kind === "multi_relation" || kind === "multi_file") {
+          ctx.jsonSchema.type = "array";
+          ctx.jsonSchema.items = { type: "string" };
+          ctx.jsonSchema.description = `Ids of "${target}" records, as plain strings (not objects).`;
+          return;
+        }
+      }
+
       if (ctx.jsonSchema.renderAs === "relation") {
         ctx.jsonSchema.type = "object";
         ctx.jsonSchema.properties = {
