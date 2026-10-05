@@ -338,6 +338,21 @@ All `/api/*` endpoints require `Authorization: Bearer <token>`.
 
 njin exposes a remote [MCP](https://modelcontextprotocol.io) server at `POST /mcp` (Streamable HTTP), so an agent such as Claude Cowork or Claude Desktop can read and edit content, change settings and upload files.
 
+**Other AI clients.** Any MCP client that speaks Streamable HTTP and OAuth with dynamic client registration can connect. These OAuth callbacks are accepted out of the box: Claude, ChatGPT, Cursor, VS Code, and any loopback address (`localhost` / `127.0.0.1` — what Gemini CLI, Claude Code, Codex CLI, MCP Inspector and similar desktop clients use). For a client with its own hosted callback, allow it in `config.ts` — and only for clients you trust, since it is where the sign-in code is sent:
+
+```ts
+export default defineConfig({
+  mcp: {
+    redirectUris: [
+      "https://app.example.com/oauth/callback",   // exact
+      "https://client.example.com/connectors/*",  // path prefix
+    ],
+  },
+});
+```
+
+A client that can't do OAuth but can send a header can use a token from `POST /api/mcp-token` instead.
+
 **Connecting Claude:** add a custom connector and enter only the URL, `https://your-site.com/mcp`. Claude opens an njin sign-in page, you log in with your normal njin account and click **Allow** — no token to copy. The site must be reachable from the internet over HTTPS; set `publicUrl` in `config.ts` if it sits behind a proxy that rewrites the host.
 
 | Tool | |

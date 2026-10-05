@@ -27,7 +27,15 @@ mock.module("../../src/modules/surreal", () => ({
 mock.module("../../src/models/user", () => ({ default: realUserModel }));
 mock.module("../../src/core/config", () => ({
   ...realConfig,
-  getConfig: () => ({ publicUrl: "https://site.example" }),
+  getConfig: () => ({
+    publicUrl: "https://site.example",
+    mcp: {
+      redirectUris: [
+        "https://app.example/cb",
+        "https://client.example/connectors/*",
+      ],
+    },
+  }),
 }));
 mock.module("../../src/modules/auth", () => ({
   default: async () => ({ plugin: makeFakeAuthPlugin() }),
@@ -523,5 +531,100 @@ describe("pruning", () => {
     await register();
 
     expect(await db.select(staleId)).toBeUndefined();
+  });
+});
+
+describe("redirect URI allowlist", () => {
+  const registers = async (uri: string) => (await register([uri])).res.status;
+
+  it("accepts the other built-in client callbacks", async () => {
+    for (const uri of [
+      "https://chatgpt.com/connector_platform_oauth_redirect",
+      "https://chatgpt.com/connector/oauth/abc123",
+      "cursor://anysphere.cursor-mcp/oauth/callback",
+      "https://vscode.dev/redirect",
+      "https://insiders.vscode.dev/redirect",
+      "http://127.0.0.1:33418/",
+      "http://localhost:7777/oauth/callback",
+    ]) {
+      expect(await registers(uri)).toBe(201);
+    }
+  });
+
+  it("accepts callbacks added in config, exact or by prefix", async () => {
+    expect(await registers("https://app.example/cb")).toBe(201);
+    expect(await registers("https://client.example/connectors/9f2")).toBe(201);
+  });
+
+  it("does not let an exact config entry match a different path", async () => {
+    expect(await registers("https://app.example/other")).toBe(400);
+    expect(await registers("https://app.example/cb/extra")).toBe(400);
+  });
+
+  it("rejects look-alike hosts, userinfo and scheme changes", async () => {
+    for (const uri of [
+      "https://chatgpt.com.evil.example/connector/oauth/x",
+      "https://evil.example/connector/oauth/x",
+      "https://chatgpt.com@evil.example/connector/oauth/x",
+      "https://user@chatgpt.com/connector/oauth/x",
+      "http://chatgpt.com/connector/oauth/x",
+      "https://chatgpt.com:8443/connector/oauth/x",
+      "cursor://evil.example/oauth/callback",
+      "cursor://anysphere.cursor-mcp/other",
+      "https://claude.ai/api/mcp/auth_callback#frag",
+    ]) {
+      expect(await registers(uri)).toBe(400);
+    }
+  });
+
+  it("does not let .. segments escape a path prefix", async () => {
+    expect(
+      await registers("https://chatgpt.com/connector/oauth/../../evil"),
+    ).toBe(400);
+    expect(
+      await registers("https://chatgpt.com/connector/oauth/%2e%2e/evil"),
+    ).toBe(400);
+  });
+
+  it("rejects a non-loopback http callback and arbitrary schemes", async () => {
+    expect(await registers("http://example.com/cb")).toBe(400);
+    expect(await registers("javascript:alert(1)")).toBe(400);
+    expect(await registers("file:///etc/passwd")).toBe(400);
+  });
+
+  it("completes a sign-in for a custom-scheme client and returns to it", async () => {
+    const cursor = "cursor://anysphere.cursor-mcp/oauth/callback";
+    const { body: client } = await register([cursor]);
+    const { verifier, challenge } = pkce();
+    const query = authorizeQuery(client.client_id, challenge, {
+      redirect_uri: cursor,
+    });
+
+    const html = await (await request(`/oauth/authorize?${query}`)).text();
+    expect(html).toContain("anysphere.cursor-mcp");
+
+    const res = await request(
+      "/oauth/authorize",
+      form({
+        client_id: client.client_id,
+        redirect_uri: cursor,
+        code_challenge: challenge,
+        state: "xyz",
+        email: EMAIL,
+        password: PASSWORD,
+        action: "approve",
+      }),
+    );
+
+    expect(res.status).toBe(303);
+    expect(res.headers.get("location")).toStartWith(`${cursor}?`);
+
+    const tokens = await exchange(
+      client.client_id,
+      codeFrom(res),
+      verifier,
+      cursor,
+    );
+    expect(tokens.status).toBe(200);
   });
 });
