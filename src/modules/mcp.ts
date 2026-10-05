@@ -21,7 +21,7 @@ const INSTRUCTIONS = `Manage the content of an njin website.
 Start with list_models: it returns every content model and settings (vars) group with its JSON schema. Then use read_records / get_record to look at existing content before changing it.
 
 Field conventions:
-- A relation field takes the id of the related record (a string, not the whole record).
+- A relation field takes the id of the related record (a string, not the whole record). Records you read, create or update come back with their relations expanded one level; a "_warnings" entry means a link you sent points at a record that does not exist.
 - A field with renderAs "file" takes the id of a file record, not a URL.
 - update_record and update_vars only change the fields you send; omitted fields are kept.
 - Validation errors name the offending field — fix it and retry instead of guessing.
@@ -51,6 +51,53 @@ const ok = (data: unknown): ToolResult => ({
 // "table:id" — tolerate that on the way in.
 const bareId = (prefix: string, id: string) =>
   id.startsWith(`${prefix}:`) ? id.slice(prefix.length + 1) : id;
+
+const RELATION_KINDS = new Set([
+  "relation",
+  "multi_relation",
+  "file",
+  "multi_file",
+]);
+
+const relationFieldsOf = (model: Model) =>
+  Object.entries(model.validation.shape)
+    .filter(([, field]) =>
+      RELATION_KINDS.has((field as z.ZodType).meta()?.renderAs as string),
+    )
+    .map(([name]) => name);
+
+// create()/update() hand back the row exactly as stored, so every relation field is a bare id —
+// the agent can't tell a link that resolved from one pointing at nothing (SurrealDB drops a
+// dangling link from a FETCH instead of erroring). Re-read through show(), the same FETCH
+// get_record uses, so related records come back expanded, and flag any link that didn't resolve.
+const readBack = async (model: Model, written: Record<string, unknown>) => {
+  const id =
+    written.id instanceof RecordId ? String(written.id.id) : String(written.id);
+  const shown = ((await model.show(id)) ?? written) as Record<string, unknown>;
+
+  const warnings: string[] = [];
+  for (const field of relationFieldsOf(model)) {
+    const stored = written[field];
+    if (stored === null || stored === undefined) continue;
+
+    const resolved = shown[field];
+    const isRecord = (value: unknown) => !!value && typeof value === "object";
+    const missing = Array.isArray(stored)
+      ? stored.length -
+        (Array.isArray(resolved) ? resolved.filter(isRecord).length : 0)
+      : isRecord(resolved)
+        ? 0
+        : 1;
+
+    if (missing > 0) {
+      warnings.push(
+        `"${field}": ${missing} linked record(s) do not exist — check the id(s) you sent.`,
+      );
+    }
+  }
+
+  return warnings.length ? { ...shown, _warnings: warnings } : shown;
+};
 
 const fail = (message: string): ToolResult => ({
   content: [{ type: "text", text: message }],
@@ -185,7 +232,13 @@ const mcp = makeModule(() => {
         async ({ model, ...options }) =>
           run(async () => {
             audit("read_records", model);
-            return getModel(model).read(options);
+            // [] means "not specified", same as an empty value over REST — passing it through
+            // would suppress every FETCH and leave relations as bare ids.
+            const populate =
+              Array.isArray(options.populate) && options.populate.length === 0
+                ? undefined
+                : options.populate;
+            return getModel(model).read({ ...options, populate });
           }),
       );
 
@@ -221,7 +274,12 @@ const mcp = makeModule(() => {
           run(async () => {
             audit("create_record", model);
             const target = getModel(model);
-            return target.create(target.validation.parse(data) as never);
+            return readBack(
+              target,
+              (await target.create(
+                target.validation.parse(data) as never,
+              )) as Record<string, unknown>,
+            );
           }),
       );
 
@@ -242,9 +300,12 @@ const mcp = makeModule(() => {
           run(async () => {
             audit("update_record", model, id);
             const target = getModel(model);
-            return target.update(
-              bareId(model, id),
-              target.validation.partial().parse(data) as never,
+            return readBack(
+              target,
+              (await target.update(
+                bareId(model, id),
+                target.validation.partial().parse(data) as never,
+              )) as Record<string, unknown>,
             );
           }),
       );
