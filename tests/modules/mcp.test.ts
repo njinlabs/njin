@@ -73,7 +73,13 @@ let seo = { title: "Default" };
 const fakeVars = {
   name: "SEO",
   prefix: "seo",
-  validation: z.object({ title: z.string().default("Default") }),
+  validation: z.object({
+    title: z.string().default("Default"),
+    featured: z
+      .string()
+      .optional()
+      .meta({ renderAs: "relation", model: "post" }),
+  }),
   get: async () => seo,
   update: async (data: Record<string, unknown>) => {
     seo = { ...seo, ...data } as typeof seo;
@@ -588,6 +594,24 @@ describe("embedded-stub detection", () => {
     expect(json()._warnings).toBeUndefined();
   });
 
+  it("does not mistake an unexpanded link (a RecordId) for a stub", async () => {
+    records.set("p6", {
+      id: "p6",
+      title: "Raw link",
+      author: new RecordId("author", "a1"),
+      reviewers: [new RecordId("author", "a1")],
+    });
+    const { json } = await callTool("get_record", { model: "post", id: "p6" });
+
+    expect(json().author).toBe("a1");
+    expect(json()._warnings).toBeUndefined();
+
+    const list = await callTool("read_records", { model: "post" });
+    expect(
+      (list.json()._warnings ?? []).some((w: string) => w.includes("p6")),
+    ).toBe(false);
+  });
+
   it("is repaired by re-sending the id", async () => {
     await callTool("update_record", {
       model: "post",
@@ -597,6 +621,57 @@ describe("embedded-stub detection", () => {
     const { json } = await callTool("get_record", { model: "post", id: "p4" });
 
     expect(json().author.name).toBe("Ann");
+    expect(json()._warnings).toBeUndefined();
+  });
+});
+
+describe("vars links", () => {
+  const current = () => seo as unknown as Record<string, unknown>;
+
+  it("normalises a link sent as an {id} object, same as for records", async () => {
+    const { isError } = await callTool("update_vars", {
+      group: "seo",
+      data: { featured: { id: "p1" } },
+    });
+
+    expect(isError).toBe(false);
+    expect(current().featured).toBe("p1");
+  });
+
+  it("strips a table prefix and keeps the other fields", async () => {
+    await callTool("update_vars", {
+      group: "seo",
+      data: { featured: "post:p3" },
+    });
+
+    expect(current().featured).toBe("p3");
+    expect(seo.title).toBeDefined();
+  });
+
+  it("flags a group that already holds an embedded {id} stub", async () => {
+    seo = { ...seo, featured: { id: "p1" } } as unknown as typeof seo;
+    const { json } = await callTool("get_vars", { group: "seo" });
+
+    expect(json()._warnings).toHaveLength(1);
+    expect(json()._warnings[0]).toContain('"featured"');
+  });
+
+  it("stays quiet when the link is a real one", async () => {
+    seo = { ...seo, featured: "p1" } as unknown as typeof seo;
+    const { json } = await callTool("get_vars", { group: "seo" });
+
+    expect(json()._warnings).toBeUndefined();
+  });
+
+  it("is repaired by re-sending the id", async () => {
+    seo = { ...seo, featured: { id: "p1" } } as unknown as typeof seo;
+    await callTool("update_vars", {
+      group: "seo",
+      data: { featured: { id: "p1" } },
+    });
+    const { json } = await callTool("get_vars", { group: "seo" });
+
+    expect(json().featured).toBe("p1");
     expect(json()._warnings).toBeUndefined();
   });
 });

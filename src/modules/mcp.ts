@@ -61,7 +61,10 @@ const RELATION_KINDS = new Set([
 
 type RelationField = { name: string; many: boolean; target: string };
 
-const relationFieldsOf = (model: Model): RelationField[] =>
+// A model or a vars group — both carry the zod schema the link fields are read from.
+type HasSchema = { validation: z.ZodObject };
+
+const relationFieldsOf = (model: HasSchema): RelationField[] =>
   Object.entries(model.validation.shape).flatMap(([name, field]) => {
     const meta = (field as z.ZodType).meta() as
       | { renderAs?: string; model?: string }
@@ -92,7 +95,10 @@ const toLinkId = (target: string, value: unknown) => {
 // by njin as an embedded copy, not a link — it never expands and goes stale. Agents do send that
 // shape, so reduce every link field to the plain id string before validation turns it into a
 // real record link. Also drops a "table:" prefix that doesn't belong in a link.
-const normalizeRelations = (model: Model, data: Record<string, unknown>) => {
+const normalizeRelations = (
+  model: HasSchema,
+  data: Record<string, unknown>,
+) => {
   const next = { ...data };
 
   for (const { name, many, target } of relationFieldsOf(model)) {
@@ -110,13 +116,18 @@ const normalizeRelations = (model: Model, data: Record<string, unknown>) => {
 
 // An expanded link always carries the target's own fields; a bare `{ id }` is what an embedded
 // stub looks like (a link written as an object before this was normalised).
-const isStub = (value: unknown) =>
-  !!value &&
-  typeof value === "object" &&
-  !Array.isArray(value) &&
-  Object.keys(value).every((key) => key === "id");
+//
+// A RecordId (a link that wasn't expanded) has no own enumerable keys, so it must be ruled out
+// first — `[].every(...)` is true and every healthy bare link would be reported as a stub.
+const isStub = (value: unknown) => {
+  if (!value || typeof value !== "object") return false;
+  if (Array.isArray(value) || value instanceof RecordId) return false;
 
-const stubFieldsOf = (model: Model, row: Record<string, unknown>) =>
+  const keys = Object.keys(value);
+  return keys.length > 0 && keys.every((key) => key === "id");
+};
+
+const stubFieldsOf = (model: HasSchema, row: Record<string, unknown>) =>
   relationFieldsOf(model)
     .filter(({ name, many }) =>
       many
@@ -420,14 +431,20 @@ const mcp = makeModule(() => {
         {
           title: "Get settings",
           description:
-            "Get the current values of a settings (vars) group, defaults filled in.",
+            "Get the current values of a settings (vars) group, defaults filled in. Relation and file fields come back as ids (use get_record / get_file to look them up).",
           inputSchema: { group: z.string().describe("Group prefix") },
           annotations: { readOnlyHint: true },
         },
         async ({ group }) =>
           run(async () => {
             audit("get_vars", group);
-            return getGroup(group).get();
+            const target = getGroup(group);
+            const values = (await target.get()) as Record<string, unknown>;
+
+            const stubs = stubFieldsOf(target, values);
+            return stubs.length
+              ? { ...values, _warnings: stubs.map((f) => stubWarning(f)) }
+              : values;
           }),
       );
 
@@ -448,7 +465,9 @@ const mcp = makeModule(() => {
             audit("update_vars", group);
             const target = getGroup(group);
             return target.update(
-              target.validation.partial().parse(data) as never,
+              target.validation
+                .partial()
+                .parse(normalizeRelations(target, data)) as never,
             );
           }),
       );
