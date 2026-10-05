@@ -1,4 +1,4 @@
-import { describe, expect, it, mock } from "bun:test";
+import { afterAll, describe, expect, it, mock } from "bun:test";
 import { createNodeEngines } from "@surrealdb/node";
 import { RecordId, Surreal } from "surrealdb";
 import * as realElysiaModule from "../../src/modules/elysia";
@@ -14,6 +14,12 @@ mock.module("../../src/modules/surreal", () => ({
   ...realSurrealModule,
   default: () => db,
 }));
+
+// An embedded engine left open at exit crashed Bun with a segfault on Linux CI (after all
+// tests had passed) — close it explicitly.
+afterAll(async () => {
+  await db.close();
+});
 
 const stored = new Map<string, Record<string, unknown>>();
 const uploaded: File[] = [];
