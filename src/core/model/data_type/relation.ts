@@ -17,14 +17,14 @@ export type RelationType<Relation> = z.ZodPreprocess<
       | (z.infer<Relation> & {
           id: unknown;
           createdAt?: string;
-          updtedAt?: string;
+          updatedAt?: string;
           _write?: boolean;
         })
       | RecordId<string, any>,
       Relation & {
         id: unknown;
         createdAt?: string;
-        updtedAt?: string;
+        updatedAt?: string;
         _write?: boolean;
       }
     >
