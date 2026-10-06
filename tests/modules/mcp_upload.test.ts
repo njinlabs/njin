@@ -249,6 +249,26 @@ describe("POST /mcp/upload/:ticket", () => {
     expect((await post(ticket.url, [["big.png", big]])).status).toBe(413);
   });
 
+  it("rejects an upload whose declared size is far beyond the allowance, before reading it", async () => {
+    const ticket = await newTicket();
+    const res = await post(ticket.url, [["a.png", "x"]], {
+      "Content-Length": String(1024 * 1024 * 1024),
+    });
+
+    expect(res.status).toBe(413);
+  });
+
+  it("reports failures as an HTML page for a browser", async () => {
+    const ticket = await newTicket();
+    const res = await post(ticket.url, [["page.html", "x"]], {
+      Accept: "text/html",
+    });
+
+    expect(res.status).toBe(415);
+    expect(res.headers.get("content-type")).toContain("text/html");
+    expect(await res.text()).toContain("Upload failed");
+  });
+
   it("writes nothing when one file in the batch is bad", async () => {
     const ticket = await newTicket();
     uploaded.length = 0;

@@ -15,7 +15,10 @@ import { makeFakeElysia } from "../helpers/fake_elysia";
 // a partial mock would otherwise break other files importing the un-mocked exports.
 mock.module("../../src/modules/surreal", () => ({
   ...realSurrealModule,
-  default: () => ({ read: async () => ({ data: [], meta: {} }) }),
+  default: () => ({
+    read: async () => ({ data: [], meta: {} }),
+    create: () => ({ content: async (data: unknown) => data }),
+  }),
 }));
 
 mock.module("../../src/models/file", () => ({
@@ -58,5 +61,20 @@ describe("file module without adapters.file.dir configured", () => {
   it("does not mount the /uploads/* static route", async () => {
     await file.init();
     expect(fakeElysia.controllers).toHaveLength(1);
+  });
+
+  it("does not apply the active-content upload block (files are served from the object store's origin)", async () => {
+    const form = new FormData();
+    form.set("file", new File(["<p>hi</p>"], "page.html"));
+
+    const res = await fakeElysia.buildApp().handle(
+      new Request("http://localhost/api/file", {
+        method: "POST",
+        headers: { Authorization: "Bearer x" },
+        body: form,
+      }),
+    );
+
+    expect(res.status).toBe(200);
   });
 });

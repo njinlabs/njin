@@ -25,6 +25,13 @@ describe("relation", () => {
     );
   });
 
+  it("passes an embedded object through unchanged instead of linking it", () => {
+    const result = relation({ label: "Rel" }, target).parse({
+      title: "inline",
+    });
+    expect(result as unknown).toEqual({ title: "inline" });
+  });
+
   it("rejects missing value by default (required)", () => {
     expect(
       relation({ label: "Category" }, target).safeParse(undefined).success,

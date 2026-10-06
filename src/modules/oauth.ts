@@ -1,7 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import Elysia from "elysia";
 import moment from "moment";
-import { eq, RecordId, Table } from "surrealdb";
+import { RecordId, Table } from "surrealdb";
 import { getConfig } from "../core/config";
 import { escapeHtml, noStore, page } from "../core/html_page";
 import { makeModule } from "../core/module";
@@ -226,10 +226,6 @@ const recordFailedSignIn = (email: string) => {
   entry.count += 1;
 };
 
-// Verified against when the email is unknown, so a wrong email and a wrong password cost the
-// same amount of time and the page doesn't reveal which accounts exist.
-const DUMMY_HASH = Bun.password.hashSync("njin-dummy-password");
-
 const hashCode = (code: string) =>
   createHash("sha256").update(code).digest("hex");
 
@@ -438,10 +434,13 @@ const oauth = makeModule(() => {
             );
           }
 
-          const { default: user } = await import("../models/user");
-          const [account] = await surreal()
-            .select<{ id: RecordId; password: string }>(user.table)
-            .where(eq("email", email));
+          const { DUMMY_HASH, findUserByEmail } = await import(
+            "../models/user"
+          );
+          const account = await findUserByEmail<{
+            id: RecordId;
+            password: string;
+          }>(email);
 
           const passwordOk = await Bun.password.verify(
             password,

@@ -1,6 +1,6 @@
-import { describe, expect, it, mock } from "bun:test";
+import { describe, expect, it, mock, spyOn } from "bun:test";
 import { RecordId, type Table } from "surrealdb";
-import realUserModel from "../../src/models/user";
+import * as realUserModule from "../../src/models/user";
 import * as realElysiaModule from "../../src/modules/elysia";
 import * as realSurrealModule from "../../src/modules/surreal";
 import { makeFakeElysia } from "../helpers/fake_elysia";
@@ -9,27 +9,33 @@ import { makeFakeElysia } from "../helpers/fake_elysia";
 // (rather than relying on nothing else having mocked this specifier yet) since, without
 // --isolate, mock.module() replaces the module in a registry shared across the whole
 // test run, and other files (surreal.test.ts, users.test.ts) mock this same specifier.
-mock.module("../../src/models/user", () => ({ default: realUserModel }));
+mock.module("../../src/models/user", () => realUserModule);
 
 const tokens = new Map<string, Record<string, unknown>>();
 const users = new Map<string, Record<string, unknown>>();
 const deleteCalls: unknown[] = [];
 const relateCalls: unknown[][] = [];
-// Login's `.select(user.table).where(eq("email", ...))` is stubbed to return whatever this
+// Login's `findUserByEmail()` query (see models/user) is stubbed to return whatever this
 // holds — real Expr objects (from surrealdb's `eq()`) aren't easily inspected in a fake, so
 // each test sets the "query result" it wants directly instead of simulating filtering.
 let userQueryResult: Record<string, unknown>[] = [];
+let queryError: Error | null = null;
+
+const queryCalls: { sql: string; vars: Record<string, unknown> }[] = [];
 
 const fakeDb = {
+  query: async (sql: string, vars: Record<string, unknown>) => {
+    queryCalls.push({ sql, vars });
+    if (queryError) throw queryError;
+    return [userQueryResult];
+  },
   select: (target: RecordId | Table) => {
     if (target instanceof RecordId) {
       return {
         fetch: async (_field: string) => tokens.get(String(target)) ?? null,
       };
     }
-    return {
-      where: async (_cond: unknown) => userQueryResult,
-    };
+    return {};
   },
   create: (table: Table) => ({
     content: async (data: Record<string, unknown>) => {
@@ -147,7 +153,92 @@ describe("DELETE /logout", () => {
   });
 });
 
+describe("bearer auth", () => {
+  it("surfaces an unexpected lookup failure as 500, not 401", async () => {
+    const original = fakeDb.select;
+    fakeDb.select = (() => {
+      throw new Error("db down");
+    }) as never;
+    try {
+      const res = await controller.handle(
+        new Request("http://localhost/api/auth/check-token", {
+          headers: { Authorization: "Bearer token:id:secret" },
+        }),
+      );
+      expect(res.status).toBe(500);
+    } finally {
+      fakeDb.select = original;
+    }
+  });
+
+  it("returns 401, not 500, for a malformed bearer token", async () => {
+    for (const header of ["Bearer abc", "Bearer token:onlyid"]) {
+      const res = await controller.handle(
+        new Request("http://localhost/api/auth/check-token", {
+          headers: { Authorization: header },
+        }),
+      );
+      expect(res.status).toBe(401);
+    }
+  });
+});
+
 describe("POST /login", () => {
+  it("still verifies a password when the email is unknown (no timing shortcut)", async () => {
+    userQueryResult = [];
+    const verify = spyOn(Bun.password, "verify");
+    try {
+      await controller.handle(
+        new Request("http://localhost/api/auth/login", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email: "x@example.com", password: "pw" }),
+        }),
+      );
+      expect(verify).toHaveBeenCalledTimes(1);
+      expect(verify.mock.calls[0]?.[1]).toBe(realUserModule.DUMMY_HASH);
+    } finally {
+      verify.mockRestore();
+    }
+  });
+
+  it("surfaces unexpected database errors as 500, not 401", async () => {
+    queryError = new Error("db down");
+    try {
+      const res = await controller.handle(
+        new Request("http://localhost/api/auth/login", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email: "a@example.com", password: "pw" }),
+        }),
+      );
+      expect(res.status).toBe(500);
+    } finally {
+      queryError = null;
+    }
+  });
+
+  it("matches the email case-insensitively", async () => {
+    userQueryResult = [
+      users.get(String(userRecordId)) as Record<string, unknown>,
+    ];
+    queryCalls.length = 0;
+    const res = await controller.handle(
+      new Request("http://localhost/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email: "Alice@Example.com",
+          password: plainPassword,
+        }),
+      }),
+    );
+
+    expect(res.status).toBe(200);
+    expect(queryCalls[0]?.sql).toContain("string::lowercase(email)");
+    expect(queryCalls[0]?.vars.email).toBe("alice@example.com");
+  });
+
   it("returns 401 when the user does not exist", async () => {
     userQueryResult = [];
     const res = await controller.handle(
