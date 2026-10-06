@@ -2,6 +2,7 @@ import Elysia from "elysia";
 import z from "zod";
 import { toAdminSchema } from "../core/admin_schema";
 import { getConfig } from "../core/config";
+import { filtersQuerySchema } from "../core/model";
 import { makeModule } from "../core/module";
 import auth from "./auth";
 import elysia from "./elysia";
@@ -166,15 +167,7 @@ const api = makeModule(() => {
               sort: z.coerce.string().optional(),
               order: z.enum(["asc", "desc"]).default("asc"),
               populate: z.coerce.string().optional(),
-              filters: z
-                .record(
-                  z.string(),
-                  z.union([
-                    z.coerce.string(),
-                    z.record(z.string(), z.coerce.string()),
-                  ]),
-                )
-                .optional(),
+              filters: filtersQuerySchema.optional(),
             }),
           },
         );

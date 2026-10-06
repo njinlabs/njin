@@ -1,7 +1,7 @@
 import bearer from "@elysia/bearer";
 import Elysia, { status } from "elysia";
 import moment from "moment";
-import { eq, RecordId, Table, Uuid } from "surrealdb";
+import { RecordId, Table, Uuid } from "surrealdb";
 import z from "zod";
 import { makeModule } from "../core/module";
 import elysia from "./elysia";
@@ -30,8 +30,13 @@ const auth = makeModule(() => {
 
             const [_table, tokenId, plainToken] = bearer.split(":");
 
+            // Anything that isn't "token:<id>:<secret>" is just a bad credential.
+            if (!tokenId || !plainToken) {
+              throw new Error("Unauthorized");
+            }
+
             const token = await surreal()
-              .select<Token>(new RecordId(table, tokenId!))
+              .select<Token>(new RecordId(table, tokenId))
               .fetch("user");
 
             if (!token) {
@@ -39,7 +44,7 @@ const auth = makeModule(() => {
             }
 
             const hash = new Bun.CryptoHasher("sha256")
-              .update(plainToken!)
+              .update(plainToken)
               .digest("utf8");
 
             if (hash !== token.hash) {
@@ -73,7 +78,11 @@ const auth = makeModule(() => {
   };
 
   fn.init = async () => {
-    const { default: user } = await import("../models/user");
+    const {
+      default: user,
+      DUMMY_HASH,
+      findUserByEmail,
+    } = await import("../models/user");
 
     type Token = {
       hash: string;
@@ -104,15 +113,18 @@ const auth = makeModule(() => {
         "/login",
         async ({ body }) => {
           try {
-            const [data] = await surreal()
-              .select<Token["user"]>(user.table)
-              .where(eq("email", body.email));
+            const data = await findUserByEmail<
+              Token["user"] & { password: string }
+            >(body.email);
 
-            if (!data) {
-              throw new Error("Unauthorized");
-            }
+            // Always run one verify, even for an unknown email, so timing doesn't reveal
+            // whether the account exists.
+            const passwordOk = await Bun.password.verify(
+              body.password,
+              data?.password ?? DUMMY_HASH,
+            );
 
-            if (!(await Bun.password.verify(body.password, data.password))) {
+            if (!data || !passwordOk) {
               throw new Error("Unauthorized");
             }
 

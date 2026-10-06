@@ -29,6 +29,17 @@ const fakeDb = {
     records.delete(String(id));
     return record;
   },
+  selected: [] as { target: unknown; fetched: unknown[] | null }[],
+  select: (target: unknown) => {
+    const entry = { target, fetched: null as unknown[] | null };
+    fakeDb.selected.push(entry);
+    return Object.assign(Promise.resolve({ id: target }), {
+      fetch: (...fields: unknown[]) => {
+        entry.fetched = fields;
+        return Promise.resolve({ id: target });
+      },
+    });
+  },
   queries: [] as { sql: string; params: Record<string, unknown> }[],
   query: async (sql: string, params: Record<string, unknown> = {}) => {
     fakeDb.queries.push({ sql, params });
@@ -50,6 +61,8 @@ const {
   beforeUpdate,
 } = await import("../../../src/core/model/index");
 const { text } = await import("../../../src/core/model/data_type/text");
+const { numeric } = await import("../../../src/core/model/data_type/numeric");
+const { boolean } = await import("../../../src/core/model/data_type/boolean");
 const { relation } = await import("../../../src/core/model/data_type/relation");
 const { relationMany } = await import(
   "../../../src/core/model/data_type/relation_many"
@@ -188,6 +201,119 @@ describe("makeModel read() filter whitelist", () => {
     const [call] = fakeDb.queries;
     expect(call!.sql).toContain("title = $f_title");
     expect(call!.params.f_title).toBe("Hello");
+  });
+});
+
+describe("makeModel read() filter values and limit", () => {
+  const make = () =>
+    makeModel(`item_${crypto.randomUUID().replace(/-/g, "")}`, {
+      name: "Item",
+      searchFields: [],
+      schema: z.object({
+        title: text({ label: "Title" }),
+        price: numeric({ label: "Price" }),
+        active: boolean({ label: "Active" }),
+      }),
+    });
+
+  it("converts numeric and boolean filter values to their real types", async () => {
+    const item = make();
+    fakeDb.queries.length = 0;
+
+    await item.read({
+      filters: {
+        price: { $gt: "100" },
+        active: "true",
+        title: { $contains: "AB" },
+      },
+    });
+
+    const { sql, params } = fakeDb.queries[0]!;
+    expect(sql).toContain("price > $f_price_gt");
+    expect(params.f_price_gt).toBe(100);
+    expect(params.f_active).toBe(true);
+    expect(params.f_title_contains).toBe("ab");
+  });
+
+  it("drops a numeric filter whose value isn't a number", async () => {
+    const item = make();
+    fakeDb.queries.length = 0;
+
+    await item.read({ filters: { price: "abc" } });
+
+    expect(fakeDb.queries[0]!.sql).not.toContain("price");
+  });
+
+  it("ignores filters whose value is undefined", async () => {
+    const item = make();
+    fakeDb.queries.length = 0;
+
+    await item.read({ filters: { title: undefined } });
+
+    expect(fakeDb.queries[0]!.sql).not.toContain("WHERE");
+  });
+
+  it("never interpolates a non-numeric limit into the query", async () => {
+    const item = make();
+    fakeDb.queries.length = 0;
+
+    await item.read({ limit: "1; DELETE item; //" as never });
+
+    const { sql } = fakeDb.queries[0]!;
+    expect(sql).toContain("LIMIT 20 START 0");
+    expect(sql).not.toContain("DELETE");
+  });
+});
+
+describe("makeModel show()", () => {
+  it("fetches relation fields when the model has any", async () => {
+    const author = makeModel(
+      `author_${crypto.randomUUID().replace(/-/g, "")}`,
+      {
+        name: "Author",
+        searchFields: [],
+        schema: z.object({ name: text({ label: "Name" }) }),
+      },
+    );
+    const post = makeModel(`post_${crypto.randomUUID().replace(/-/g, "")}`, {
+      name: "Post",
+      searchFields: [],
+      schema: z.object({
+        title: text({ label: "Title" }),
+        author: relation({ label: "Author" }, author),
+      }),
+    });
+    fakeDb.selected.length = 0;
+
+    await post.show("p1");
+
+    expect(fakeDb.selected[0]!.fetched).toEqual(["author"]);
+  });
+
+  it("does not call fetch for a model without relations", async () => {
+    const plain = makeModel(`plain_${crypto.randomUUID().replace(/-/g, "")}`, {
+      name: "Plain",
+      searchFields: [],
+      schema: z.object({ title: text({ label: "Title" }) }),
+    });
+    fakeDb.selected.length = 0;
+
+    await plain.show("p1");
+
+    expect(fakeDb.selected[0]!.fetched).toBeNull();
+  });
+});
+
+describe("filtersQuerySchema", () => {
+  it("keeps operator objects intact and never stringifies them", async () => {
+    const { filtersQuerySchema } = await import(
+      "../../../src/core/model/index"
+    );
+
+    expect(
+      filtersQuerySchema.parse({ price: { $gt: "100" }, title: "x" }),
+    ).toEqual({ price: { $gt: "100" }, title: "x" });
+    expect(filtersQuerySchema.safeParse({ price: 5 }).success).toBe(false);
   });
 });
 

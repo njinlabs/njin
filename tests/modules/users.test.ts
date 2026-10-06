@@ -21,11 +21,16 @@ const alice = {
 };
 records.set(String(alice.id), alice);
 
+let lastReadOpts: Record<string, unknown> = {};
+
 const fakeDb = {
-  read: async () => ({
-    data: Array.from(records.values()),
-    meta: { total: records.size, page: 1, limit: 20, pageCount: 1 },
-  }),
+  read: async (opts: Record<string, unknown> = {}) => {
+    lastReadOpts = opts;
+    return {
+      data: Array.from(records.values()),
+      meta: { total: records.size, page: 1, limit: 20, pageCount: 1 },
+    };
+  },
   select: async (id: RecordId) => records.get(String(id)) ?? null,
   create: async (data: Record<string, unknown>) => {
     const id = new RecordId("user", `u${records.size + 1}`);
@@ -82,6 +87,22 @@ const { default: users } = await import("../../src/modules/users");
 
 await users.init();
 const app = fakeElysia.buildApp();
+
+describe("GET /api/user filters", () => {
+  it("passes operator filters through as objects", async () => {
+    const res = await app.handle(
+      new Request(
+        `http://localhost/api/user?filters=${encodeURIComponent(JSON.stringify({ name: { $startsWith: "al" }, email: "a@b.c" }))}`,
+        { headers: { Authorization: "Bearer x" } },
+      ),
+    );
+    expect(res.status).toBe(200);
+    expect(lastReadOpts.filters).toEqual({
+      name: { $startsWith: "al" },
+      email: "a@b.c",
+    });
+  });
+});
 
 describe("GET /api/user", () => {
   it("lists users without exposing passwords", async () => {

@@ -29,6 +29,21 @@ describe("relationMany", () => {
     expect(result[0]).toBeInstanceOf(RecordId);
   });
 
+  it("accepts existing RecordId instances in the array", () => {
+    const result = relationMany({ label: "Tags" }, target).parse([
+      new RecordId(target.table, "abc"),
+    ]) as RecordId[];
+    expect(result[0]).toBeInstanceOf(RecordId);
+    expect(String(result[0]!.id)).toBe("abc");
+  });
+
+  it("passes an embedded object through unchanged instead of linking it", () => {
+    const result = relationMany({ label: "Tags" }, target).parse([
+      { title: "inline" },
+    ]) as Record<string, unknown>[];
+    expect(result[0]).toEqual({ title: "inline" });
+  });
+
   it("allows an empty array", () => {
     expect(relationMany({ label: "Tags" }, target).parse([])).toEqual([]);
   });

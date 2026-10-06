@@ -170,6 +170,22 @@ describe("model CRUD routes", () => {
     expect(body.opts.populate).toEqual(["owner", "tags"]);
   });
 
+  it("GET /api/post keeps operator filters as objects instead of stringifying them", async () => {
+    const res = await app.handle(
+      new Request(
+        `http://localhost/api/post?filters=${encodeURIComponent(JSON.stringify({ price: { $gt: "100" }, title: { $contains: "ab" }, active: "true" }))}`,
+        { headers: { Authorization: "Bearer x" } },
+      ),
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { opts: { filters: unknown } };
+    expect(body.opts.filters).toEqual({
+      price: { $gt: "100" },
+      title: { $contains: "ab" },
+      active: "true",
+    });
+  });
+
   it("GET /api/post/:id shows a single record", async () => {
     const res = await app.handle(
       new Request("http://localhost/api/post/p1", {

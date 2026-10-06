@@ -1,6 +1,6 @@
 import moment from "moment";
 import { RecordId, Table, type Values } from "surrealdb";
-import type { z } from "zod";
+import { z } from "zod";
 import surreal from "../../modules/surreal";
 import { runAfterHooks, runBeforeDestroyHooks, runBeforeHooks } from "./hooks";
 
@@ -30,7 +30,35 @@ export type ReadMeta = {
   pageCount: number;
 };
 
-export type FilterValue = string | Partial<Record<FilterOperator, string>>;
+type FilterScalar = string | number | boolean;
+
+export type FilterValue =
+  | FilterScalar
+  | Partial<Record<FilterOperator, FilterScalar>>
+  | null
+  | undefined;
+
+// Query-string shape for `filters[field]=v` / `filters[field][$op]=v`. Deliberately z.string()
+// and not z.coerce.string(): coercion would turn an operator object into "[object Object]".
+export const filtersQuerySchema = z.record(
+  z.string(),
+  z.union([z.string(), z.record(z.string(), z.string())]),
+);
+
+// Pagination numbers are interpolated into the query string (SurrealQL can't bind them in
+// every position we use), so anything that isn't a plain positive integer is replaced.
+const toPositiveInt = (value: unknown, fallback: number) => {
+  const n = Number(value);
+  return Number.isSafeInteger(n) && n > 0 ? n : fallback;
+};
+
+const unwrapSchema = (schema: z.ZodType): z.ZodType => {
+  let current = schema as any;
+  while (current?.def?.innerType && !current.meta()?.renderAs) {
+    current = current.def.innerType;
+  }
+  return current;
+};
 
 export type FilterOperator =
   | "$eq"
@@ -67,6 +95,29 @@ const OPERATORS: Record<
   $contains: (f, p) => `string::contains(string::lowercase(${f}), $${p})`,
   $startsWith: (f, p) => `string::starts_with(string::lowercase(${f}), $${p})`,
   $in: (f, p) => `${f} CONTAINS $${p}`,
+};
+
+// Query strings only carry text, but SurrealDB compares strictly by type — so numeric and
+// boolean fields need their filter value converted. Returns undefined when it can't be
+// converted, and the caller drops that condition instead of matching nothing by accident.
+const coerceFilterValue = (
+  renderAs: string | undefined,
+  value: FilterScalar,
+): FilterScalar | undefined => {
+  if (typeof value !== "string") return value;
+
+  if (renderAs === "numeric") {
+    const n = value.trim() === "" ? Number.NaN : Number(value);
+    return Number.isNaN(n) ? undefined : n;
+  }
+
+  if (renderAs === "boolean") {
+    if (value === "true") return true;
+    if (value === "false") return false;
+    return undefined;
+  }
+
+  return value;
 };
 
 const RELATION_RENDER_AS = ["relation", "multi_relation", "file", "multi_file"];
@@ -183,6 +234,10 @@ export const makeModel = <Rules extends z.ZodObject>(
   // name into the raw query string built below.
   const filterableFieldSet = new Set(Object.keys(config.schema.shape));
 
+  const renderAsOf = (field: string) =>
+    (unwrapSchema(config.schema.shape[field] as z.ZodType).meta() as any)
+      ?.renderAs as string | undefined;
+
   // field must be a known unique field — prevents arbitrary field injection
   const isDuplicate = async (
     field: string,
@@ -245,12 +300,14 @@ export const makeModel = <Rules extends z.ZodObject>(
   const read = async ({
     search,
     page = 1,
-    limit: pageLimit = 20,
+    limit,
     sort,
     order = "asc",
     populate,
     filters,
   }: ReadOptions = {}) => {
+    const pageLimit = toPositiveInt(limit, 20);
+    page = toPositiveInt(page, 1);
     const whereParts: string[] = [];
     const params: Record<string, unknown> = {};
 
@@ -282,24 +339,37 @@ export const makeModel = <Rules extends z.ZodObject>(
         // key must exist in schema — prevents arbitrary field injection
         if (!filterableFieldSet.has(key)) continue;
 
-        if (typeof value === "string") {
+        // An absent value (e.g. `filters: { status: query.status }` with no ?status) means
+        // "don't filter on this", not "match nothing" and not a crash.
+        if (value === undefined || value === null) continue;
+
+        const renderAs = renderAsOf(key);
+
+        if (typeof value !== "object") {
           // Shorthand: filters[field]=value → equality
-          params[`f_${key}`] = value;
+          const coerced = coerceFilterValue(renderAs, value);
+          if (coerced === undefined) continue;
+          params[`f_${key}`] = coerced;
           whereParts.push(`${key} = $f_${key}`);
         } else {
           // Operator form: filters[field][$op]=value
           for (const [op, opValue] of Object.entries(value) as [
             FilterOperator,
-            string,
+            FilterScalar | undefined | null,
           ][]) {
             const builder = OPERATORS[op]; // strict whitelist — unknown ops get undefined
-            if (!builder || opValue === undefined) continue;
+            if (!builder || opValue === undefined || opValue === null) continue;
 
             const pk = `f_${key}_${op.slice(1)}`; // e.g. f_title_contains
-            params[pk] =
-              op === "$contains" || op === "$startsWith"
-                ? opValue.toLowerCase() // match the lowercased field
-                : opValue;
+            if (op === "$contains" || op === "$startsWith") {
+              params[pk] = String(opValue).toLowerCase(); // match the lowercased field
+            } else if (op === "$in") {
+              params[pk] = opValue;
+            } else {
+              const coerced = coerceFilterValue(renderAs, opValue);
+              if (coerced === undefined) continue;
+              params[pk] = coerced;
+            }
             whereParts.push(builder(key, pk));
           }
         }

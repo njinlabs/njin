@@ -1,10 +1,18 @@
-import { afterAll, beforeAll, describe, expect, it, mock } from "bun:test";
+import {
+  afterAll,
+  beforeAll,
+  describe,
+  expect,
+  it,
+  mock,
+  spyOn,
+} from "bun:test";
 import { createHash } from "node:crypto";
 import { createNodeEngines } from "@surrealdb/node";
 import Elysia from "elysia";
 import { RecordId, Surreal, Table } from "surrealdb";
 import * as realConfig from "../../src/core/config";
-import realUserModel from "../../src/models/user";
+import * as realUserModule from "../../src/models/user";
 import * as realElysiaModule from "../../src/modules/elysia";
 import * as realSurrealModule from "../../src/modules/surreal";
 import { makeFakeAuthPlugin } from "../helpers/fake_auth";
@@ -24,7 +32,7 @@ mock.module("../../src/modules/surreal", () => ({
   ...realSurrealModule,
   default: () => db,
 }));
-mock.module("../../src/models/user", () => ({ default: realUserModel }));
+mock.module("../../src/models/user", () => realUserModule);
 mock.module("../../src/core/config", () => ({
   ...realConfig,
   getConfig: () => ({
@@ -626,5 +634,100 @@ describe("redirect URI allowlist", () => {
       cursor,
     );
     expect(tokens.status).toBe(200);
+  });
+});
+
+describe("sign-in email matching", () => {
+  it("accepts the email in any letter case, with stray spaces", async () => {
+    const { res } = await signIn({ email: "  Admin@EXAMPLE.com " });
+
+    expect(res.status).toBe(303);
+    expect(codeFrom(res)).toBeTruthy();
+  });
+
+  it("matches an account that was stored with a mixed-case email", async () => {
+    await db.create(new RecordId("user", "mixed1")).content({
+      name: "Mixed",
+      email: "Mixed.Case@Example.com",
+      password: Bun.password.hashSync(PASSWORD),
+    });
+
+    for (const email of ["mixed.case@example.com", "MIXED.CASE@EXAMPLE.COM"]) {
+      const { res } = await signIn({ email });
+      expect(res.status).toBe(303);
+    }
+  });
+
+  it("still verifies a password for an unknown email (same cost as a wrong password)", async () => {
+    const verify = spyOn(Bun.password, "verify");
+    try {
+      await signIn({ email: "ghost@example.com" });
+      expect(verify).toHaveBeenCalledTimes(1);
+      expect(verify.mock.calls[0]?.[1]).toBe(realUserModule.DUMMY_HASH);
+    } finally {
+      verify.mockRestore();
+    }
+  });
+});
+
+describe("sign-in lockout window", () => {
+  it("lets an account try again once the lockout has expired", async () => {
+    const email = "expiring@example.com";
+    for (let i = 0; i < 10; i++) await signIn({ email, password: "bad" });
+    expect((await signIn({ email, password: "bad" })).res.status).toBe(429);
+
+    const now = spyOn(Date, "now").mockReturnValue(Date.now() + 60 * 60 * 1000);
+    try {
+      expect((await signIn({ email, password: "bad" })).res.status).toBe(401);
+    } finally {
+      now.mockRestore();
+    }
+  });
+});
+
+describe("authorize request validation", () => {
+  it("rejects a response_type other than code", async () => {
+    const { body: client } = await register();
+    const res = await request(
+      `/oauth/authorize?${authorizeQuery(client.client_id, pkce().challenge, {
+        response_type: "token",
+      })}`,
+    );
+
+    expect(res.status).toBe(303);
+    expect(
+      new URL(res.headers.get("location")!).searchParams.get("error"),
+    ).toBe("unsupported_response_type");
+  });
+
+  it("ignores a malformed redirect URI instead of crashing", async () => {
+    const { res } = await register(["not a url"]);
+    expect(res.status).toBe(400);
+  });
+
+  it("lets a loopback client use a different port but not a different path", async () => {
+    const { body: client } = await register(["http://127.0.0.1:3118/callback"]);
+    const { challenge } = pkce();
+
+    const otherPort = await request(
+      `/oauth/authorize?${authorizeQuery(client.client_id, challenge, {
+        redirect_uri: "http://127.0.0.1:49152/callback",
+      })}`,
+    );
+    expect(otherPort.status).toBe(200);
+
+    const otherPath = await request(
+      `/oauth/authorize?${authorizeQuery(client.client_id, challenge, {
+        redirect_uri: "http://127.0.0.1:3118/elsewhere",
+      })}`,
+    );
+    expect(otherPath.status).toBe(400);
+
+    const otherHost = await request(
+      `/oauth/authorize?${authorizeQuery(client.client_id, challenge, {
+        redirect_uri: "http://localhost:3118/callback",
+      })}`,
+    );
+    expect(otherHost.status).toBe(400);
   });
 });

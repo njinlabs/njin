@@ -2,9 +2,11 @@ import { join } from "node:path";
 import { Edge } from "edge.js";
 import Elysia from "elysia";
 import { getConfig } from "../core/config";
+import { escapeHtml } from "../core/html_page";
 import { HttpError } from "../core/http_error";
 import { makeModule } from "../core/module";
 import elysia from "./elysia";
+import logger from "./logger";
 
 const isDev = process.env.NODE_ENV !== "production";
 // Lazy, not a top-level const — this module's static import runs (as a side effect of
@@ -82,6 +84,54 @@ export const buildViteGlobal = async (): Promise<ViteGlobal> => {
     },
     static: (path) => `/${path.replace(/^\//, "")}`,
   };
+};
+
+// Defaults for every server-rendered page. The CSP is deliberately limited to directives that
+// can't break a site's own inline scripts/styles or third-party embeds — a project that wants a
+// strict script-src can still set its own policy on top.
+const securityHeaders = (request: Request): Record<string, string> => {
+  const headers: Record<string, string> = {
+    "Content-Type": "text/html; charset=utf-8",
+    "X-Content-Type-Options": "nosniff",
+    "Referrer-Policy": "strict-origin-when-cross-origin",
+    "X-Frame-Options": "SAMEORIGIN",
+    "Content-Security-Policy":
+      "frame-ancestors 'self'; base-uri 'self'; object-src 'none'; form-action 'self'",
+  };
+
+  // HSTS is only honoured over HTTPS, and pinning it during local dev would stick to localhost.
+  const https =
+    new URL(request.url).protocol === "https:" ||
+    request.headers.get("x-forwarded-proto")?.split(",")[0]?.trim() === "https";
+  if (!isDev && https) {
+    headers["Strict-Transport-Security"] =
+      "max-age=31536000; includeSubDomains";
+  }
+
+  return headers;
+};
+
+export const htmlResponse = (request: Request, html: string, status = 200) => {
+  const headers = securityHeaders(request);
+
+  // Successful pages revalidate (cheap 304s via ETag); errors are never cached.
+  if (status !== 200) {
+    headers["Cache-Control"] = "no-store";
+    return new Response(html, { status, headers });
+  }
+
+  const etag = `W/"${Bun.hash(html).toString(36)}"`;
+  headers["Cache-Control"] = "no-cache";
+  headers.ETag = etag;
+
+  const ifNoneMatch = request.headers.get("if-none-match");
+  if (
+    ifNoneMatch?.split(",").some((v) => v.trim() === etag || v.trim() === "*")
+  ) {
+    return new Response(null, { status: 304, headers });
+  }
+
+  return new Response(html, { status, headers });
 };
 
 const view = makeModule(() => {
@@ -177,42 +227,45 @@ const view = makeModule(() => {
                 }),
             );
 
-            return new Response(html, {
-              headers: { "Content-Type": "text/html; charset=utf-8" },
-            });
+            return htmlResponse(request, html);
           } catch (err) {
             if (ctx.abortErr) {
-              return new Response(
+              return htmlResponse(
+                request,
                 await renderHttpError(edge, viewsDir, ctx.abortErr),
-                {
-                  status: ctx.abortErr.statusCode,
-                  headers: { "Content-Type": "text/html; charset=utf-8" },
-                },
+                ctx.abortErr.statusCode,
               );
             }
-            if (!isDev) throw err;
-            return new Response(renderErrorPage(err as Error, template, path), {
-              status: 500,
-              headers: { "Content-Type": "text/html; charset=utf-8" },
-            });
+            if (!isDev) {
+              // Render the project's own errors/500.edge instead of the generic JSON 500.
+              logger().error(err);
+              return htmlResponse(
+                request,
+                await renderHttpError(edge, viewsDir, new HttpError(500)),
+                500,
+              );
+            }
+            return htmlResponse(
+              request,
+              renderErrorPage(err as Error, template, path),
+              500,
+            );
           }
         },
       );
     }
 
     // Catch-all — must be registered last so specific routes take priority
-    controller.get("/*", async ({ path }) => {
+    controller.get("/*", async ({ path, request }) => {
       if (!isDev) {
         const staticFile = Bun.file(join(publicDir(), path));
         if (await staticFile.exists()) return staticFile;
       }
 
-      return new Response(
+      return htmlResponse(
+        request,
         await renderHttpError(edge, viewsDir, new HttpError(404)),
-        {
-          status: 404,
-          headers: { "Content-Type": "text/html; charset=utf-8" },
-        },
+        404,
       );
     });
 
@@ -246,10 +299,12 @@ export async function renderHttpError(
     }
   }
   const code = error.statusCode;
-  return `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>${code} — ${error.message}</title>
+  // abort() messages often embed user input — never emit them raw.
+  const message = escapeHtml(error.message);
+  return `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>${code} — ${message}</title>
 <style>*{margin:0;padding:0;box-sizing:border-box}body{background:#0f172a;color:#e2e8f0;font-family:system-ui,sans-serif;min-height:100vh;display:flex;align-items:center;justify-content:center}
 .c{text-align:center}.n{font-size:6rem;font-weight:700;color:#1e293b;line-height:1}.m{color:#64748b;margin-top:.5rem}a{color:#818cf8;text-decoration:none;margin-top:1.5rem;display:inline-block}</style>
-</head><body><div class="c"><div class="n">${code}</div><p class="m">${error.message}</p><a href="/">← Back to home</a></div></body></html>`;
+</head><body><div class="c"><div class="n">${code}</div><p class="m">${message}</p><a href="/">← Back to home</a></div></body></html>`;
 }
 
 export function renderErrorPage(
@@ -257,8 +312,10 @@ export function renderErrorPage(
   template: string,
   path: string,
 ): string {
-  const stack = (error.stack ?? "").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-  const message = error.message.replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const stack = escapeHtml(error.stack ?? "");
+  const message = escapeHtml(error.message);
+  path = escapeHtml(path);
+  template = escapeHtml(template);
 
   return `<!DOCTYPE html>
 <html lang="en">

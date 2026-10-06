@@ -14,6 +14,11 @@ import { makeFakeElysia } from "../helpers/fake_elysia";
 const projectRoot = mkdtempSync(join(tmpdir(), "njin-file-uploads-"));
 mkdirSync(join(projectRoot, "uploads"));
 writeFileSync(join(projectRoot, "uploads", "existing.txt"), "already here");
+writeFileSync(
+  join(projectRoot, "uploads", "legacy.html"),
+  "<script>1</script>",
+);
+writeFileSync(join(projectRoot, "uploads", "logo.svg"), "<svg></svg>");
 
 const deleteCalls: unknown[] = [];
 const createCalls: unknown[] = [];
@@ -138,6 +143,72 @@ describe("POST /api/file", () => {
     expect(createCalls).toHaveLength(1);
     const body = (await res.json()) as { data: Record<string, unknown> };
     expect(body.data.name).toBe("upload.txt");
+  });
+});
+
+describe("POST /api/file — active content", () => {
+  const upload = (name: string) => {
+    const form = new FormData();
+    form.set("file", new File(["x"], name, { type: "text/html" }));
+    return app.handle(
+      new Request("http://localhost/api/file", {
+        method: "POST",
+        headers: { Authorization: "Bearer x" },
+        body: form,
+      }),
+    );
+  };
+
+  it("rejects HTML/JS/XML uploads with 422 and never writes them", async () => {
+    const before = writeCalls.length;
+    for (const name of [
+      "page.html",
+      "PAGE.HTM",
+      "a.xhtml",
+      "x.js",
+      "x.mjs",
+      "d.xml",
+      "double.html.png",
+    ]) {
+      const res = await upload(name);
+      expect(res.status).toBe(422);
+    }
+    expect(writeCalls).toHaveLength(before);
+  });
+
+  it("still accepts images and SVG", async () => {
+    expect((await upload("photo.png")).status).toBe(200);
+    expect((await upload("logo.svg")).status).toBe(200);
+  });
+});
+
+describe("GET /uploads/* hardening", () => {
+  it("sends nosniff and a sandbox CSP on every served file", async () => {
+    const res = await app.handle(
+      new Request("http://localhost/uploads/existing.txt"),
+    );
+    expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(res.headers.get("content-security-policy")).toContain("sandbox");
+    expect(res.headers.get("content-disposition")).toBeNull();
+  });
+
+  it("serves a pre-existing .html file as an inert download", async () => {
+    const res = await app.handle(
+      new Request("http://localhost/uploads/legacy.html"),
+    );
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toBe("application/octet-stream");
+    expect(res.headers.get("content-disposition")).toBe("attachment");
+    expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+  });
+
+  it("serves SVG inline but sandboxed", async () => {
+    const res = await app.handle(
+      new Request("http://localhost/uploads/logo.svg"),
+    );
+    expect(res.headers.get("content-disposition")).toBeNull();
+    expect(res.headers.get("content-type")).toContain("svg");
+    expect(res.headers.get("content-security-policy")).toContain("sandbox");
   });
 });
 

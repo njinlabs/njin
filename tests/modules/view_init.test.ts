@@ -17,14 +17,15 @@ import { makeFakeElysia } from "../helpers/fake_elysia";
 // mock.module() replaces the module in a registry shared across the whole test run, so
 // a partial mock would otherwise break other files importing the un-mocked exports
 // (loadConfig, injectBracketQuery, isSameOrigin, ...).
+const config: {
+  models: unknown[];
+  vars: unknown[];
+  helpers: unknown[];
+} = { models: [], vars: [], helpers: [] };
+
 mock.module("../../src/core/config", () => ({
   ...realConfig,
-  getConfig: () => ({
-    models: [],
-    vars: [],
-    helpers: [],
-    rootDir: process.cwd(),
-  }),
+  getConfig: () => ({ ...config, rootDir: process.cwd() }),
 }));
 
 mock.module("vite", () => ({
@@ -40,6 +41,16 @@ const fakeElysia = makeFakeElysia();
 mock.module("../../src/modules/elysia", () => ({
   ...realElysiaModule,
   default: fakeElysia.fn,
+}));
+
+// The page route fire-and-forgets `analytics().track(...)` on every request (see view.ts) —
+// mocked so it doesn't reach the real (unconfigured) surreal()/logger() singletons and produce
+// an unhandled rejection after a test returns. Spreads the real module's other exports for the
+// same reason as the mocks above.
+mock.module("../../src/modules/analytics", () => ({
+  ...realAnalyticsModule,
+  default: () => ({ track: async () => {} }),
+  resolveClientIp: () => null,
 }));
 
 const { default: view } = await import("../../src/modules/view");
@@ -85,40 +96,13 @@ describe("view.init() — with a page and an errors/404.edge template", () => {
         "<h1>Custom not found</h1>",
       );
 
-      const isolatedElysia = makeFakeElysia();
-      mock.module("../../src/modules/elysia", () => ({
-        ...realElysiaModule,
-        default: isolatedElysia.fn,
-      }));
-      mock.module("../../src/core/config", () => ({
-        ...realConfig,
-        getConfig: () => ({
-          models: [],
-          vars: [],
-          helpers: [],
-          rootDir: process.cwd(),
-        }),
-      }));
-      // The page route fire-and-forgets `analytics().track(...)` on every request (see
-      // view.ts) — mocked here so it doesn't reach the real (unconfigured) surreal()/
-      // logger() singletons and produce an unhandled rejection after this test returns.
-      // Spreads the real module's other exports (isSameOrigin, ...) for the same reason
-      // as the mocks above.
-      mock.module("../../src/modules/analytics", () => ({
-        ...realAnalyticsModule,
-        default: () => ({ track: async () => {} }),
-        resolveClientIp: () => null,
-      }));
+      fakeElysia.controllers.length = 0;
 
       process.chdir(dir);
-      const { default: viewWithPages } = await import(
-        // @ts-expect-error — query string forces a fresh module instance under Bun; not a resolvable TS module path
-        "../../src/modules/view?withpages"
-      );
-      await viewWithPages.init();
+      await view.init();
       process.chdir(cwd);
 
-      const app = isolatedElysia.buildApp();
+      const app = fakeElysia.buildApp();
 
       const aboutRes = await app.handle(new Request("http://localhost/about"));
       expect(aboutRes.status).toBe(200);
@@ -129,6 +113,75 @@ describe("view.init() — with a page and an errors/404.edge template", () => {
       );
       expect(notFoundRes.status).toBe(404);
       expect(await notFoundRes.text()).toBe("<h1>Custom not found</h1>");
+    } finally {
+      process.chdir(cwd);
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("view.init() — template globals", () => {
+  it("exposes models, vars groups and helpers to templates by name", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "njin-view-globals-"));
+    const cwd = process.cwd();
+    try {
+      const pages = join(dir, "src", "views", "pages");
+      mkdirSync(pages, { recursive: true });
+      writeFileSync(
+        join(pages, "globals.edge"),
+        "{{ post.label }}|{{ seo.label }}|{{ shout('hi') }}",
+      );
+
+      config.models = [
+        async () => ({ default: { prefix: "post", label: "M" } }),
+      ];
+      config.vars = [async () => ({ default: { prefix: "seo", label: "V" } })];
+      config.helpers = [
+        async () => ({
+          default: {
+            name: "shout",
+            fn: (value: string) => value.toUpperCase(),
+          },
+        }),
+      ];
+
+      fakeElysia.controllers.length = 0;
+      process.chdir(dir);
+      await view.init();
+      process.chdir(cwd);
+
+      const res = await fakeElysia
+        .buildApp()
+        .handle(new Request("http://localhost/globals"));
+      expect(await res.text()).toBe("M|V|HI");
+    } finally {
+      config.models = [];
+      config.vars = [];
+      config.helpers = [];
+      process.chdir(cwd);
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("view.init() — fallback abort global", () => {
+  it("throws an HttpError when abort() is called outside a page", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "njin-view-abort-"));
+    const cwd = process.cwd();
+    try {
+      mkdirSync(join(dir, "src", "views", "pages"), { recursive: true });
+      process.chdir(dir);
+      await view.init();
+      process.chdir(cwd);
+
+      const { HttpError } = await import("../../src/core/http_error");
+      const abort = (view() as any).globals.abort as (
+        code: number,
+        message?: string,
+      ) => never;
+
+      expect(() => abort(403, "no")).toThrow(HttpError);
+      expect(() => abort(403, "no")).toThrow("no");
     } finally {
       process.chdir(cwd);
       rmSync(dir, { recursive: true, force: true });

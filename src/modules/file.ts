@@ -1,5 +1,5 @@
 import { resolve } from "node:path";
-import Elysia from "elysia";
+import Elysia, { status } from "elysia";
 import { RecordId } from "surrealdb";
 import z from "zod";
 import { getConfig } from "../core/config";
@@ -32,6 +32,25 @@ export interface FileAdapter<Meta> {
   // so they omit this and the static route below never gets mounted.
   dir?: string;
 }
+
+// Extensions a browser would execute or render as a document when served from the site's own
+// origin. Filesystem adapters serve /uploads/* by extension from that origin, so these are refused
+// on upload (same stance as the MCP upload allowlist) and, for files already on disk, served as
+// inert downloads below.
+const ACTIVE_CONTENT_EXT = new Set([
+  "html",
+  "htm",
+  "xhtml",
+  "shtml",
+  "js",
+  "mjs",
+  "xml",
+]);
+
+const extensionsOf = (name: string) => name.toLowerCase().split(".").slice(1);
+
+const hasActiveExt = (name: string) =>
+  extensionsOf(name).some((ext) => ACTIVE_CONTENT_EXT.has(ext));
 
 const file = makeModule(() => {
   let model: ReturnType<typeof makeModel>;
@@ -95,6 +114,14 @@ const file = makeModule(() => {
       .post(
         "/",
         async ({ body }) => {
+          // Only filesystem-backed adapters (dir set) serve uploads from this origin.
+          if (getConfig().adapters.file.dir && hasActiveExt(body.file.name)) {
+            return status(422, {
+              message:
+                "This file type can't be uploaded (HTML, JavaScript and XML run on the site's origin).",
+            });
+          }
+
           return { data: await upload(body.file) };
         },
         {
@@ -130,7 +157,18 @@ const file = makeModule(() => {
           if (!(await file.exists()))
             return new Response("Not Found", { status: 404 });
 
-          return file;
+          const headers: Record<string, string> = {
+            "X-Content-Type-Options": "nosniff",
+            // Anything that does render (SVG, legacy files) runs in an opaque origin without scripts.
+            "Content-Security-Policy": "sandbox; default-src 'none'",
+          };
+
+          if (hasActiveExt(requested)) {
+            headers["Content-Type"] = "application/octet-stream";
+            headers["Content-Disposition"] = "attachment";
+          }
+
+          return new Response(file, { headers });
         },
       );
 
