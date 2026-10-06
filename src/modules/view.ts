@@ -1,6 +1,6 @@
+import { join } from "node:path";
 import { Edge } from "edge.js";
 import Elysia from "elysia";
-import { join } from "path";
 import { getConfig } from "../core/config";
 import { HttpError } from "../core/http_error";
 import { makeModule } from "../core/module";
@@ -290,7 +290,7 @@ export function fileToRoute(file: string): string {
   let route = file.replace(/\\/g, "/").replace(/\.edge$/, "");
   route = route.replace(/\[([^\]]+)\]/g, ":$1");
   route = route.replace(/\/index$|^index$/, "");
-  return "/" + route;
+  return `/${route}`;
 }
 
 export default view;

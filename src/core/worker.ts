@@ -84,7 +84,9 @@ export const buildResponseMessage = async (
   // lib.dom (without lib.dom.iterable) doesn't type Headers as iterable, so build the
   // array via forEach rather than a for...of/spread over response.headers directly.
   const headers: [string, string][] = [];
-  response.headers.forEach((value, key) => headers.push([key, value]));
+  response.headers.forEach((value, key) => {
+    headers.push([key, value]);
+  });
 
   return {
     type: "response",

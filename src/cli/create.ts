@@ -79,7 +79,7 @@ scaffoldedPkg.dependencies = {
   "@njinlabs/njin": `^${pkg.version}`,
   ...scaffoldedPkg.dependencies,
 };
-await Bun.write(pkgPath, JSON.stringify(scaffoldedPkg, null, 2) + "\n");
+await Bun.write(pkgPath, `${JSON.stringify(scaffoldedPkg, null, 2)}\n`);
 
 console.log("Installing dependencies...\n");
 

@@ -55,7 +55,7 @@ export const resolveRequestOrigin = (request: Request) => {
   const forwardedHost = request.headers.get("x-forwarded-host");
   if (forwardedHost) {
     const proto =
-      request.headers.get("x-forwarded-proto")?.split(",")[0]!.trim() || "http";
+      request.headers.get("x-forwarded-proto")?.split(",")[0]?.trim() || "http";
     return `${proto}://${forwardedHost.split(",")[0]!.trim()}`;
   }
 

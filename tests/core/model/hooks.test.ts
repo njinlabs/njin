@@ -18,7 +18,7 @@ import {
 const dummyModel = (prefix: string) => ({
   prefix,
   create: async (data: Record<string, unknown>) => data,
-  update: async (id: string, data: Record<string, unknown>) => data,
+  update: async (_id: string, data: Record<string, unknown>) => data,
   destroy: async (id: string) => ({ id }),
 });
 

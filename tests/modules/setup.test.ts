@@ -28,6 +28,7 @@ const fakeDb = {
       return {
         // token creation (setup.ts) awaits .content(...) directly; user.create()
         // (via core/model/index.ts) chains .output("after").then(...) on top of it.
+        // biome-ignore lint/suspicious/noThenProperty: intentional thenable mock of a SurrealDB query
         then: (resolve: (value: [Record<string, unknown>]) => unknown) =>
           resolve([record]),
         output: (_mode: string) => Promise.resolve([record]),
