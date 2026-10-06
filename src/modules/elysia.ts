@@ -74,7 +74,9 @@ const elysia = makeModule(() => {
           return status(422, {
             message: "Validation error",
             errors: (
-              error.detail("") as { errors: { value: {}; summary: string }[] }
+              error.detail("") as {
+                errors: { value: unknown; summary: string }[];
+              }
             ).errors.map(({ value, summary, ...err }) => err),
           });
         }

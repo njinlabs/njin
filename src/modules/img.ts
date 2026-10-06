@@ -69,11 +69,11 @@ const img = makeModule(() => {
         return new Response("Missing url parameter", { status: 400 });
       }
 
-      const width = w ? parseInt(w) : undefined;
-      const height = h ? parseInt(h) : undefined;
-      const quality = Math.min(100, Math.max(1, parseInt(q)));
+      const width = w ? parseInt(w, 10) : undefined;
+      const height = h ? parseInt(h, 10) : undefined;
+      const quality = Math.min(100, Math.max(1, parseInt(q, 10)));
 
-      if (isNaN(quality)) {
+      if (Number.isNaN(quality)) {
         return new Response("Invalid q parameter", { status: 400 });
       }
 

@@ -105,7 +105,7 @@ console.log(`Updating njin ${currentPinned} -> ${latest}...\n`);
 // A prerelease is pinned exactly: "^0.11.0-beta.1" would also accept later stable 0.x releases
 // on the next install, silently leaving the beta channel the user chose.
 pkg[depKey]["@njinlabs/njin"] = distTag === "latest" ? `^${latest}` : latest;
-await Bun.write(pkgPath, JSON.stringify(pkg, null, 2) + "\n");
+await Bun.write(pkgPath, `${JSON.stringify(pkg, null, 2)}\n`);
 
 console.log("Installing dependencies...\n");
 

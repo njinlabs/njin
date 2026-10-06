@@ -25,3 +25,6 @@ graphify-out/
 # IDE
 .idea/
 .vscode/
+
+# debug logs
+debug.log

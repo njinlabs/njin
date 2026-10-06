@@ -152,7 +152,7 @@ const geoipDataPlugin: BunPlugin = {
           );
         }
         const patched = original.replace(
-          "var geodatadir = path.resolve(\n\t__dirname,\n\t" + marker + "\n);",
+          `var geodatadir = path.resolve(\n\t__dirname,\n\t${marker}\n);`,
           "var geodatadir = require('path').join(require('path').dirname(process.execPath), 'geoip-data');",
         );
         if (patched === original) {
