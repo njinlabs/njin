@@ -3,6 +3,7 @@ import Elysia, { status } from "elysia";
 import { RecordId } from "surrealdb";
 import z from "zod";
 import * as realConfig from "../../src/core/config";
+import { defineTool } from "../../src/core/mcp_tool";
 import * as realElysiaModule from "../../src/modules/elysia";
 import * as realMcpUpload from "../../src/modules/mcp_upload";
 import { makeFakeElysia } from "../helpers/fake_elysia";
@@ -87,11 +88,56 @@ const fakeVars = {
   },
 };
 
+const publishCalls: unknown[] = [];
+
+const publishPost = defineTool({
+  name: "publish_post",
+  title: "Publish post",
+  description: "Publish a post now.",
+  input: { id: z.string(), notify: z.boolean().default(false) },
+  annotations: { idempotentHint: true },
+  handler: async ({ id, notify }, { token, baseUrl }) => {
+    publishCalls.push({ id, notify });
+    return {
+      published: id,
+      notify,
+      by: token.name,
+      link: `${baseUrl}/p/${id}`,
+    };
+  },
+});
+
+const ping = defineTool({
+  name: "ping",
+  description: "Health check.",
+  handler: () => "pong",
+});
+
+const explode = defineTool({
+  name: "explode",
+  description: "Always fails.",
+  handler: () => {
+    throw new Error("Post is locked");
+  },
+});
+
+const CUSTOM_TOOLS = new Set(["publish_post", "ping", "explode"]);
+
+const mcpConfig = {
+  redirectUris: [] as string[],
+  tools: [
+    async () => ({ default: publishPost }),
+    async () => ({ default: ping }),
+    async () => ({ default: explode }),
+  ] as realConfig.McpToolFactory[],
+};
+
 mock.module("../../src/core/config", () => ({
   ...realConfig,
   getConfig: () => ({
     models: [async () => ({ default: fakeModel })],
     vars: [async () => ({ default: fakeVars })],
+    mcp: mcpConfig,
   }),
 }));
 
@@ -220,7 +266,11 @@ describe("tools/list", () => {
         tools: { name: string; annotations?: Record<string, unknown> }[];
       };
     };
-    const tools = new Map(body.result.tools.map((t) => [t.name, t]));
+    const tools = new Map(
+      body.result.tools
+        .filter((t) => !CUSTOM_TOOLS.has(t.name))
+        .map((t) => [t.name, t]),
+    );
 
     expect([...tools.keys()].sort()).toEqual([
       "check_upload",
@@ -673,5 +723,105 @@ describe("vars links", () => {
 
     expect(json().featured).toBe("p1");
     expect(json()._warnings).toBeUndefined();
+  });
+});
+
+describe("custom tools (config mcp.tools)", () => {
+  const listTools = async () => {
+    const res = await rpc("tools/list", {});
+    const body = (await res.json()) as {
+      result: {
+        tools: {
+          name: string;
+          title?: string;
+          description?: string;
+          inputSchema: { properties?: Record<string, unknown> };
+          annotations?: Record<string, unknown>;
+        }[];
+      };
+    };
+    return new Map(body.result.tools.map((t) => [t.name, t]));
+  };
+
+  it("lists them next to the built-in tools, with their schema and hints", async () => {
+    const tools = await listTools();
+    const publish = tools.get("publish_post")!;
+
+    expect(publish.title).toBe("Publish post");
+    expect(publish.description).toBe("Publish a post now.");
+    expect(Object.keys(publish.inputSchema.properties ?? {})).toEqual([
+      "id",
+      "notify",
+    ]);
+    expect(publish.annotations?.idempotentHint).toBe(true);
+    expect(tools.has("ping")).toBe(true);
+  });
+
+  it("calls the handler with parsed args and the connection context", async () => {
+    const { isError, json } = await callTool("publish_post", { id: "p1" });
+
+    expect(isError).toBe(false);
+    expect(json()).toEqual({
+      published: "p1",
+      notify: false,
+      by: "Test agent",
+      link: "http://localhost/p/p1",
+    });
+    expect(publishCalls.at(-1)).toEqual({ id: "p1", notify: false });
+  });
+
+  it("rejects invalid args before the handler runs", async () => {
+    const before = publishCalls.length;
+    const res = await rpc("tools/call", {
+      name: "publish_post",
+      arguments: { id: 42 },
+    });
+    const body = (await res.json()) as { result?: ToolResult };
+
+    expect(body.result?.isError).toBe(true);
+    expect(publishCalls.length).toBe(before);
+  });
+
+  it("sends a returned string as plain text", async () => {
+    const { isError, text } = await callTool("ping");
+
+    expect(isError).toBe(false);
+    expect(text).toBe("pong");
+  });
+
+  it("turns a thrown error into a readable tool error", async () => {
+    const { isError, text } = await callTool("explode");
+
+    expect(isError).toBe(true);
+    expect(text).toBe("Post is locked");
+  });
+
+  describe("fails at boot", () => {
+    const original = mcpConfig.tools;
+    const bootWith = (...tools: Parameters<typeof defineTool>[0][]) => {
+      mcpConfig.tools = tools.map((tool) => async () => ({ default: tool }));
+      return Promise.resolve(mcp.init()).finally(() => {
+        mcpConfig.tools = original;
+      });
+    };
+    const noop = { description: "x", handler: () => null };
+
+    it("on a name that clashes with a built-in tool", async () => {
+      await expect(
+        bootWith({ ...noop, name: "create_record" }),
+      ).rejects.toThrow("clashes with a built-in tool");
+    });
+
+    it("on a name registered twice", async () => {
+      await expect(
+        bootWith({ ...noop, name: "twin" }, { ...noop, name: "twin" }),
+      ).rejects.toThrow("registered twice");
+    });
+
+    it("on a name the Claude API would reject", async () => {
+      await expect(
+        bootWith({ ...noop, name: "posts.publish" }),
+      ).rejects.toThrow("may only use letters");
+    });
   });
 });

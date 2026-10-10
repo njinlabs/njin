@@ -538,6 +538,7 @@ export const makeModel = <Rules extends z.ZodObject>(
 
 export * from "../event";
 export * from "../helper";
+export * from "../mcp_tool";
 export * from "../plugin";
 export * from "../route";
 export * from "../vars";

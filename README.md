@@ -364,6 +364,46 @@ A client that can't do OAuth but can send a header can use a token from `POST /a
 | `create_upload_url`, `check_upload` | Add files (below) |
 | `list_files`, `get_file`, `delete_file` | Manage uploaded files |
 
+**Custom tools.** Give agents your own actions next to the built-in ones — one tool per file, with `defineTool`:
+
+```ts
+// src/mcp/publish_post.ts
+import { defineTool } from "@njinlabs/njin";
+import z from "zod";
+import post from "../models/post";
+
+export default defineTool({
+  name: "publish_post",
+  title: "Publish post",
+  description: "Publish a draft post now. Use the id from read_records.",
+  input: {
+    id: z.string().describe("Post id"),
+    notify: z.boolean().default(false).describe("Email subscribers"),
+  },
+  annotations: { idempotentHint: true },
+  handler: async ({ id, notify }, { token, baseUrl }) => {
+    const updated = await post.update(id, { status: "published" });
+    return { id, notify, url: `${baseUrl}/blog/${updated.slug}`, by: token.name };
+  },
+});
+```
+
+```ts
+// config.ts
+export default defineConfig({
+  mcp: {
+    tools: [() => import("./src/mcp/publish_post")],
+  },
+});
+```
+
+- `input` is a set of zod fields: the agent sees them as JSON schema, and the handler only runs once they validate.
+- Whatever the handler returns is sent back as JSON (a string is sent as-is). A thrown error goes back as a tool error the agent can read, so throw with a message that says what to fix.
+- The second argument tells you who is calling (`token`, the same connection listed under `/api/mcp-token`) and the site's public `baseUrl`.
+- Names may only use letters, digits, `_` and `-` (max 64), and must not reuse a built-in tool's name. A bad name stops the app at boot.
+- A plugin can ship tools too: `definePlugin({ mcp: { tools: [...] } })`.
+- Custom tools run with the same full access as the built-in ones — every connected agent can call them.
+
 **Links.** A relation or file field takes the related record's id as a plain string, and that is what `list_models` tells the agent. If an agent sends an object instead (`{ "id": "..." }`, or a whole record read earlier) it is reduced to the id before saving — otherwise njin would store a dead embedded copy rather than a link. Created and updated records come back with their relations expanded, with a `_warnings` entry if a link points at nothing, and reads flag records that already hold an embedded `{ id }` copy so they can be repaired.
 
 **Files.** File bytes can't go through a tool call, so `create_upload_url` returns a short-lived link (10 minutes, up to 10 files of 10 MB). The agent uploads with `curl -F file=@photo.jpg <url>`, or — if it has no shell or network — shows the link so you can open it and drop the file. `check_upload` then returns the file ids to put in a model's file field. Only safe types are accepted (images except SVG, PDF, Office documents, audio, video, zip, fonts); HTML, SVG and scripts are rejected because `/uploads` is served from the site's own origin.

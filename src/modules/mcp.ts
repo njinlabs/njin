@@ -5,6 +5,7 @@ import { RecordId } from "surrealdb";
 import z from "zod";
 import { toAdminSchema } from "../core/admin_schema";
 import { getConfig, type ModelFactory, type VarsFactory } from "../core/config";
+import type { McpTool } from "../core/mcp_tool";
 import { makeModule } from "../core/module";
 import { publicBase } from "../core/public_url";
 import elysia from "./elysia";
@@ -177,12 +178,22 @@ const fail = (message: string): ToolResult => ({
   isError: true,
 });
 
+// A custom tool may answer in prose — a returned string goes out as-is instead of as a JSON
+// string literal.
+const okText = (data: unknown): ToolResult =>
+  typeof data === "string"
+    ? { content: [{ type: "text", text: data }] }
+    : ok(data);
+
 // Turns anything a tool body throws into an isError result the agent can read and react to
 // (a validation message it can fix, a unique-constraint clash) rather than a protocol-level
 // failure that just says "internal error".
-const run = async (fn: () => Promise<unknown>): Promise<ToolResult> => {
+const run = async (
+  fn: () => Promise<unknown>,
+  format: (data: unknown) => ToolResult = ok,
+): Promise<ToolResult> => {
   try {
-    return ok(await fn());
+    return format(await fn());
   } catch (e) {
     if (e instanceof z.ZodError) {
       return fail(`Validation failed:\n${z.prettifyError(e)}`);
@@ -190,6 +201,56 @@ const run = async (fn: () => Promise<unknown>): Promise<ToolResult> => {
     if (e instanceof Error) return fail(e.message);
     throw e;
   }
+};
+
+const BUILT_IN_TOOLS = new Set([
+  "list_models",
+  "read_records",
+  "get_record",
+  "create_record",
+  "update_record",
+  "delete_record",
+  "get_vars",
+  "update_vars",
+  "create_upload_url",
+  "check_upload",
+  "list_files",
+  "get_file",
+  "delete_file",
+]);
+
+// Stricter than the MCP spec (which also allows "."): the Claude API, which most agents call
+// through, rejects any other tool name — and it would only fail once an agent connects.
+const TOOL_NAME = /^[a-zA-Z0-9_-]{1,64}$/;
+
+// Checked at boot so a bad tool file fails `njin dev` immediately, not the first agent that
+// connects.
+const loadCustomTools = async () => {
+  const tools: McpTool[] = [];
+  const seen = new Set<string>();
+
+  for (const factory of getConfig().mcp?.tools ?? []) {
+    const { default: tool } = await factory();
+
+    if (!TOOL_NAME.test(tool.name)) {
+      throw new Error(
+        `MCP tool "${tool.name}": names may only use letters, digits, "_" and "-" (max 64).`,
+      );
+    }
+    if (BUILT_IN_TOOLS.has(tool.name)) {
+      throw new Error(
+        `MCP tool "${tool.name}" clashes with a built-in tool of the same name.`,
+      );
+    }
+    if (seen.has(tool.name)) {
+      throw new Error(`MCP tool "${tool.name}" is registered twice.`);
+    }
+
+    seen.add(tool.name);
+    tools.push(tool);
+  }
+
+  return tools;
 };
 
 const mcp = makeModule(() => {
@@ -209,6 +270,8 @@ const mcp = makeModule(() => {
       const { default: group } = await factory();
       groups.set(group.prefix, group);
     }
+
+    const customTools = await loadCustomTools();
 
     // Static for the process lifetime (config can't change without a restart), so computed
     // once instead of on every list_models call.
@@ -572,6 +635,23 @@ const mcp = makeModule(() => {
             return fileModule().remove(bareId("file", id));
           }),
       );
+
+      for (const tool of customTools) {
+        server.registerTool(
+          tool.name,
+          {
+            title: tool.title,
+            description: tool.description,
+            inputSchema: tool.input ?? {},
+            annotations: tool.annotations,
+          },
+          async (args) =>
+            run(async () => {
+              audit(tool.name);
+              return tool.handler(args, { token, baseUrl: base });
+            }, okText),
+        );
+      }
 
       return server;
     };

@@ -3,6 +3,7 @@ import type { AnyElysia } from "elysia";
 import type { FileAdapter } from "../modules/file";
 import bunFilesystemAdapter from "./adapters/bun_filesystem";
 import type { Helper } from "./helper";
+import type { McpTool } from "./mcp_tool";
 import type { makeModel } from "./model";
 import type { Plugin } from "./plugin";
 import type { makeVars } from "./vars";
@@ -38,6 +39,11 @@ export type VarsFactory = () => Promise<{
 // DB-backed objects registered by prefix.
 export type HelperFactory = () => Promise<{ default: Helper }>;
 
+// An MCP tool file's default export is one defineTool() — registered on the /mcp server next
+// to the built-in content tools, by its own name.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export type McpToolFactory = () => Promise<{ default: McpTool<any> }>;
+
 export type NjinConfig = {
   port?: number;
   // Public base URL of the site as clients reach it (e.g. "https://example.com") — used for
@@ -51,6 +57,8 @@ export type NjinConfig = {
     // path prefix when it ends in "*" ("https://app.example.com/oauth/*"). Only add callbacks of
     // clients you trust: it is where the authorization code is sent after a user signs in.
     redirectUris?: string[];
+    // Custom tools offered to agents on top of the built-in ones.
+    tools?: McpToolFactory[];
   };
   // Base directory every project-relative path (src/views, _admin, public, upload dirs)
   // resolves against. Defaults to process.cwd() — only needs overriding by a build step
@@ -85,7 +93,7 @@ export type NjinConfig = {
 export type ResolvedConfig = {
   port: number;
   publicUrl?: string;
-  mcp: { redirectUris: string[] };
+  mcp: { redirectUris: string[]; tools: McpToolFactory[] };
   rootDir: string;
   db: {
     path: string;
@@ -157,7 +165,13 @@ export const loadConfig = async (preloaded?: NjinConfig): Promise<void> => {
   resolved = {
     port: userConfig.port ?? 3000,
     publicUrl: userConfig.publicUrl,
-    mcp: { redirectUris: userConfig.mcp?.redirectUris ?? [] },
+    mcp: {
+      redirectUris: userConfig.mcp?.redirectUris ?? [],
+      tools: [
+        ...plugins.flatMap((p) => p.mcp?.tools ?? []),
+        ...(userConfig.mcp?.tools ?? []),
+      ],
+    },
     rootDir: userConfig.rootDir ?? process.cwd(),
     db: {
       path: userConfig.db?.path ?? "rocksdb://data",

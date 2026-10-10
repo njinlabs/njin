@@ -2,6 +2,7 @@ import type {
   EventFactory,
   HelperFactory,
   HookFactory,
+  McpToolFactory,
   ModelFactory,
   RouteFactory,
   VarsFactory,
@@ -14,6 +15,7 @@ export type Plugin = {
   hooks?: HookFactory[];
   events?: EventFactory[];
   routes?: RouteFactory[];
+  mcp?: { tools?: McpToolFactory[] };
   init?: () => Promise<void> | void;
 };
 

@@ -75,6 +75,23 @@ describe("loadConfig — plugin merging", () => {
     expect(getConfig().helpers).toEqual([pluginHelper, projectHelper]);
   });
 
+  it("merges a plugin's MCP tools, plugin-first, keeping the project's redirectUris", async () => {
+    const pluginTool = thunk("plugin-tool");
+    const projectTool = thunk("project-tool");
+
+    const plugin = definePlugin({ mcp: { tools: [pluginTool] } });
+
+    await loadConfig({
+      plugins: [plugin],
+      mcp: { tools: [projectTool], redirectUris: ["https://a.example/cb"] },
+    });
+
+    expect(getConfig().mcp).toEqual({
+      tools: [pluginTool, projectTool],
+      redirectUris: ["https://a.example/cb"],
+    });
+  });
+
   it("behaves exactly as before when no plugins are configured", async () => {
     const model = thunk("solo-model");
 
