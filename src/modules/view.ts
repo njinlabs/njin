@@ -14,6 +14,7 @@ const isDev = process.env.NODE_ENV !== "production";
 // isn't populated yet at that point. Every call site below only runs from inside fn.init()
 // or a request handler, both well after loadConfig() has resolved.
 const publicDir = () => join(getConfig().rootDir, "public");
+const staticDir = () => join(getConfig().rootDir, "static");
 
 type ViteManifestChunk = {
   file: string;
@@ -26,7 +27,11 @@ type ViteGlobal = {
   static: (path: string) => string;
 };
 
-export const buildViteGlobal = async (): Promise<ViteGlobal> => {
+// `publicRoot` lets `njin build` point at out/public — the manifest whose hashed filenames match
+// the assets it ships — instead of the project's own (nonexistent) public/ dir.
+export const buildViteGlobal = async (
+  publicRoot?: string,
+): Promise<ViteGlobal> => {
   if (isDev) {
     const { createServer } = await import("vite");
     const server = await createServer();
@@ -54,7 +59,9 @@ export const buildViteGlobal = async (): Promise<ViteGlobal> => {
     };
   }
 
-  const manifestFile = Bun.file(join(publicDir(), "manifest.json"));
+  const manifestFile = Bun.file(
+    join(publicRoot ?? publicDir(), "manifest.json"),
+  );
 
   if (!(await manifestFile.exists())) {
     return {
@@ -134,6 +141,173 @@ export const htmlResponse = (request: Request, html: string, status = 200) => {
   return new Response(html, { status, headers });
 };
 
+type PageContext = {
+  params: Record<string, string>;
+  query: Record<string, unknown>;
+  request: { path: string; url: string };
+};
+
+// Shared by the live route handler and the static build. A template's `abort()` is wrapped by
+// EdgeJS on its way out, so the original HttpError is saved here and rethrown unwrapped.
+export const renderPage = async (
+  edge: Edge,
+  template: string,
+  context: PageContext,
+): Promise<string> => {
+  // Object property — avoids TypeScript's overly-aggressive narrowing of
+  // closure-assigned variables to `never`.
+  const ctx: { abortErr: HttpError | null } = { abortErr: null };
+
+  try {
+    return await edge.render(template, {
+      ...context,
+      abort: (statusCode: number, message?: string) => {
+        ctx.abortErr = new HttpError(statusCode, message);
+        throw ctx.abortErr;
+      },
+    });
+  } catch (err) {
+    throw ctx.abortErr ?? err;
+  }
+};
+
+// "/" -> <dir>/index.html, "/about" -> <dir>/about/index.html
+export const staticFilePath = (dir: string, route: string) =>
+  join(dir, route, "index.html");
+
+// Fire-and-forget — never awaited, so it can't add latency to the response.
+const trackVisit = (
+  path: string,
+  request: Request,
+  server: { requestIP: (req: Request) => { address: string } | null } | null,
+) =>
+  import("./analytics").then(
+    ({ default: analytics, resolveClientIp, resolveRequestOrigin }) =>
+      analytics().track({
+        path,
+        referrer: request.headers.get("referer"),
+        userAgent: request.headers.get("user-agent"),
+        ip: resolveClientIp(request, server),
+        requestUrl: resolveRequestOrigin(request),
+      }),
+  );
+
+type Mode = { kind: "live" } | { kind: "static"; outDir: string };
+
+// What a template sees as a model/vars global when there's no database (static build): any use
+// fails the build with a message pointing at the cause, instead of a confusing query error.
+const noDatabase = (prefix: string, kind: "model" | "vars") =>
+  new Proxy(
+    {},
+    {
+      get() {
+        throw new Error(
+          `${kind} "${prefix}" can't be used in a static page — static pages are rendered at build time without a database. Remove it from the page, or take the route out of "static" in config.ts.`,
+        );
+      },
+    },
+  );
+
+// Mounts views and registers every template global. Shared by the live module and the static
+// build; they differ only in the vite global (dev server vs. out/public manifest) and in
+// models/vars, which are real objects live but database-less stubs for a static build.
+const setupEdge = async (edge: Edge, viewsDir: string, mode: Mode) => {
+  edge.mount(viewsDir);
+
+  edge.global(
+    "vite",
+    await buildViteGlobal(
+      mode.kind === "static" ? join(mode.outDir, "public") : undefined,
+    ),
+  );
+  // Fallback abort for non-page contexts (components, error templates).
+  // Pages get a per-request override that saves the error before EdgeJS wraps it.
+  edge.global("abort", (statusCode: number, message?: string) => {
+    throw new HttpError(statusCode, message);
+  });
+
+  for (const modelPromise of getConfig().models) {
+    const { default: model } = await modelPromise();
+    edge.global(
+      model.prefix,
+      mode.kind === "live" ? model : noDatabase(model.prefix, "model"),
+    );
+  }
+
+  for (const varsPromise of getConfig().vars) {
+    const { default: group } = await varsPromise();
+    edge.global(
+      group.prefix,
+      mode.kind === "live" ? group : noDatabase(group.prefix, "vars"),
+    );
+  }
+
+  for (const helperPromise of getConfig().helpers) {
+    const { default: helper } = await helperPromise();
+    edge.global(helper.name, helper.fn);
+  }
+};
+
+const scanPages = async (pagesDir: string) => {
+  const pages: { route: string; template: string }[] = [];
+  const glob = new Bun.Glob("**/*.edge");
+  for await (const file of glob.scan({ cwd: pagesDir })) {
+    pages.push({
+      route: fileToRoute(file),
+      template: `pages/${file.replace(/\\/g, "/").replace(/\.edge$/, "")}`,
+    });
+  }
+  return pages;
+};
+
+// Renders every `static` route from config to <outDir>/static/. Run by `njin build` — no module
+// is booted (no database, no server), so templates can use helpers but not models or vars.
+export const renderStaticSite = async (outDir: string): Promise<string[]> => {
+  const { static: routes, publicUrl, port, rootDir } = getConfig();
+  const base = (publicUrl ?? `http://localhost:${port}`).replace(/\/$/, "");
+  const viewsDir = join(rootDir, "src/views");
+
+  const edge = new Edge();
+  await setupEdge(edge, viewsDir, { kind: "static", outDir });
+
+  const pages = new Map(
+    (await scanPages(join(viewsDir, "pages")).catch(() => []))
+      // Dynamic pages are never static candidates.
+      .filter(({ route }) => !route.includes(":"))
+      .map(({ route, template }) => [route, template]),
+  );
+
+  const written: string[] = [];
+  for (const route of routes) {
+    const template = pages.get(route);
+    if (!template) {
+      throw new Error(
+        `Static route "${route}" has no matching page in src/views/pages (dynamic [param] pages can't be static).`,
+      );
+    }
+
+    let html: string;
+    try {
+      html = await renderPage(edge, template, {
+        params: {},
+        query: {},
+        request: { path: route, url: `${base}${route}` },
+      });
+    } catch (err) {
+      const reason =
+        err instanceof HttpError ? `abort(${err.statusCode})` : String(err);
+      throw new Error(`Failed to render static route "${route}": ${reason}`, {
+        cause: err,
+      });
+    }
+
+    const file = staticFilePath(join(outDir, "static"), route);
+    await Bun.write(file, html);
+    written.push(file);
+  }
+  return written;
+};
+
 const view = makeModule(() => {
   const edge = new Edge();
 
@@ -146,29 +320,7 @@ const view = makeModule(() => {
     const viewsDir = join(getConfig().rootDir, "src/views");
     const pagesDir = join(viewsDir, "pages");
 
-    edge.mount(viewsDir);
-
-    edge.global("vite", await buildViteGlobal());
-    // Fallback abort for non-page contexts (components, error templates).
-    // Pages get a per-request override that saves the error before EdgeJS wraps it.
-    edge.global("abort", (statusCode: number, message?: string) => {
-      throw new HttpError(statusCode, message);
-    });
-
-    for (const modelPromise of getConfig().models) {
-      const { default: model } = await modelPromise();
-      edge.global(model.prefix, model);
-    }
-
-    for (const varsPromise of getConfig().vars) {
-      const { default: group } = await varsPromise();
-      edge.global(group.prefix, group);
-    }
-
-    for (const helperPromise of getConfig().helpers) {
-      const { default: helper } = await helperPromise();
-      edge.global(helper.name, helper.fn);
-    }
+    await setupEdge(edge, viewsDir, { kind: "live" });
 
     const controller = new Elysia();
 
@@ -181,59 +333,47 @@ const view = makeModule(() => {
       });
     }
 
-    const files: string[] = [];
+    const staticRoutes = new Set(getConfig().static ?? []);
 
+    let pages: Awaited<ReturnType<typeof scanPages>>;
     try {
-      const glob = new Bun.Glob("**/*.edge");
-      for await (const file of glob.scan({ cwd: pagesDir })) {
-        files.push(file);
-      }
+      pages = await scanPages(pagesDir);
     } catch {
       elysia().use(controller);
       return {};
     }
 
-    for (const file of files) {
-      const route = fileToRoute(file);
-      const template = `pages/${file.replace(/\\/g, "/").replace(/\.edge$/, "")}`;
-
+    for (const { route, template } of pages) {
       controller.get(
         route,
         async ({ params, query, path, request, server }) => {
-          // Object property — avoids TypeScript's overly-aggressive narrowing of
-          // closure-assigned variables to `never`.
-          const ctx: { abortErr: HttpError | null } = { abortErr: null };
-
           try {
-            const html = await edge.render(template, {
+            // Pre-rendered by `njin build`. A missing file (build skipped, or the route was
+            // added to config since) just falls through to rendering live.
+            if (!isDev && staticRoutes.has(route)) {
+              const staticFile = Bun.file(staticFilePath(staticDir(), route));
+              if (await staticFile.exists()) {
+                const html = await staticFile.text();
+                trackVisit(path, request, server);
+                return htmlResponse(request, html);
+              }
+            }
+
+            const html = await renderPage(edge, template, {
               params,
               query,
               request: { path, url: request.url },
-              abort: (statusCode: number, message?: string) => {
-                ctx.abortErr = new HttpError(statusCode, message);
-                throw ctx.abortErr;
-              },
             });
 
-            // Fire-and-forget — never awaited, so it can't add latency to the response.
-            import("./analytics").then(
-              ({ default: analytics, resolveClientIp, resolveRequestOrigin }) =>
-                analytics().track({
-                  path,
-                  referrer: request.headers.get("referer"),
-                  userAgent: request.headers.get("user-agent"),
-                  ip: resolveClientIp(request, server),
-                  requestUrl: resolveRequestOrigin(request),
-                }),
-            );
+            trackVisit(path, request, server);
 
             return htmlResponse(request, html);
           } catch (err) {
-            if (ctx.abortErr) {
+            if (err instanceof HttpError) {
               return htmlResponse(
                 request,
-                await renderHttpError(edge, viewsDir, ctx.abortErr),
-                ctx.abortErr.statusCode,
+                await renderHttpError(edge, viewsDir, err),
+                err.statusCode,
               );
             }
             if (!isDev) {

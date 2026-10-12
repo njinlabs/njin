@@ -40,6 +40,8 @@ export default defineConfig({
     // Listener files — imported here so their .listen() calls run at boot, e.g.:
     // () => import("./src/events/listeners/send_receipt"),
   ],
+  // Pages rendered to HTML at `njin build` and served as static files (no [param] routes):
+  // static: ["/", "/about"],
   routes: [
     // Custom Elysia routes, e.g.:
     // () => import("./src/routes/webhook"),

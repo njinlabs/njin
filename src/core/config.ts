@@ -44,6 +44,17 @@ export type HelperFactory = () => Promise<{ default: Helper }>;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export type McpToolFactory = () => Promise<{ default: McpTool<any> }>;
 
+// A static route is a page route with no `[param]` segment (e.g. "/", "/about"). `njin build`
+// renders each one to HTML once and production serves that file instead of rendering per request.
+export const normalizeStaticRoute = (route: string): string => {
+  if (!route.startsWith("/") || /[[\]:*]|\.\.|\/\//.test(route)) {
+    throw new Error(
+      `Invalid static route "${route}" — expected a plain page path such as "/" or "/about" (no [param], wildcard or ".." segments).`,
+    );
+  }
+  return route.length > 1 ? route.replace(/\/$/, "") : route;
+};
+
 export type NjinConfig = {
   port?: number;
   // Public base URL of the site as clients reach it (e.g. "https://example.com") — used for
@@ -88,6 +99,9 @@ export type NjinConfig = {
   vars?: VarsFactory[];
   helpers?: HelperFactory[];
   plugins?: Plugin[];
+  // Page routes rendered to HTML at `njin build` time and served as static files in production.
+  // Content is frozen until the next build; `njin dev` ignores this and always renders live.
+  static?: string[];
 };
 
 export type ResolvedConfig = {
@@ -110,6 +124,7 @@ export type ResolvedConfig = {
   routes: RouteFactory[];
   vars: VarsFactory[];
   helpers: HelperFactory[];
+  static: string[];
   // Everything else a Plugin contributes (models/vars/hooks/events/routes) is already
   // flattened into the arrays above — init() is the only part that can't be merged away,
   // so it's the only piece of each Plugin that survives resolution on its own.
@@ -201,6 +216,14 @@ export const loadConfig = async (preloaded?: NjinConfig): Promise<void> => {
     helpers: [
       ...plugins.flatMap((p) => p.helpers ?? []),
       ...(userConfig.helpers ?? []),
+    ],
+    static: [
+      ...new Set(
+        [
+          ...plugins.flatMap((p) => p.static ?? []),
+          ...(userConfig.static ?? []),
+        ].map(normalizeStaticRoute),
+      ),
     ],
     pluginInits: plugins
       .map((p) => p.init)

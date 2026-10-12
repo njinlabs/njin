@@ -101,3 +101,27 @@ describe("loadConfig — plugin merging", () => {
     expect(getConfig().pluginInits).toEqual([]);
   });
 });
+
+describe("loadConfig — static routes", () => {
+  it("defaults to none", async () => {
+    await loadConfig({});
+    expect(getConfig().static).toEqual([]);
+  });
+
+  it("merges plugin and project routes, normalizing and de-duplicating", async () => {
+    await loadConfig({
+      plugins: [definePlugin({ static: ["/about/"] })],
+      static: ["/", "/about", "/contact"],
+    });
+    expect(getConfig().static).toEqual(["/about", "/", "/contact"]);
+  });
+
+  it.each(["about", "/blog/[slug]", "/blog/:slug", "/a/*", "/a/../b", "/a//b"])(
+    "rejects %p",
+    async (route) => {
+      await expect(loadConfig({ static: [route] })).rejects.toThrow(
+        /Invalid static route/,
+      );
+    },
+  );
+});

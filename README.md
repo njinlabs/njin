@@ -267,6 +267,23 @@ pages/blog/index.edge     → GET /blog
 pages/blog/[slug].edge    → GET /blog/:slug
 ```
 
+## Static pages
+
+List page routes under `static` in `config.ts` and `njin build` / `njin build:worker` render each one to HTML once; production then serves that file instead of rendering per request.
+
+```ts
+export default defineConfig({
+  static: ["/", "/about", "/contact"],
+});
+```
+
+- Output goes to `out/static/index.html`, `out/static/about/index.html`, … and is served with the same headers/ETag as a live page. Analytics still records the visit. If the file is missing, the route falls back to rendering live.
+- Only plain routes are allowed — `[param]` pages, wildcards and `..` are rejected when the config loads. Plugins can contribute routes with `static` too.
+- Static pages render at build time **without a database**: helpers work, but using a model or a vars group in the page fails the build with a clear error. Keep data-driven pages live (leave them out of `static`). A page that errors or calls `abort()` also fails the build.
+- Static pages have no request: `query` and `params` are empty, `request.path` is the route and `request.url` is `publicUrl` + path (`http://localhost:<port>` if `publicUrl` is unset).
+- Content is frozen until the next build — edits made in the admin panel, API or MCP don't appear on a static page until you rebuild.
+- `njin dev` ignores `static` and always renders live.
+
 ## Template example
 
 Models are available as global async functions in every template:

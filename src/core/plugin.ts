@@ -15,6 +15,7 @@ export type Plugin = {
   hooks?: HookFactory[];
   events?: EventFactory[];
   routes?: RouteFactory[];
+  static?: string[];
   mcp?: { tools?: McpToolFactory[] };
   init?: () => Promise<void> | void;
 };
