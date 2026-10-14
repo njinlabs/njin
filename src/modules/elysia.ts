@@ -69,7 +69,7 @@ const elysia = makeModule(() => {
         }),
       )
       .onTransform({ as: "global" }, injectBracketQuery)
-      .onError(({ error }) => {
+      .onError(({ error, code, request }) => {
         if (error instanceof ValidationError) {
           return status(422, {
             message: "Validation error",
@@ -88,7 +88,17 @@ const elysia = makeModule(() => {
           });
         }
 
-        logger().error(error);
+        // An unmatched route (bots probing /wp-login.php etc.) is a plain 404, not a server error.
+        if (code === "NOT_FOUND") {
+          return status(404, { message: "Not Found" });
+        }
+
+        // Not every thrown value is an Error (plain objects, strings) — those reach Sentry as
+        // a bare "Unknown error" with a stack pointing at the logger, so attach the request.
+        logger().error(
+          error,
+          `[elysia] unhandled ${code} on ${request.method} ${new URL(request.url).pathname}`,
+        );
 
         return status(500, {
           message: "Internal Server Error",

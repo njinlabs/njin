@@ -190,6 +190,9 @@ printBanner({ mode: "production" });
   const result = await Bun.build({
     entrypoints: [entryPath],
     compile: { outfile: join(outDir, exeName) },
+    // Embedded in the binary; Bun remaps error.stack through it, so logs/Sentry show src/*.ts
+    // paths instead of positions inside the bundle.
+    sourcemap: "inline",
     // vite is dev-only (view.ts gates it behind `if (isDev)`, dead in production) — bundling
     // it would also drag in its own internal (not-installed) lazy `import("esbuild")`. Same
     // reasoning for @surrealdb/node on a remote build — surreal.ts's dynamic import of it is

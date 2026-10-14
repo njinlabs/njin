@@ -61,6 +61,10 @@ await boot();
     outdir: outDir,
     naming: "worker.js",
     target: "bun",
+    // Inline (not linked/external) so the map travels with worker.js when it's copied into a
+    // supervisor's clients/<host>/ directory. Bun remaps error.stack through it at runtime, so
+    // logger/Sentry report src/*.ts paths and lines instead of worker.js:12:33.
+    sourcemap: "inline",
     // @njinlabs/njin's own source bundles directly into worker.js (see the comment in the
     // generated entry above for why) — only the two packages that genuinely can't survive
     // bundling stay external, same reasoning build.ts already documents for its own build:
