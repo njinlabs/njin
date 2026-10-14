@@ -181,8 +181,8 @@ const trackVisit = (
   request: Request,
   server: { requestIP: (req: Request) => { address: string } | null } | null,
 ) =>
-  import("./analytics").then(
-    ({ default: analytics, resolveClientIp, resolveRequestOrigin }) =>
+  import("./analytics")
+    .then(({ default: analytics, resolveClientIp, resolveRequestOrigin }) =>
       analytics().track({
         path,
         referrer: request.headers.get("referer"),
@@ -190,7 +190,10 @@ const trackVisit = (
         ip: resolveClientIp(request, server),
         requestUrl: resolveRequestOrigin(request),
       }),
-  );
+    )
+    // Fire-and-forget: nothing awaits this, so an uncaught failure here (building the input
+    // happens outside track()'s own try/catch) would be an unhandled rejection that kills the app.
+    .catch((e) => logger().error(e, "[view] failed to track visit"));
 
 type Mode = { kind: "live" } | { kind: "static"; outDir: string };
 
@@ -432,9 +435,9 @@ export async function renderHttpError(
         message: error.message,
       });
     } catch (e) {
-      console.error(
-        `[view] failed to render errors/${error.statusCode}.edge:`,
+      logger().error(
         e,
+        `[view] failed to render errors/${error.statusCode}.edge`,
       );
     }
   }

@@ -1,4 +1,4 @@
-import { afterAll, describe, expect, it, mock, spyOn } from "bun:test";
+import { afterAll, describe, expect, it, mock } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -15,6 +15,11 @@ mock.module("vite", () => ({
     resolvedUrls: { local: ["http://localhost:5173/"] },
     close: async () => {},
   }),
+}));
+
+const loggerErrors: unknown[] = [];
+mock.module("../../src/modules/logger", () => ({
+  default: () => ({ error: (...args: unknown[]) => loggerErrors.push(args) }),
 }));
 
 const { fileToRoute, renderErrorPage, renderHttpError, buildViteGlobal } =
@@ -84,7 +89,6 @@ describe("renderHttpError", () => {
       join(errorsDir, "500.edge"),
       "template exists but rendering fails",
     );
-    const errorSpy = spyOn(console, "error").mockImplementation(() => {});
     const fakeEdge = {
       render: async () => {
         throw new Error("template syntax error");
@@ -101,9 +105,9 @@ describe("renderHttpError", () => {
 
       expect(html).toContain("500");
       expect(html).toContain("Internal Server Error");
-      expect(errorSpy).toHaveBeenCalledTimes(1);
+      expect(loggerErrors).toHaveLength(1);
     } finally {
-      errorSpy.mockRestore();
+      loggerErrors.length = 0;
     }
   });
 
