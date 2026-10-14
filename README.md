@@ -498,6 +498,38 @@ adapters: {
 }
 ```
 
+### Logging
+
+njin logs with [pino](https://getpino.io). By default that is pretty-printed output in the console. Add your own destinations with `logger.streams` — any pino destination (a `Writable`, or any object with `write(line)`), so ready-made streams such as `pino-loki` work as-is:
+
+```ts
+export default defineConfig({
+  logger: {
+    level: "info", // minimum level logged at all
+    console: true, // set false to log only to `streams`
+    streams: [
+      { stream: createWriteStream("app.log", { flags: "a" }) },
+      { stream: lokiStream, level: "error" }, // only errors and above
+    ],
+  },
+});
+```
+
+- Streams receive JSON lines. A stream's `level` can only be stricter than the global `level`.
+- Streams run in-process (no worker threads), so they work in the compiled binary too.
+- A plugin can add streams: `definePlugin({ logger: { streams: [...] } })`. Plugin streams come before the project's own.
+- Errors nobody caught (an uncaught exception, an unhandled promise rejection) are logged at `fatal` level — to the console and every stream — and then the process exits with code 1, the same as it would without them. Console output is written synchronously, so the last line before a crash isn't lost.
+- Use the same logger in your own hooks, events and routes — it goes to the same console and streams:
+
+  ```ts
+  import logger from "@njinlabs/njin/logger";
+
+  logger().info({ orderId }, "order paid");
+  logger().error(err, "payment webhook failed");
+  ```
+
+  `logger()` returns a pino instance, so it has `info`, `warn`, `error`, `debug`, `child`, ... It is ready once the app has booted, so call it inside handlers rather than at the top level of a file.
+
 ## Commands
 
 ```bash

@@ -1,5 +1,6 @@
 import { join } from "node:path";
 import type { AnyElysia } from "elysia";
+import type { DestinationStream, Level } from "pino";
 import type { FileAdapter } from "../modules/file";
 import bunFilesystemAdapter from "./adapters/bun_filesystem";
 import type { Helper } from "./helper";
@@ -44,6 +45,15 @@ export type HelperFactory = () => Promise<{ default: Helper }>;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export type McpToolFactory = () => Promise<{ default: McpTool<any> }>;
 
+// An extra place logs are written to, on top of the console. `stream` is anything pino accepts
+// as a destination — a Writable, or any object with `write(line: string)` — so ready-made
+// pino streams (pino-loki, pino-datadog, ...) plug in directly. Runs in-process, no worker thread.
+export type LoggerStream = {
+  stream: DestinationStream;
+  // Minimum level this stream receives (default: the logger's own level).
+  level?: Level;
+};
+
 // A static route is a page route with no `[param]` segment (e.g. "/", "/about"). `njin build`
 // renders each one to HTML once and production serves that file instead of rendering per request.
 export const normalizeStaticRoute = (route: string): string => {
@@ -70,6 +80,14 @@ export type NjinConfig = {
     redirectUris?: string[];
     // Custom tools offered to agents on top of the built-in ones.
     tools?: McpToolFactory[];
+  };
+  logger?: {
+    // Minimum level logged at all (default "info"). A stream's own level can only be stricter.
+    level?: Level;
+    // Pretty-printed console output (default true). Turn off to log only to `streams`.
+    console?: boolean;
+    // Extra destinations, written as JSON lines.
+    streams?: LoggerStream[];
   };
   // Base directory every project-relative path (src/views, _admin, public, upload dirs)
   // resolves against. Defaults to process.cwd() — only needs overriding by a build step
@@ -108,6 +126,7 @@ export type ResolvedConfig = {
   port: number;
   publicUrl?: string;
   mcp: { redirectUris: string[]; tools: McpToolFactory[] };
+  logger: { level: Level; console: boolean; streams: LoggerStream[] };
   rootDir: string;
   db: {
     path: string;
@@ -185,6 +204,14 @@ export const loadConfig = async (preloaded?: NjinConfig): Promise<void> => {
       tools: [
         ...plugins.flatMap((p) => p.mcp?.tools ?? []),
         ...(userConfig.mcp?.tools ?? []),
+      ],
+    },
+    logger: {
+      level: userConfig.logger?.level ?? ("info" as Level),
+      console: userConfig.logger?.console ?? true,
+      streams: [
+        ...plugins.flatMap((p) => p.logger?.streams ?? []),
+        ...(userConfig.logger?.streams ?? []),
       ],
     },
     rootDir: userConfig.rootDir ?? process.cwd(),

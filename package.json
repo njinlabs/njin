@@ -43,6 +43,7 @@
     "./boot": "./src/core/boot.ts",
     "./banner": "./src/core/banner.ts",
     "./worker": "./src/core/worker.ts",
+    "./logger": "./src/modules/logger.ts",
     "./adapters/*": "./src/core/adapters/*.ts"
   },
   "devDependencies": {

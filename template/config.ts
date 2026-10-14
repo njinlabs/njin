@@ -40,6 +40,8 @@ export default defineConfig({
     // Listener files — imported here so their .listen() calls run at boot, e.g.:
     // () => import("./src/events/listeners/send_receipt"),
   ],
+  // Logging goes to the console by default; add more destinations (any pino stream):
+  // logger: { level: "info", streams: [{ stream: myStream, level: "error" }] },
   // Pages rendered to HTML at `njin build` and served as static files (no [param] routes):
   // static: ["/", "/about"],
   routes: [

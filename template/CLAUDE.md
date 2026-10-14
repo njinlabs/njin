@@ -10,7 +10,7 @@ njin generates a full REST API, admin panel schema, and SSR website from a singl
 
 **When asked to add a feature, only ever create/edit:**
 
-1. `config.ts` — root-level config: register models, vars, helpers, events, routes, plugins, db, file adapter, port, img hosts
+1. `config.ts` — root-level config: register models, vars, helpers, events, routes, plugins, db, file adapter, logger streams, port, img hosts
 2. `src/models/*.ts` — new model files
 3. `src/vars/*.ts` — new vars (singleton settings) groups
 4. `src/helpers/*.ts` — new template helper functions
@@ -26,13 +26,14 @@ Plugins are npm packages (not local files) registered directly in `config.ts`'s 
 
 - Model-building helpers (`makeModel`, `text`, `relation`, ...) come from the `"@njinlabs/njin"` package itself — no path alias needed: `import { makeModel, text } from "@njinlabs/njin";`
 - `defineConfig` comes from `"@njinlabs/njin/config"`; built-in file adapters come from `"@njinlabs/njin/adapters/bun_filesystem"` and `"@njinlabs/njin/adapters/s3"`.
+- `logger()` (pino) comes from `"@njinlabs/njin/logger"` — use it instead of `console.*` inside handlers, hooks and events so output reaches the configured log streams. Call it inside functions, not at file top level.
 - Everything else (your own model files, `config.ts`, etc.) uses plain relative imports, same as any other TypeScript project.
 
 ---
 
 ## Your working directories
 
-- `config.ts` — root config (models, vars, helpers, events, routes, plugins, db, file adapter, port, img hosts)
+- `config.ts` — root config (models, vars, helpers, events, routes, plugins, db, file adapter, logger streams, port, img hosts)
 - `src/models/` — data models
 - `src/vars/` — singleton settings groups (site name, SEO meta, feature toggles, ...)
 - `src/helpers/` — stateless functions exposed as Edge template globals
