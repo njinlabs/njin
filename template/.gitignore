@@ -27,3 +27,6 @@ Thumbs.db
 # IDE
 .idea/
 .vscode/
+
+# static page cache
+.cache/

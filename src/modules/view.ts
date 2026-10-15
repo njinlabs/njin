@@ -5,6 +5,13 @@ import { getConfig } from "../core/config";
 import { escapeHtml } from "../core/html_page";
 import { HttpError } from "../core/http_error";
 import { makeModule } from "../core/module";
+import {
+  cacheKey,
+  getOrRenderStatic,
+  purgeStatic,
+  registerStaticRoute,
+  warmStatic,
+} from "../core/static_cache";
 import elysia from "./elysia";
 import logger from "./logger";
 
@@ -14,7 +21,6 @@ const isDev = process.env.NODE_ENV !== "production";
 // isn't populated yet at that point. Every call site below only runs from inside fn.init()
 // or a request handler, both well after loadConfig() has resolved.
 const publicDir = () => join(getConfig().rootDir, "public");
-const staticDir = () => join(getConfig().rootDir, "static");
 
 type ViteManifestChunk = {
   file: string;
@@ -27,11 +33,7 @@ type ViteGlobal = {
   static: (path: string) => string;
 };
 
-// `publicRoot` lets `njin build` point at out/public — the manifest whose hashed filenames match
-// the assets it ships — instead of the project's own (nonexistent) public/ dir.
-export const buildViteGlobal = async (
-  publicRoot?: string,
-): Promise<ViteGlobal> => {
+export const buildViteGlobal = async (): Promise<ViteGlobal> => {
   if (isDev) {
     const { createServer } = await import("vite");
     const server = await createServer();
@@ -59,9 +61,7 @@ export const buildViteGlobal = async (
     };
   }
 
-  const manifestFile = Bun.file(
-    join(publicRoot ?? publicDir(), "manifest.json"),
-  );
+  const manifestFile = Bun.file(join(publicDir(), "manifest.json"));
 
   if (!(await manifestFile.exists())) {
     return {
@@ -118,8 +118,13 @@ const securityHeaders = (request: Request): Record<string, string> => {
   return headers;
 };
 
-export const htmlResponse = (request: Request, html: string, status = 200) => {
-  const headers = securityHeaders(request);
+export const htmlResponse = (
+  request: Request,
+  html: string,
+  status = 200,
+  extraHeaders: Record<string, string> = {},
+) => {
+  const headers = { ...securityHeaders(request), ...extraHeaders };
 
   // Successful pages revalidate (cheap 304s via ETag); errors are never cached.
   if (status !== 200) {
@@ -171,10 +176,6 @@ export const renderPage = async (
   }
 };
 
-// "/" -> <dir>/index.html, "/about" -> <dir>/about/index.html
-export const staticFilePath = (dir: string, route: string) =>
-  join(dir, route, "index.html");
-
 // Fire-and-forget — never awaited, so it can't add latency to the response.
 const trackVisit = (
   path: string,
@@ -195,34 +196,11 @@ const trackVisit = (
     // happens outside track()'s own try/catch) would be an unhandled rejection that kills the app.
     .catch((e) => logger().error(e, "[view] failed to track visit"));
 
-type Mode = { kind: "live" } | { kind: "static"; outDir: string };
-
-// What a template sees as a model/vars global when there's no database (static build): any use
-// fails the build with a message pointing at the cause, instead of a confusing query error.
-const noDatabase = (prefix: string, kind: "model" | "vars") =>
-  new Proxy(
-    {},
-    {
-      get() {
-        throw new Error(
-          `${kind} "${prefix}" can't be used in a static page — static pages are rendered at build time without a database. Remove it from the page, or take the route out of "static" in config.ts.`,
-        );
-      },
-    },
-  );
-
-// Mounts views and registers every template global. Shared by the live module and the static
-// build; they differ only in the vite global (dev server vs. out/public manifest) and in
-// models/vars, which are real objects live but database-less stubs for a static build.
-const setupEdge = async (edge: Edge, viewsDir: string, mode: Mode) => {
+// Mounts views and registers every template global.
+const setupEdge = async (edge: Edge, viewsDir: string) => {
   edge.mount(viewsDir);
 
-  edge.global(
-    "vite",
-    await buildViteGlobal(
-      mode.kind === "static" ? join(mode.outDir, "public") : undefined,
-    ),
-  );
+  edge.global("vite", await buildViteGlobal());
   // Fallback abort for non-page contexts (components, error templates).
   // Pages get a per-request override that saves the error before EdgeJS wraps it.
   edge.global("abort", (statusCode: number, message?: string) => {
@@ -231,18 +209,12 @@ const setupEdge = async (edge: Edge, viewsDir: string, mode: Mode) => {
 
   for (const modelPromise of getConfig().models) {
     const { default: model } = await modelPromise();
-    edge.global(
-      model.prefix,
-      mode.kind === "live" ? model : noDatabase(model.prefix, "model"),
-    );
+    edge.global(model.prefix, model);
   }
 
   for (const varsPromise of getConfig().vars) {
     const { default: group } = await varsPromise();
-    edge.global(
-      group.prefix,
-      mode.kind === "live" ? group : noDatabase(group.prefix, "vars"),
-    );
+    edge.global(group.prefix, group);
   }
 
   for (const helperPromise of getConfig().helpers) {
@@ -263,54 +235,6 @@ const scanPages = async (pagesDir: string) => {
   return pages;
 };
 
-// Renders every `static` route from config to <outDir>/static/. Run by `njin build` — no module
-// is booted (no database, no server), so templates can use helpers but not models or vars.
-export const renderStaticSite = async (outDir: string): Promise<string[]> => {
-  const { static: routes, publicUrl, port, rootDir } = getConfig();
-  const base = (publicUrl ?? `http://localhost:${port}`).replace(/\/$/, "");
-  const viewsDir = join(rootDir, "src/views");
-
-  const edge = new Edge();
-  await setupEdge(edge, viewsDir, { kind: "static", outDir });
-
-  const pages = new Map(
-    (await scanPages(join(viewsDir, "pages")).catch(() => []))
-      // Dynamic pages are never static candidates.
-      .filter(({ route }) => !route.includes(":"))
-      .map(({ route, template }) => [route, template]),
-  );
-
-  const written: string[] = [];
-  for (const route of routes) {
-    const template = pages.get(route);
-    if (!template) {
-      throw new Error(
-        `Static route "${route}" has no matching page in src/views/pages (dynamic [param] pages can't be static).`,
-      );
-    }
-
-    let html: string;
-    try {
-      html = await renderPage(edge, template, {
-        params: {},
-        query: {},
-        request: { path: route, url: `${base}${route}` },
-      });
-    } catch (err) {
-      const reason =
-        err instanceof HttpError ? `abort(${err.statusCode})` : String(err);
-      throw new Error(`Failed to render static route "${route}": ${reason}`, {
-        cause: err,
-      });
-    }
-
-    const file = staticFilePath(join(outDir, "static"), route);
-    await Bun.write(file, html);
-    written.push(file);
-  }
-  return written;
-};
-
 const view = makeModule(() => {
   const edge = new Edge();
 
@@ -323,7 +247,10 @@ const view = makeModule(() => {
     const viewsDir = join(getConfig().rootDir, "src/views");
     const pagesDir = join(viewsDir, "pages");
 
-    await setupEdge(edge, viewsDir, { kind: "live" });
+    await setupEdge(edge, viewsDir);
+
+    // Pages cached by a previous run may be from older templates/content — start clean.
+    if (!isDev) await purgeStatic(undefined, { warm: false });
 
     const controller = new Elysia();
 
@@ -336,7 +263,11 @@ const view = makeModule(() => {
       });
     }
 
-    const staticRoutes = new Set(getConfig().static ?? []);
+    const staticRoutes = new Map(
+      (getConfig().static ?? []).map((r) => [r.route, r]),
+    );
+    const { publicUrl, port } = getConfig();
+    const configuredBase = publicUrl?.replace(/\/$/, "");
 
     let pages: Awaited<ReturnType<typeof scanPages>>;
     try {
@@ -351,26 +282,40 @@ const view = makeModule(() => {
         route,
         async ({ params, query, path, request, server }) => {
           try {
-            // Pre-rendered by `njin build`. A missing file (build skipped, or the route was
-            // added to config since) just falls through to rendering live.
-            if (!isDev && staticRoutes.has(route)) {
-              const staticFile = Bun.file(staticFilePath(staticDir(), route));
-              if (await staticFile.exists()) {
-                const html = await staticFile.text();
-                trackVisit(path, request, server);
-                return htmlResponse(request, html);
-              }
-            }
+            // Static routes render on their first hit and are then served from the cache until
+            // purged or revalidated (see core/static_cache.ts). Dev always renders live.
+            const staticRoute = isDev ? undefined : staticRoutes.get(route);
+            const key = staticRoute ? cacheKey(path) : null;
 
-            const html = await renderPage(edge, template, {
-              params,
-              query,
-              request: { path, url: request.url },
-            });
+            let html: string;
+            let cacheHeaders: Record<string, string> = {};
+            if (staticRoute && key !== null) {
+              // Same HTML for every visitor: no query, and a url built from publicUrl when set.
+              const base = configuredBase ?? new URL(request.url).origin;
+              const result = await getOrRenderStatic(
+                key,
+                () =>
+                  renderPage(edge, template, {
+                    params,
+                    query: {},
+                    request: { path: key, url: `${base}${key}` },
+                  }),
+                staticRoute.revalidate,
+              );
+              html = result.html;
+              cacheHeaders = { "X-Njin-Cache": result.state };
+            } else {
+              html = await renderPage(edge, template, {
+                params,
+                query,
+                request: { path, url: request.url },
+              });
+              if (staticRoute) cacheHeaders = { "X-Njin-Cache": "BYPASS" };
+            }
 
             trackVisit(path, request, server);
 
-            return htmlResponse(request, html);
+            return htmlResponse(request, html, 200, cacheHeaders);
           } catch (err) {
             if (err instanceof HttpError) {
               return htmlResponse(
@@ -398,6 +343,24 @@ const view = makeModule(() => {
       );
     }
 
+    // Plain static routes are rendered ahead of the first visitor (and again after each purge).
+    if (!isDev) {
+      const base = configuredBase ?? `http://localhost:${port}`;
+      for (const { route, template } of pages) {
+        const staticRoute = staticRoutes.get(route);
+        if (!staticRoute || route.includes(":")) continue;
+        registerStaticRoute(route, {
+          revalidate: staticRoute.revalidate,
+          render: () =>
+            renderPage(edge, template, {
+              params: {},
+              query: {},
+              request: { path: route, url: `${base}${route}` },
+            }),
+        });
+      }
+    }
+
     // Catch-all — must be registered last so specific routes take priority
     controller.get("/*", async ({ path, request }) => {
       if (!isDev) {
@@ -414,7 +377,13 @@ const view = makeModule(() => {
 
     elysia().use(controller);
 
-    return {};
+    return {
+      // Warming queries the database, whose tables only exist once surreal's spin() has run —
+      // so it can't happen in init(). Fire-and-forget: it must not delay the server coming up.
+      spin: () => {
+        if (!isDev) void warmStatic();
+      },
+    };
   };
 
   return fn;

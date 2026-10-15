@@ -38,25 +38,4 @@ export const stageBuildAssets = async (
   } else {
     console.log("• No _admin found — skipped");
   }
-
-  await renderStaticPages(root, outDir);
-};
-
-// Runs in the project root (so config.ts, DB path and src/views resolve exactly as `njin start`
-// would), in production mode so view globals use out/public's manifest.
-const renderStaticPages = async (root: string, outDir: string) => {
-  const proc = Bun.spawn(
-    [process.execPath, join(import.meta.dir, "build-static.ts")],
-    {
-      cwd: root,
-      env: { ...process.env, NODE_ENV: "production", NJIN_STATIC_OUT: outDir },
-      stdout: "inherit",
-      stderr: "inherit",
-    },
-  );
-
-  if ((await proc.exited) !== 0) {
-    console.error("\n✗ Static page build failed");
-    process.exit(1);
-  }
 };

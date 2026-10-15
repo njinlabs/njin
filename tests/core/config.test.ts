@@ -113,10 +113,25 @@ describe("loadConfig — static routes", () => {
       plugins: [definePlugin({ static: ["/about/"] })],
       static: ["/", "/about", "/contact"],
     });
-    expect(getConfig().static).toEqual(["/about", "/", "/contact"]);
+    expect(getConfig().static.map((r) => r.route)).toEqual([
+      "/about",
+      "/",
+      "/contact",
+    ]);
   });
 
-  it.each(["about", "/blog/[slug]", "/blog/:slug", "/a/*", "/a/../b", "/a//b"])(
+  it("accepts dynamic routes and per-route revalidate, later entries winning", async () => {
+    await loadConfig({
+      plugins: [definePlugin({ static: ["/blog/[slug]"] })],
+      static: [{ route: "/blog/:slug", revalidate: 60 }, "/"],
+    });
+    expect(getConfig().static).toEqual([
+      { route: "/blog/:slug", revalidate: 60 },
+      { route: "/", revalidate: undefined },
+    ]);
+  });
+
+  it.each(["about", "/a/*", "/a/../b", "/a//b", "/a/[b", "/a/:"])(
     "rejects %p",
     async (route) => {
       await expect(loadConfig({ static: [route] })).rejects.toThrow(
@@ -124,4 +139,10 @@ describe("loadConfig — static routes", () => {
       );
     },
   );
+
+  it.each([0, -5, Number.NaN])("rejects revalidate %p", async (revalidate) => {
+    await expect(
+      loadConfig({ static: [{ route: "/", revalidate }] }),
+    ).rejects.toThrow(/Invalid revalidate/);
+  });
 });

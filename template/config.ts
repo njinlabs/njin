@@ -42,7 +42,8 @@ export default defineConfig({
   ],
   // Logging goes to the console by default; add more destinations (any pino stream):
   // logger: { level: "info", streams: [{ stream: myStream, level: "error" }] },
-  // Pages rendered to HTML at `njin build` and served as static files (no [param] routes):
+  // Pages rendered on their first request and then cached until purgeStatic() (from "@njinlabs/njin/static");
+  // dynamic routes like "/blog/:slug" work too, and { route: "/news", revalidate: 60 } refreshes in the background:
   // static: ["/", "/about"],
   routes: [
     // Custom Elysia routes, e.g.:

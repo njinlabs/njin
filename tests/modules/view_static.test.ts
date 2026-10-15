@@ -1,5 +1,6 @@
 import { afterAll, describe, expect, it, mock } from "bun:test";
 import {
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -18,7 +19,6 @@ import { makeFakeElysia } from "../helpers/fake_elysia";
 process.env.NODE_ENV = "production";
 
 const dir = mkdtempSync(join(tmpdir(), "njin-view-static-"));
-const outDir = mkdtempSync(join(tmpdir(), "njin-view-static-out-"));
 const views = join(dir, "src", "views");
 mkdirSync(join(views, "pages", "blog"), { recursive: true });
 mkdirSync(join(views, "errors"), { recursive: true });
@@ -28,34 +28,42 @@ writeFileSync(
 );
 writeFileSync(join(views, "pages", "about.edge"), "<h1>about live</h1>");
 writeFileSync(join(views, "pages", "gone.edge"), "{{ abort(404, 'nope') }}");
-writeFileSync(join(views, "pages", "blog", "[slug].edge"), "<h1>post</h1>");
+writeFileSync(
+  join(views, "pages", "blog", "[slug].edge"),
+  "@if(params.slug === 'missing')\n{{ abort(404) }}\n@end\n<h1>post {{ params.slug }} #{{ tick() }}</h1>",
+);
+writeFileSync(
+  join(views, "pages", "ticker.edge"),
+  "<h1>ticker #{{ tick() }}</h1>",
+);
 writeFileSync(join(views, "errors", "404.edge"), "<h1>Custom 404</h1>");
 
-// A manifest that only exists under the *out* dir, like a real build.
-mkdirSync(join(outDir, "public"), { recursive: true });
+mkdirSync(join(dir, "public"), { recursive: true });
 writeFileSync(
-  join(outDir, "public", "manifest.json"),
+  join(dir, "public", "manifest.json"),
   JSON.stringify({
     "src/client/main.ts": { file: "assets/main-abc123.js", isEntry: true },
   }),
 );
 
-const fakeModel = { prefix: "post", read: async () => "from-db" };
-const fakeVars = { prefix: "general", name: "live site" };
-const shout = { name: "shout", fn: (s: string) => s.toUpperCase() };
-writeFileSync(join(views, "pages", "model.edge"), "{{ await post.read() }}");
-writeFileSync(join(views, "pages", "vars.edge"), "{{ general.name }}");
-writeFileSync(join(views, "pages", "helper.edge"), "{{ shout('hi') }}");
+let renders = 0;
+const tick = { name: "tick", fn: () => ++renders };
 
-let staticRoutes = ["/", "/about"];
+const staticRoutes = [
+  { route: "/" },
+  { route: "/about" },
+  { route: "/blog/:slug" },
+  { route: "/ticker", revalidate: 0.3 },
+  { route: "/gone" },
+];
 const tracked: string[] = [];
 
 mock.module("../../src/core/config", () => ({
   ...realConfig,
   getConfig: () => ({
-    models: [() => Promise.resolve({ default: fakeModel })],
-    vars: [() => Promise.resolve({ default: fakeVars })],
-    helpers: [() => Promise.resolve({ default: shout })],
+    models: [],
+    vars: [],
+    helpers: [() => Promise.resolve({ default: tick })],
     rootDir: dir,
     port: 4321,
     publicUrl: "https://example.com/",
@@ -80,93 +88,209 @@ mock.module("../../src/modules/elysia", () => ({
   default: fakeElysia.fn,
 }));
 
-const { default: view, renderStaticSite } = await import(
-  "../../src/modules/view"
+const { default: view } = await import("../../src/modules/view");
+const { purgeStatic, warmStatic, getOrRenderStatic, readStatic } = await import(
+  "../../src/core/static_cache"
 );
-await view.init();
+const viewModule = await view.init();
+viewModule.spin?.();
 const app = fakeElysia.buildApp();
 
 afterAll(() => {
   rmSync(dir, { recursive: true, force: true });
-  rmSync(outDir, { recursive: true, force: true });
 });
 
-describe("renderStaticSite", () => {
-  it("writes index.html per route using out/public's manifest and the public url", async () => {
-    const written = await renderStaticSite(outDir);
+const cacheFile = (...segs: string[]) =>
+  join(dir, ".cache", "static", ...segs, "index.html");
+const get = (path: string, headers?: Record<string, string>) =>
+  app.handle(new Request(`http://localhost${path}`, { headers }));
+const cacheState = async (path: string) =>
+  (await get(path)).headers.get("x-njin-cache");
+// Purge warms plain routes in the background — wait for it before asserting on the cache.
+const settle = () => Bun.sleep(30);
 
-    expect(written).toEqual([
-      join(outDir, "static", "index.html"),
-      join(outDir, "static", "about", "index.html"),
-    ]);
-    const home = readFileSync(written[0] as string, "utf8");
-    expect(home).toContain("home /");
-    expect(home).toContain("https://example.com/");
-    expect(home).toContain("/assets/main-abc123.js");
-    expect(readFileSync(written[1] as string, "utf8")).toBe(
+describe("on-demand static pages in production", () => {
+  it("warms plain static routes at boot", async () => {
+    await settle();
+    expect(readFileSync(cacheFile(), "utf8")).toContain("home /");
+    expect(readFileSync(cacheFile("about"), "utf8")).toBe(
       "<h1>about live</h1>",
     );
+    // dynamic routes can't be warmed — no params yet
+    expect(existsSync(cacheFile("blog"))).toBe(false);
   });
 
-  it("fails when a route has no page, or the page aborts", async () => {
-    staticRoutes = ["/missing"];
-    await expect(renderStaticSite(outDir)).rejects.toThrow(/no matching page/);
-
-    staticRoutes = ["/blog/:slug"];
-    await expect(renderStaticSite(outDir)).rejects.toThrow(/no matching page/);
-
-    staticRoutes = ["/gone"];
-    await expect(renderStaticSite(outDir)).rejects.toThrow(
-      /Failed to render static route "\/gone": abort\(404\)/,
-    );
-    staticRoutes = ["/", "/about"];
-  });
-
-  it("runs helpers, but rejects models and vars since there is no database", async () => {
-    staticRoutes = ["/helper"];
-    const [file] = await renderStaticSite(outDir);
-    expect(readFileSync(file as string, "utf8")).toBe("HI");
-
-    staticRoutes = ["/model"];
-    await expect(renderStaticSite(outDir)).rejects.toThrow(
-      /model "post" can't be used in a static page/,
-    );
-
-    staticRoutes = ["/vars"];
-    await expect(renderStaticSite(outDir)).rejects.toThrow(
-      /vars "general" can't be used in a static page/,
-    );
-    staticRoutes = ["/", "/about"];
-  });
-});
-
-describe("serving static pages in production", () => {
-  it("serves the pre-rendered file, with page headers, and still tracks the visit", async () => {
-    mkdirSync(join(dir, "static", "about"), { recursive: true });
-    writeFileSync(
-      join(dir, "static", "about", "index.html"),
-      "<h1>about frozen</h1>",
-    );
-
-    const res = await app.handle(new Request("http://localhost/about"));
+  it("serves the cache with page headers and an X-Njin-Cache header", async () => {
+    const res = await get("/about");
     expect(res.status).toBe(200);
-    expect(await res.text()).toBe("<h1>about frozen</h1>");
+    expect(await res.text()).toBe("<h1>about live</h1>");
+    expect(res.headers.get("x-njin-cache")).toBe("HIT");
     expect(res.headers.get("etag")).toBeTruthy();
     expect(res.headers.get("x-content-type-options")).toBe("nosniff");
 
+    writeFileSync(join(views, "pages", "about.edge"), "<h1>about v2</h1>");
+    expect(await (await get("/about")).text()).toBe("<h1>about live</h1>");
+  });
+
+  it("answers conditional requests from the cache and still tracks visits", async () => {
+    const etag = (await get("/about")).headers.get("etag") as string;
+    const res = await get("/about", { "if-none-match": etag });
+    expect(res.status).toBe(304);
     await Bun.sleep(10);
     expect(tracked).toContain("/about");
   });
 
-  it("falls back to live rendering when the static file is missing", async () => {
-    const res = await app.handle(new Request("http://localhost/"));
-    expect(res.status).toBe(200);
-    expect(await res.text()).toContain("home /");
+  it("renders request path/url from publicUrl and ignores the query", async () => {
+    const html = await (await get("/?x=1")).text();
+    expect(html).toContain("home /");
+    expect(html).toContain("https://example.com/");
+    expect(html).not.toContain("x=1");
+    expect(html).toContain("/assets/main-abc123.js");
   });
 
-  it("renders live for pages not marked static", async () => {
-    const res = await app.handle(new Request("http://localhost/gone"));
-    expect(res.status).toBe(404);
-    expect(await res.text()).toBe("<h1>Custom 404</h1>");
+  it("caches dynamic routes per URL: first hit MISS, then HIT", async () => {
+    const first = await get("/blog/hello");
+    expect(first.headers.get("x-njin-cache")).toBe("MISS");
+    const html = await first.text();
+    expect(html).toMatch(/post hello #\d+/);
+
+    const second = await get("/blog/hello");
+    expect(second.headers.get("x-njin-cache")).toBe("HIT");
+    expect(await second.text()).toBe(html);
+
+    // trailing slash is the same URL; another slug is its own entry
+    expect(await cacheState("/blog/hello/")).toBe("HIT");
+    const other = await get("/blog/other");
+    expect(other.headers.get("x-njin-cache")).toBe("MISS");
+    expect(await other.text()).not.toBe(html);
+  });
+
+  it("keeps odd slugs inside the cache dir and case-distinct", async () => {
+    const a = await (await get("/blog/Case")).text();
+    const b = await (await get("/blog/case")).text();
+    expect(a).toContain("post Case");
+    expect(b).toContain("post case");
+
+    const encoded = await get("/blog/hello%20world");
+    expect(await encoded.text()).toContain("post hello world");
+    expect(existsSync(cacheFile("blog", "hello%20world"))).toBe(true);
+
+    // encoded slashes / malformed encodings are rendered live, never cached (the URL parser
+    // already resolves %2e%2e itself)
+    for (const bad of ["/blog/a%2Fb", "/blog/%E0%A4%A"]) {
+      expect(await cacheState(bad)).toBe("BYPASS");
+    }
+    expect(existsSync(join(dir, ".cache", "index.html"))).toBe(false);
+  });
+
+  it("purgeStatic(path) drops one URL and re-warms plain routes", async () => {
+    const before = await (await get("/blog/hello")).text();
+    await purgeStatic("/blog/hello");
+    const res = await get("/blog/hello");
+    expect(res.headers.get("x-njin-cache")).toBe("MISS");
+    expect(await res.text()).not.toBe(before);
+    expect(await cacheState("/blog/other")).toBe("HIT");
+
+    await purgeStatic("/about");
+    await settle();
+    expect(readFileSync(cacheFile("about"), "utf8")).toBe("<h1>about v2</h1>");
+  });
+
+  it("purgeStatic('/blog/*') drops a subtree, purgeStatic() everything", async () => {
+    await purgeStatic("/blog/*");
+    expect(await cacheState("/blog/other")).toBe("MISS");
+    expect(await cacheState("/blog/hello")).toBe("MISS");
+    expect(await cacheState("/about")).toBe("HIT");
+
+    writeFileSync(join(views, "pages", "about.edge"), "<h1>about v3</h1>");
+    await purgeStatic("/about", { warm: false });
+    await settle();
+    expect(existsSync(cacheFile("about"))).toBe(false);
+
+    await purgeStatic(undefined, { warm: false });
+    expect(existsSync(join(dir, ".cache", "static"))).toBe(false);
+    await warmStatic();
+    expect(readFileSync(cacheFile("about"), "utf8")).toBe("<h1>about v3</h1>");
+  });
+
+  it("keeps the warm-up of one route when another is purged right after", async () => {
+    await purgeStatic("/about");
+    await purgeStatic("/");
+    await settle();
+    expect(existsSync(cacheFile("about"))).toBe(true);
+    expect(existsSync(cacheFile())).toBe(true);
+  });
+
+  it("rejects an invalid purge path", async () => {
+    await expect(purgeStatic("/a/../b")).rejects.toThrow(/Invalid purge path/);
+    await expect(purgeStatic("nope")).rejects.toThrow(/Invalid purge path/);
+  });
+
+  it("never caches errors", async () => {
+    for (let i = 0; i < 2; i++) {
+      const res = await get("/gone");
+      expect(res.status).toBe(404);
+      expect(await res.text()).toBe("<h1>Custom 404</h1>");
+      expect(res.headers.get("x-njin-cache")).toBeNull();
+    }
+    const missing = await get("/blog/missing");
+    expect(missing.status).toBe(404);
+    expect(existsSync(cacheFile("blog", "missing"))).toBe(false);
+  });
+
+  it("revalidates in the background: stale first, fresh afterwards", async () => {
+    // The boot warm-up may already be older than 0.3s by now — start from a fresh page.
+    await purgeStatic("/ticker", { warm: false });
+    const first = await (await get("/ticker")).text();
+    expect(await cacheState("/ticker")).toBe("HIT");
+
+    await Bun.sleep(400);
+    const stale = await get("/ticker");
+    expect(stale.headers.get("x-njin-cache")).toBe("STALE");
+    expect(await stale.text()).toBe(first);
+
+    await settle();
+    expect(await (await get("/ticker")).text()).not.toBe(first);
+  });
+
+  it("shares one render between concurrent first hits", async () => {
+    await purgeStatic("/blog/*");
+    const before = renders;
+    const [a, b] = await Promise.all([get("/blog/same"), get("/blog/same")]);
+    expect(await a.text()).toBe(await b.text());
+    expect(renders - before).toBe(1);
+  });
+});
+
+describe("getOrRenderStatic", () => {
+  it("does not cache a render that was purged while in flight", async () => {
+    let started!: () => void;
+    const renderStarted = new Promise<void>((r) => (started = r));
+    const pending = getOrRenderStatic("/d", async () => {
+      started();
+      await Bun.sleep(20);
+      return "stale";
+    });
+    await renderStarted;
+    await purgeStatic("/d");
+    expect((await pending).html).toBe("stale");
+    expect(await readStatic("/d")).toBeNull();
+  });
+
+  it("keeps the stale page when a background revalidation fails", async () => {
+    await getOrRenderStatic("/keep", async () => "old", 0.01);
+    await Bun.sleep(30);
+    const res = await getOrRenderStatic(
+      "/keep",
+      async () => {
+        throw new Error("db down");
+      },
+      0.01,
+    );
+    expect(res).toEqual({ html: "old", state: "STALE" });
+    await Bun.sleep(10);
+    expect((await getOrRenderStatic("/keep", async () => "x")).html).toBe(
+      "old",
+    );
   });
 });

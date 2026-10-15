@@ -269,19 +269,38 @@ pages/blog/[slug].edge    → GET /blog/:slug
 
 ## Static pages
 
-List page routes under `static` in `config.ts` and `njin build` / `njin build:worker` render each one to HTML once; production then serves that file instead of rendering per request.
+List page routes under `static` in `config.ts`. In production each URL is rendered on its **first request**, the HTML is cached on disk, and every later request is served from that file until you purge it (or it goes stale).
 
 ```ts
 export default defineConfig({
-  static: ["/", "/about", "/contact"],
+  static: [
+    "/",
+    "/about",
+    "/blog/:slug", // dynamic: every slug is cached on its own (`[slug]` works too)
+    { route: "/news", revalidate: 60 }, // refresh in the background once it is 60s old
+  ],
 });
 ```
 
-- Output goes to `out/static/index.html`, `out/static/about/index.html`, … and is served with the same headers/ETag as a live page. Analytics still records the visit. If the file is missing, the route falls back to rendering live.
-- Only plain routes are allowed — `[param]` pages, wildcards and `..` are rejected when the config loads. Plugins can contribute routes with `static` too.
-- Static pages render at build time **without a database**: helpers work, but using a model or a vars group in the page fails the build with a clear error. Keep data-driven pages live (leave them out of `static`). A page that errors or calls `abort()` also fails the build.
-- Static pages have no request: `query` and `params` are empty, `request.path` is the route and `request.url` is `publicUrl` + path (`http://localhost:<port>` if `publicUrl` is unset).
-- Content is frozen until the next build — edits made in the admin panel, API or MCP don't appear on a static page until you rebuild.
+Purge from anywhere in your code (a hook, event, custom route…) — call it **after** the content changed:
+
+```ts
+import { purgeStatic } from "@njinlabs/njin/static";
+
+await purgeStatic("/about"); // one URL
+await purgeStatic("/blog/hello"); // one URL of a dynamic route
+await purgeStatic("/blog/*"); // /blog and everything under it
+await purgeStatic(); // every static page
+await purgeStatic("/about", { warm: false }); // don't re-render it right away
+```
+
+- Pages render live, so models, vars and helpers all work.
+- **Warm-up:** plain routes (no `:param`) are rendered at server start and again right after a purge, so visitors don't pay for the render. Dynamic URLs render on their first hit.
+- **Revalidate:** with `revalidate: <seconds>`, a page older than that is still served immediately while a fresh render replaces it in the background. If that render fails, the old page stays.
+- **Debugging:** responses carry `X-Njin-Cache: HIT | MISS | STALE` (`BYPASS` for a URL that can't be cached, e.g. malformed encoding).
+- The cache lives in `.cache/static/` (add it to `.gitignore`) and is cleared on every server start, so a deploy never serves stale HTML. It is shared by every process using the project directory, so a purge applies to all of them.
+- Served with the same headers/ETag as a live page. Analytics still records the visit. Errors and `abort()` responses are never cached — a dynamic page should `abort(404)` for unknown params, otherwise every URL a visitor invents becomes a cache file.
+- A static page is the same for everyone: `query` is empty, and `request.url` is built from `publicUrl` (the request's origin if unset). Don't put per-user or per-query content in it.
 - `njin dev` ignores `static` and always renders live.
 
 ## Template example

@@ -6,6 +6,7 @@ import type {
   McpToolFactory,
   ModelFactory,
   RouteFactory,
+  StaticRoute,
   VarsFactory,
 } from "./config";
 
@@ -16,7 +17,7 @@ export type Plugin = {
   hooks?: HookFactory[];
   events?: EventFactory[];
   routes?: RouteFactory[];
-  static?: string[];
+  static?: StaticRoute[];
   mcp?: { tools?: McpToolFactory[] };
   logger?: { streams?: LoggerStream[] };
   init?: () => Promise<void> | void;

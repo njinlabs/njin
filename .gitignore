@@ -28,3 +28,6 @@ graphify-out/
 
 # debug logs
 debug.log
+
+# static page cache
+.cache/

@@ -54,15 +54,39 @@ export type LoggerStream = {
   level?: Level;
 };
 
-// A static route is a page route with no `[param]` segment (e.g. "/", "/about"). `njin build`
-// renders each one to HTML once and production serves that file instead of rendering per request.
+// A static route is a page route cached after its first render: a plain path ("/", "/about") or a
+// dynamic one with `:param` / `[param]` segments ("/blog/:slug"), each URL cached on its own.
+// `revalidate` (seconds) makes a cached page stale after that long: the next request still gets
+// the old HTML, and a fresh render replaces it in the background.
+export type StaticRoute = string | { route: string; revalidate?: number };
+export type ResolvedStaticRoute = { route: string; revalidate?: number };
+
 export const normalizeStaticRoute = (route: string): string => {
-  if (!route.startsWith("/") || /[[\]:*]|\.\.|\/\//.test(route)) {
+  const normalized = route.replace(/\[([^\]/]+)\]/g, ":$1");
+  if (
+    !normalized.startsWith("/") ||
+    /[[\]*]|\.\.|\/\//.test(normalized) ||
+    /:(?![A-Za-z_]\w*(\/|$))/.test(normalized)
+  ) {
     throw new Error(
-      `Invalid static route "${route}" — expected a plain page path such as "/" or "/about" (no [param], wildcard or ".." segments).`,
+      `Invalid static route "${route}" — expected a page path such as "/", "/about" or "/blog/:slug" (no wildcard or ".." segments).`,
     );
   }
-  return route.length > 1 ? route.replace(/\/$/, "") : route;
+  return normalized.length > 1 ? normalized.replace(/\/$/, "") : normalized;
+};
+
+export const resolveStaticRoute = (entry: StaticRoute): ResolvedStaticRoute => {
+  const { route, revalidate } =
+    typeof entry === "string" ? { route: entry, revalidate: undefined } : entry;
+  if (
+    revalidate !== undefined &&
+    !(Number.isFinite(revalidate) && revalidate > 0)
+  ) {
+    throw new Error(
+      `Invalid revalidate ${revalidate} for static route "${route}" — expected a positive number of seconds.`,
+    );
+  }
+  return { route: normalizeStaticRoute(route), revalidate };
 };
 
 export type NjinConfig = {
@@ -117,9 +141,10 @@ export type NjinConfig = {
   vars?: VarsFactory[];
   helpers?: HelperFactory[];
   plugins?: Plugin[];
-  // Page routes rendered to HTML at `njin build` time and served as static files in production.
-  // Content is frozen until the next build; `njin dev` ignores this and always renders live.
-  static?: string[];
+  // Page routes rendered on their first request in production and then served from a cached HTML
+  // file until purged with purgeStatic() (from "@njinlabs/njin/static") or, with `revalidate`,
+  // until it is that many seconds old. `njin dev` ignores this and always renders live.
+  static?: StaticRoute[];
 };
 
 export type ResolvedConfig = {
@@ -143,7 +168,7 @@ export type ResolvedConfig = {
   routes: RouteFactory[];
   vars: VarsFactory[];
   helpers: HelperFactory[];
-  static: string[];
+  static: ResolvedStaticRoute[];
   // Everything else a Plugin contributes (models/vars/hooks/events/routes) is already
   // flattened into the arrays above — init() is the only part that can't be merged away,
   // so it's the only piece of each Plugin that survives resolution on its own.
@@ -245,12 +270,14 @@ export const loadConfig = async (preloaded?: NjinConfig): Promise<void> => {
       ...(userConfig.helpers ?? []),
     ],
     static: [
-      ...new Set(
+      ...new Map(
         [
           ...plugins.flatMap((p) => p.static ?? []),
           ...(userConfig.static ?? []),
-        ].map(normalizeStaticRoute),
-      ),
+        ]
+          .map(resolveStaticRoute)
+          .map((r) => [r.route, r] as const),
+      ).values(),
     ],
     pluginInits: plugins
       .map((p) => p.init)
