@@ -170,6 +170,16 @@ describe("model CRUD routes", () => {
     expect(body.opts.populate).toEqual(["owner", "tags"]);
   });
 
+  it("GET /api/post parses a comma-separated select list", async () => {
+    const res = await app.handle(
+      new Request("http://localhost/api/post?select=title, slug,,", {
+        headers: { Authorization: "Bearer x" },
+      }),
+    );
+    const body = (await res.json()) as { opts: { select: unknown } };
+    expect(body.opts.select).toEqual(["title", "slug"]);
+  });
+
   it("GET /api/post keeps operator filters as objects instead of stringifying them", async () => {
     const res = await app.handle(
       new Request(

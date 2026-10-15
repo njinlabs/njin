@@ -342,6 +342,8 @@ GET /api/post?filters[status][$eq]=PUBLISH
 GET /api/post?filters[title][$contains]=hello
 GET /api/post?populate=author,thumbnail
 GET /api/post?populate=none
+GET /api/post?select=title,slug
+GET /api/post?select=title,author.name   # pick fields of a related record
 ```
 
 ## Setup (first run)

@@ -437,6 +437,8 @@ post.read({
   search: "hello", // fuzzy search on searchFields
   populate: ["author", "thumbnail"], // relation fields to fetch
   populate: "none", // skip all relation fetching
+  select: ["title", "slug"], // return only these fields ("id" is always included)
+  select: ["title", "author.name"], // fields of a related record ("relation.field", one level; "id" always included)
   filters: {
     status: "PUBLISH", // shorthand equality
     status: { $eq: "PUBLISH" }, // explicit equality
@@ -458,6 +460,8 @@ Over HTTP, `filters`/`populate` are query params using standard bracket notation
 GET /api/post?filters[status]=PUBLISH
 GET /api/post?filters[price][$gte]=100&filters[status][$ne]=DRAFT
 GET /api/post?sort=createdAt&order=desc
+GET /api/post?select=title,slug,createdAt
+GET /api/post?select=title,author.name,tags.label
 ```
 
 ### EdgeJS syntax reference

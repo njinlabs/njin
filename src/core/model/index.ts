@@ -78,8 +78,30 @@ export type ReadOptions = {
   sort?: string;
   order?: "asc" | "desc";
   populate?: string[] | "none";
+  // Fields to return (`id` is always included). A relation's own fields can be picked with
+  // "relation.field" (one level). Unknown names are dropped; if none are valid the full
+  // record is returned.
+  select?: readonly string[];
   filters?: Record<string, FilterValue>;
 };
+
+// A record narrowed to the selected fields. `select` typed as a plain string[] (e.g. coming from
+// a query string) can't be narrowed at compile time, so it falls back to the full record type.
+type Selected<T, S> = S extends readonly (infer K)[]
+  ? string extends K
+    ? T
+    : Pick<T, Extract<RelationRoot<K> | "id", keyof T>>
+  : T;
+
+// "author.name" narrows the record's `author` property (its inner shape isn't tracked).
+type RelationRoot<K> = K extends `${infer Root}.${string}` ? Root : K;
+
+// Field names go straight into the SELECT list, so on top of the schema whitelist they must be
+// plain identifiers.
+const SAFE_IDENTIFIER = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+// Present on every record but not part of the user-defined schema shape.
+const RECORD_META_FIELDS = ["id", "createdAt", "updatedAt"];
 
 // Whitelist of operators — unknown operators are silently dropped, never interpolated.
 const OPERATORS: Record<
@@ -297,15 +319,25 @@ export const makeModel = <Rules extends z.ZodObject>(
     return record;
   };
 
-  const read = async ({
+  // Same reasoning as filterableFieldSet: a real Set of own keys, never `in`. id/createdAt/
+  // updatedAt aren't in the user-defined schema shape but exist on every record.
+  const selectableFieldSet = new Set([
+    ...filterableFieldSet,
+    ...RECORD_META_FIELDS,
+  ]);
+
+  const read = async <
+    const S extends readonly string[] | undefined = undefined,
+  >({
     search,
     page = 1,
     limit,
     sort,
     order = "asc",
     populate,
+    select,
     filters,
-  }: ReadOptions = {}) => {
+  }: Omit<ReadOptions, "select"> & { select?: S } = {}) => {
     const pageLimit = toPositiveInt(limit, 20);
     page = toPositiveInt(page, 1);
     const whereParts: string[] = [];
@@ -442,20 +474,84 @@ export const makeModel = <Rules extends z.ZodObject>(
           .join(" + ")}) AS __relevance`
       : "";
 
-    // Validate populate against known relation fields — prevents FETCH injection
-    const fetchFields =
+    // Validate select against the schema — prevents arbitrary field injection. Anything that
+    // isn't a known field (or isn't a plain identifier) is dropped, and an empty result means
+    // "not specified" so the full record is returned rather than an id-only one.
+    //
+    // "relation.field" picks fields of the linked record instead of the whole thing; both halves
+    // are checked (the relation against this schema, the field against the target model's
+    // registered schema) and it projects through SurrealDB's `relation.{id, field} AS relation`,
+    // which follows the link itself — no FETCH — and maps over multi relations. A relation that
+    // has any "relation.field" entry uses that projection even when it is also selected whole.
+    const flatSelected = new Set<string>();
+    const nestedSelected = new Map<string, Set<string>>();
+    if (Array.isArray(select)) {
+      for (const raw of select as readonly unknown[]) {
+        if (typeof raw !== "string") continue;
+        const parts = raw.split(".");
+        if (parts.length > 2 || !parts.every((p) => SAFE_IDENTIFIER.test(p)))
+          continue;
+
+        if (parts.length === 1) {
+          if (selectableFieldSet.has(raw)) flatSelected.add(raw);
+          continue;
+        }
+
+        const [local, targetField] = parts as [string, string];
+        if (!relationFieldSet.has(local)) continue;
+        const targetPrefix = (config.schema.shape[local] as z.ZodType).meta()
+          ?.model as string | undefined;
+        const targetSchema = targetPrefix
+          ? schemaRegistry.get(targetPrefix)
+          : undefined;
+        if (
+          !targetSchema ||
+          !(
+            Object.keys(targetSchema.shape).includes(targetField) ||
+            RECORD_META_FIELDS.includes(targetField)
+          )
+        )
+          continue;
+
+        const fields = nestedSelected.get(local) ?? new Set<string>();
+        fields.add(targetField);
+        nestedSelected.set(local, fields);
+      }
+    }
+    for (const local of nestedSelected.keys()) flatSelected.delete(local);
+
+    const projection =
+      flatSelected.size || nestedSelected.size
+        ? [
+            "id",
+            ...[...flatSelected].filter((f) => f !== "id"),
+            ...[...nestedSelected].map(
+              ([local, fields]) =>
+                `${local}.{${["id", ...[...fields].filter((f) => f !== "id")].join(", ")}} AS ${local}`,
+            ),
+          ].join(", ")
+        : "*";
+
+    // Validate populate against known relation fields — prevents FETCH injection. With a
+    // select, only relations that are returned whole are worth fetching.
+    const fetchFields = (
       populate === "none"
         ? []
         : populate
           ? populate.filter((f) => relationFieldSet.has(f))
-          : relationFields;
+          : relationFields
+    ).filter(
+      (f) =>
+        !nestedSelected.has(f) &&
+        (!(flatSelected.size || nestedSelected.size) || flatSelected.has(f)),
+    );
     const fetch = fetchFields.length ? `FETCH ${fetchFields.join(", ")}` : "";
     const start = (page - 1) * pageLimit;
 
     const [rows, [countRow]] = await surreal().query<
       [(Returning & { __relevance?: number })[], { count: number }[]]
     >(
-      `SELECT *${relevanceSelect} FROM ${prefix} ${where} ${orderBy} LIMIT ${pageLimit} START ${start} ${fetch};
+      `SELECT ${projection}${relevanceSelect} FROM ${prefix} ${where} ${orderBy} LIMIT ${pageLimit} START ${start} ${fetch};
        SELECT count() as count FROM ${prefix} ${where} GROUP ALL`,
       params,
     );
@@ -464,7 +560,7 @@ export const makeModel = <Rules extends z.ZodObject>(
       if (!useRelevance) return row;
       const { __relevance, ...rest } = row;
       return rest as Returning;
-    });
+    }) as unknown as Selected<Returning, S>[];
 
     const total = countRow?.count ?? 0;
 

@@ -204,6 +204,166 @@ describe("makeModel read() filter whitelist", () => {
   });
 });
 
+describe("makeModel read() select", () => {
+  const build = () =>
+    makeModel(`post_${crypto.randomUUID().replace(/-/g, "")}`, {
+      name: "Post",
+      searchFields: [],
+      schema: z.object({
+        title: text({ label: "Title" }),
+        slug: text({ label: "Slug" }),
+      }),
+    });
+
+  it("projects only the selected fields, always including id", async () => {
+    const post = build();
+    fakeDb.queries.length = 0;
+
+    await post.read({ select: ["title", "createdAt"] });
+
+    expect(fakeDb.queries[0]!.sql).toContain(
+      "SELECT id, title, createdAt FROM",
+    );
+    expect(fakeDb.queries[0]!.sql).not.toContain("SELECT *");
+  });
+
+  it("selects everything when select is omitted or has no valid field", async () => {
+    const post = build();
+    fakeDb.queries.length = 0;
+
+    await post.read({});
+    await post.read({ select: [] });
+    await post.read({ select: ["nope"] });
+
+    for (const q of fakeDb.queries) expect(q.sql).toContain("SELECT * FROM");
+  });
+
+  it("drops unknown, prototype-inherited and injection-shaped field names", async () => {
+    const post = build();
+    fakeDb.queries.length = 0;
+
+    await post.read({
+      select: [
+        "constructor",
+        "__proto__",
+        "toString",
+        "title, (SELECT * FROM user) AS leak",
+        "title FROM user; --",
+        "slug",
+        "slug",
+        42 as never,
+      ],
+    });
+
+    const { sql } = fakeDb.queries[0]!;
+    expect(sql).toContain("SELECT id, slug FROM");
+    for (const bad of ["constructor", "__proto__", "toString", "leak", "user"])
+      expect(sql).not.toContain(bad);
+  });
+
+  it("only FETCHes relations that are selected", async () => {
+    const author = build();
+    const post = makeModel(`post_${crypto.randomUUID().replace(/-/g, "")}`, {
+      name: "Post",
+      searchFields: [],
+      schema: z.object({
+        title: text({ label: "Title" }),
+        author: relation({ label: "Author" }, author),
+      }),
+    });
+    fakeDb.queries.length = 0;
+
+    await post.read({ select: ["title"] });
+    await post.read({ select: ["title", "author"] });
+
+    expect(fakeDb.queries[0]!.sql).not.toContain("FETCH");
+    expect(fakeDb.queries[1]!.sql).toContain("FETCH author");
+  });
+});
+
+describe("makeModel read() select on relations", () => {
+  const build = () => {
+    const author = makeModel(
+      `author_${crypto.randomUUID().replace(/-/g, "")}`,
+      {
+        name: "Author",
+        searchFields: [],
+        schema: z.object({
+          name: text({ label: "Name" }),
+          secret: text({ label: "Secret" }),
+        }),
+      },
+    );
+    const tag = makeModel(`tag_${crypto.randomUUID().replace(/-/g, "")}`, {
+      name: "Tag",
+      searchFields: [],
+      schema: z.object({ label: text({ label: "Label" }) }),
+    });
+    const post = makeModel(`post_${crypto.randomUUID().replace(/-/g, "")}`, {
+      name: "Post",
+      searchFields: [],
+      schema: z.object({
+        title: text({ label: "Title" }),
+        author: relation({ label: "Author" }, author),
+        tags: relationMany({ label: "Tags" }, tag),
+      }),
+    });
+    return post;
+  };
+
+  const sqlOf = async (select: string[], populate?: string[] | "none") => {
+    fakeDb.queries.length = 0;
+    await build().read({ select, populate });
+    return fakeDb.queries[0]!.sql;
+  };
+
+  it("projects the picked fields of a related record, always with its id, and skips FETCH for it", async () => {
+    const sql = await sqlOf(["title", "author.name"]);
+    expect(sql).toContain("SELECT id, title, author.{id, name} AS author FROM");
+    expect(sql).not.toContain("FETCH");
+  });
+
+  it("groups several fields per relation and supports multi relations", async () => {
+    const sql = await sqlOf(["author.name", "author.secret", "tags.label"]);
+    expect(sql).toContain(
+      "id, author.{id, name, secret} AS author, tags.{id, label} AS tags FROM",
+    );
+  });
+
+  it("accepts id/createdAt/updatedAt on the related record", async () => {
+    const sql = await sqlOf(["author.createdAt", "author.id"]);
+    expect(sql).toContain("author.{id, createdAt} AS author");
+  });
+
+  it("lets the nested projection win over the same relation selected whole", async () => {
+    const sql = await sqlOf(["author", "author.name"]);
+    expect(sql).toContain("author.{id, name} AS author");
+    expect(sql).not.toContain("FETCH");
+  });
+
+  it("still FETCHes a relation selected whole next to a nested one", async () => {
+    const sql = await sqlOf(["author.name", "tags"]);
+    expect(sql).toContain("FETCH tags");
+    expect(sql).not.toContain("FETCH author");
+  });
+
+  it("drops nested entries that point at unknown relations, unknown target fields, or too deep", async () => {
+    const sql = await sqlOf([
+      "title.x", // not a relation
+      "author.nope", // not a field of the target
+      "author.constructor", // inherited, not an own field
+      "author.name.deep", // two levels
+      "constructor.name",
+      "author.name) AS x, (SELECT * FROM user",
+      "author.",
+      ".name",
+    ]);
+    expect(sql).toContain("SELECT * FROM");
+    for (const bad of ["nope", "constructor", "deep", "title.x", "AS x"])
+      expect(sql).not.toContain(bad);
+  });
+});
+
 describe("makeModel read() filter values and limit", () => {
   const make = () =>
     makeModel(`item_${crypto.randomUUID().replace(/-/g, "")}`, {

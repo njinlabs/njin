@@ -139,7 +139,16 @@ const api = makeModule(() => {
         .get(
           "/",
           async ({
-            query: { search, page, limit, sort, order, populate, filters },
+            query: {
+              search,
+              page,
+              limit,
+              sort,
+              order,
+              populate,
+              select,
+              filters,
+            },
           }) => {
             const populateOpt =
               populate === "none"
@@ -148,6 +157,13 @@ const api = makeModule(() => {
                   ? populate.split(",").map((s) => s.trim())
                   : undefined;
 
+            const selectOpt = select
+              ? select
+                  .split(",")
+                  .map((s) => s.trim())
+                  .filter(Boolean)
+              : undefined;
+
             return model.read({
               search,
               page,
@@ -155,6 +171,7 @@ const api = makeModule(() => {
               sort,
               order,
               populate: populateOpt,
+              select: selectOpt,
               filters,
             });
           },
@@ -167,6 +184,7 @@ const api = makeModule(() => {
               sort: z.coerce.string().optional(),
               order: z.enum(["asc", "desc"]).default("asc"),
               populate: z.coerce.string().optional(),
+              select: z.coerce.string().max(1000).optional(),
               filters: filtersQuerySchema.optional(),
             }),
           },

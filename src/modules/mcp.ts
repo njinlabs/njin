@@ -355,6 +355,13 @@ const mcp = makeModule(() => {
               .describe(
                 'Relation fields to expand. Omit for the default, "none" for ids only.',
               ),
+            select: z
+              .array(z.string().max(100))
+              .max(100)
+              .optional()
+              .describe(
+                'Fields to return ("id" is always included). Use "relation.field" (e.g. "author.name") to pick fields of a related record. Omit for all fields.',
+              ),
             filters: z
               .record(
                 z.string(),
