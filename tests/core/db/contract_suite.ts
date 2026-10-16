@@ -507,6 +507,201 @@ export const describeAdapter = (
       });
     });
 
+    // Everything below feeds an adapter the kind of input an attacker controls and checks two
+    // things: nothing is executed (the data is intact afterwards) and nothing is mistaken for
+    // syntax (hostile text is stored and compared as plain text).
+    describe("hostile input", () => {
+      const PAYLOADS = [
+        "' OR '1'='1",
+        "'; DROP TABLE post; --",
+        '" OR 1=1 --',
+        "x') OR true --",
+        "' OR 1=1 --",
+        "post:abc",
+        "$parent",
+        "]); DELETE post; //",
+        "1; DELETE post",
+        "title = 'x' OR id != 'y'",
+        " ‮ unicode",
+      ];
+      const base = { page: 1, limit: 50, populate: [] as string[] };
+
+      const seedThree = async () => {
+        await mkPost({ title: "100% sure", status: "a" }, "h1");
+        await mkPost({ title: "snake_case name", status: "b" }, "h2");
+        await mkPost({ title: "plain title", status: "c" }, "h3");
+      };
+
+      const intact = async () => {
+        expect(await db.count(post)).toBe(3);
+        expect((await db.find(post, "h3"))?.title).toBe("plain title");
+      };
+
+      it("compares a hostile value as plain text, whatever the operator", async () => {
+        await seedThree();
+
+        for (const payload of PAYLOADS) {
+          for (const op of [
+            "$eq",
+            "$ne",
+            "$contains",
+            "$startsWith",
+            "$ieq",
+          ] as const) {
+            const res = await db.list(post, {
+              ...base,
+              where: [{ field: "title", op, value: payload }],
+            });
+            // "$ne" matches everything (nothing equals the payload); the rest match nothing.
+            expect(res.total).toBe(op === "$ne" ? 3 : 0);
+          }
+        }
+        await intact();
+      });
+
+      it("treats LIKE wildcards in $contains/$startsWith as literal characters", async () => {
+        await seedThree();
+
+        const contains = async (value: string) =>
+          (
+            await db.list(post, {
+              ...base,
+              where: [{ field: "title", op: "$contains", value }],
+            })
+          ).rows.map((r) => r.id);
+
+        expect(await contains("%")).toEqual(["h1"]);
+        expect(await contains("_")).toEqual(["h2"]);
+        expect(await contains("%%")).toEqual([]);
+        expect(
+          (
+            await db.list(post, {
+              ...base,
+              where: [{ field: "title", op: "$startsWith", value: "_" }],
+            })
+          ).total,
+        ).toBe(0);
+      });
+
+      it("stores hostile text exactly as given and reads it back unchanged", async () => {
+        for (const payload of PAYLOADS) {
+          const row = await mkPost({
+            title: payload,
+            tags: [payload],
+            seo: { title: payload, description: payload },
+          });
+          const found = await db.find(post, row.id);
+
+          expect(found?.title).toBe(payload);
+          expect(found?.tags).toEqual([payload]);
+          expect(found?.seo).toEqual({ title: payload, description: payload });
+
+          const byValue = await db.list(post, {
+            ...base,
+            where: [{ field: "title", op: "$eq", value: payload }],
+          });
+          expect(byValue.rows.map((r) => r.id)).toEqual([row.id]);
+        }
+        expect(await db.count(post)).toBe(PAYLOADS.length);
+      });
+
+      it("never lets a hostile search string run as a query", async () => {
+        await seedThree();
+        if (db.capabilities.search === "none") return;
+
+        for (const payload of PAYLOADS) {
+          const res = await db.list(post, { ...base, search: payload });
+          expect(Array.isArray(res.rows)).toBe(true);
+        }
+        await intact();
+      });
+
+      it("rejects a hostile field name in a condition, sort or grouping, without running it", async () => {
+        await seedThree();
+
+        for (const payload of PAYLOADS) {
+          await expect(
+            db.list(post, {
+              ...base,
+              where: [{ field: payload, op: "$eq", value: "x" }],
+            }),
+          ).rejects.toThrow();
+          await expect(
+            db.list(post, { ...base, sort: { field: payload, order: "asc" } }),
+          ).rejects.toThrow();
+          await expect(
+            db.countBy({ table: "post", groupBy: payload }),
+          ).rejects.toThrow();
+        }
+        await intact();
+      });
+
+      it("ignores a hostile name in populate or select instead of building a query from it", async () => {
+        await seedThree();
+
+        for (const payload of PAYLOADS) {
+          const outcome = await db
+            .list(post, {
+              ...base,
+              populate: [payload],
+              select: { fields: ["title", payload], nested: {} },
+            })
+            .then(
+              () => "ok",
+              () => "rejected",
+            );
+          expect(["ok", "rejected"]).toContain(outcome);
+        }
+        await intact();
+      });
+
+      it("treats a hostile id as an ordinary, unknown id", async () => {
+        await seedThree();
+
+        for (const payload of PAYLOADS) {
+          expect(await db.find(post, payload)).toBeNull();
+          expect(await db.update(post, payload, { title: "x" })).toBeNull();
+          expect(await db.remove(post, payload)).toBeNull();
+        }
+        await intact();
+      });
+
+      it("accepts a hostile string as an explicit id and finds it again by that same id", async () => {
+        for (const payload of PAYLOADS) {
+          const row = await mkPost({ title: "t" }, payload);
+          expect(row.id).toBe(payload);
+          expect((await db.find(post, payload))?.title).toBe("t");
+          expect((await db.remove(post, payload))?.id).toBe(payload);
+        }
+        expect(await db.count(post)).toBe(0);
+      });
+
+      it("rejects a hostile filter value as a relation id without side effects", async () => {
+        await seedThree();
+        for (const payload of PAYLOADS) {
+          const res = await db.list(post, {
+            ...base,
+            where: [{ field: "author", op: "$eq", value: payload }],
+          });
+          expect(res.total).toBe(0);
+        }
+        await intact();
+      });
+
+      it("keeps __proto__ and similar keys in stored data from touching any prototype", async () => {
+        const poisoned = JSON.parse(
+          '{"title":"p","seo":{"title":"x","__proto__":{"polluted":true}},"items":[{"sku":"a","__proto__":{"polluted":true},"constructor":{"prototype":{"polluted":true}}}]}',
+        );
+        const row = await mkPost(poisoned);
+        const found = await db.find(post, row.id);
+
+        expect(({} as Record<string, unknown>).polluted).toBeUndefined();
+        expect(Object.getPrototypeOf(found)).toBe(Object.prototype);
+        expect(Object.getPrototypeOf(found?.seo)).toBe(Object.prototype);
+        expect((found?.items as { sku: string }[])[0]?.sku).toBe("a");
+      });
+    });
+
     describe("sync", () => {
       it("is idempotent", async () => {
         await db.sync(ALL);

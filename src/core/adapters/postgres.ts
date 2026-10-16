@@ -44,6 +44,55 @@ export type PgDb = Executor & {
   transaction<T>(fn: (tx: PgDb) => Promise<T>): Promise<T>;
 };
 
+// What a failed statement surfaces as. Drizzle's own error carries the whole query and every
+// bound parameter (password hashes, emails, ...) in its message and properties, and errors end
+// up in logs and error trackers — so the driver's error is replaced by one with just its
+// message, SQLSTATE code and constraint name.
+export class DbError extends Error {
+  constructor(
+    message: string,
+    readonly code?: string,
+    readonly constraint?: string,
+  ) {
+    super(message);
+    this.name = "DbError";
+  }
+}
+
+const isDriverError = (error: unknown): error is Error & { cause?: unknown } =>
+  error instanceof Error &&
+  (error.message.startsWith("Failed query:") ||
+    "query" in error ||
+    "params" in error);
+
+const sanitize = (error: unknown): unknown => {
+  if (!isDriverError(error)) return error;
+
+  const cause = (error.cause ?? error) as {
+    message?: string;
+    code?: string;
+    constraint?: string;
+  };
+  const message =
+    cause !== error && typeof cause.message === "string"
+      ? cause.message
+      : "database error";
+  return new DbError(message, cause.code, cause.constraint);
+};
+
+const guard = (target: PgDb): PgDb => ({
+  execute: (query) =>
+    Promise.resolve(target.execute(query)).catch((error) => {
+      throw sanitize(error);
+    }),
+  transaction: (fn) =>
+    target
+      .transaction((tx) => fn(guard(tx)))
+      .catch((error) => {
+        throw sanitize(error);
+      }),
+});
+
 type Connection = {
   db: PgDb;
   close?: () => Promise<void> | void;
@@ -1026,13 +1075,13 @@ export const postgresAdapter = (
     async connect() {
       if (config.connect) {
         const connection = await config.connect();
-        db = connection.db;
+        db = guard(connection.db);
         closer = connection.close;
       } else if (config.url) {
         const { SQL } = await import("bun");
         const { drizzle } = await import("drizzle-orm/bun-sql");
         const client = new SQL(config.url, { max: config.max });
-        db = drizzle({ client }) as unknown as PgDb;
+        db = guard(drizzle({ client }) as unknown as PgDb);
         closer = () => client.close();
       } else {
         throw new Error("postgresAdapter() needs either `url` or `connect`");
