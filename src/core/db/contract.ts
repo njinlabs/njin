@@ -1,6 +1,7 @@
-// DRAFT — the contract every database adapter implements. Nothing imports this yet: the
-// SurrealDB-specific code in core/model, core/vars and modules/* still talks to `surreal()`
-// directly, and moves behind this interface in a later step (see the adapter plan).
+// The contract every database adapter implements. Core code (core/model, core/vars,
+// modules/*) only ever talks to the database through this interface, via db().
+
+import type { BunPlugin } from "bun";
 //
 // Design rules:
 // - The model layer (core/model) owns validation, hooks, unique checks, timestamps, and the
@@ -185,6 +186,27 @@ export type AdapterCapabilities = {
   search: "none" | "basic" | "fuzzy";
 };
 
+// What an adapter tells `njin build` / `njin build:worker` it needs, so the build commands never
+// have to know which database is in use.
+export type AdapterBuildContext = {
+  // "compile": a standalone executable (njin build) — anything not bundled must be shipped
+  // next to it. "worker": a bundle that runs from inside the project tree (njin build:worker),
+  // where node_modules is always reachable.
+  target: "compile" | "worker";
+  // The build output directory; files the adapter must ship go under it.
+  outDir: string;
+  log: (message: string) => void;
+};
+
+export type AdapterBuild = {
+  // Packages to leave out of the bundle (a native driver that can't be bundled, or one that is
+  // unreachable for this configuration).
+  external?: readonly string[];
+  plugins?: readonly BunPlugin[];
+  // Reminders printed at the end of a successful build ("out/bindings/ must ship with ...").
+  notes?: readonly string[];
+};
+
 export interface DbAdapter {
   readonly name: string;
   readonly capabilities: AdapterCapabilities;
@@ -192,6 +214,14 @@ export interface DbAdapter {
   // Connect. Called once from the db module's init(), before anything else.
   connect(): Promise<void>;
   close(): Promise<void>;
+
+  // Build-time needs: native bindings to copy, packages to keep external, bundler patches.
+  // Optional — an adapter on a pure-JS driver has nothing to say. Called by the build commands
+  // with the project's config already loaded, so the adapter can look at its own settings
+  // (e.g. embedded vs remote).
+  build?(
+    ctx: AdapterBuildContext,
+  ): Promise<AdapterBuild | void> | AdapterBuild | void;
 
   // Create / update structures so every table in `tables` exists with matching columns,
   // pivots, indexes. Idempotent and cheap when nothing changed. Must be additive by
