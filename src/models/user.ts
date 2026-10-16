@@ -1,6 +1,6 @@
 import z from "zod";
 import { email, makeModel, text } from "../core/model";
-import surreal from "../modules/surreal";
+import db from "../modules/db";
 
 const user = makeModel("user", {
   name: "Pengguna",
@@ -25,11 +25,13 @@ export const DUMMY_HASH = Bun.password.hashSync("njin-dummy-password");
 export const findUserByEmail = async <T = Record<string, any>>(
   value: string,
 ) => {
-  const [rows] = await surreal().query<[T[]]>(
-    `SELECT * FROM ${user.prefix} WHERE string::lowercase(email) = $email LIMIT 1`,
-    { email: value.trim().toLowerCase() },
-  );
-  return rows?.[0];
+  const { rows } = await db().list(user.def, {
+    where: [{ field: "email", op: "$ieq", value: value.trim() }],
+    page: 1,
+    limit: 1,
+    populate: [],
+  });
+  return rows[0] as T | undefined;
 };
 
 export default user;

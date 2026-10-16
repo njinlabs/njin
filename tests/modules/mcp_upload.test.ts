@@ -1,25 +1,10 @@
-import { afterAll, describe, expect, it, mock } from "bun:test";
-import { createNodeEngines } from "@surrealdb/node";
-import { RecordId, Surreal } from "surrealdb";
+import { describe, expect, it, mock } from "bun:test";
+import { mcpUploadTable } from "../../src/core/db/internal";
 import * as realElysiaModule from "../../src/modules/elysia";
-import * as realSurrealModule from "../../src/modules/surreal";
 import { makeFakeElysia } from "../helpers/fake_elysia";
+import { useTestDb } from "../helpers/test_db";
 
-const db = new Surreal({ engines: createNodeEngines() });
-await db.connect("mem://");
-await db.use({ namespace: "test", database: "test" });
-await db.query("DEFINE TABLE IF NOT EXISTS mcp_upload SCHEMALESS;");
-
-mock.module("../../src/modules/surreal", () => ({
-  ...realSurrealModule,
-  default: () => db,
-}));
-
-// An embedded engine left open at exit crashed Bun with a segfault on Linux CI (after all
-// tests had passed) — close it explicitly.
-afterAll(async () => {
-  await db.close();
-});
+const db = await useTestDb();
 
 const stored = new Map<string, Record<string, unknown>>();
 const uploaded: File[] = [];
@@ -33,7 +18,7 @@ mock.module("../../src/modules/file", () => ({
     },
     upload: async (file: File) => {
       uploaded.push(file);
-      const id = new RecordId("file", `f${stored.size + 1}`);
+      const id = `f${stored.size + 1}`;
       const record = {
         id,
         name: file.name,
@@ -41,7 +26,7 @@ mock.module("../../src/modules/file", () => ({
         type: file.type,
         size: file.size,
       };
-      stored.set(id.id.toString(), record);
+      stored.set(id, record);
       return [record];
     },
     remove: async () => ({}),
@@ -109,9 +94,7 @@ describe("createUploadTicket", () => {
   it("never stores the secret", async () => {
     const ticket = await newTicket();
     const secret = ticket.url.split(".").pop()!;
-    const record = await db.select(
-      new RecordId("mcp_upload", ticket.upload_id),
-    );
+    const record = await db.adapter.find(mcpUploadTable, ticket.upload_id);
 
     expect(JSON.stringify(record)).not.toContain(secret);
   });
@@ -316,9 +299,9 @@ describe("POST /mcp/upload/:ticket", () => {
 
   it("answers 404 once the ticket has expired", async () => {
     const ticket = await newTicket();
-    await db
-      .update(new RecordId("mcp_upload", ticket.upload_id))
-      .merge({ expiresAt: "2000-01-01T00:00:00.000Z" });
+    await db.adapter.update(mcpUploadTable, ticket.upload_id, {
+      expiresAt: "2000-01-01T00:00:00.000Z",
+    });
 
     expect((await post(ticket.url, [["a.png", "x"]])).status).toBe(404);
     expect((await getUploadStatus(ticket.upload_id))!.expired).toBe(true);
@@ -334,9 +317,9 @@ describe("getUploadStatus", () => {
 describe("pruning", () => {
   it("removes tickets that expired more than an hour ago", async () => {
     const old = await newTicket();
-    await db
-      .update(new RecordId("mcp_upload", old.upload_id))
-      .merge({ expiresAt: "2000-01-01T00:00:00.000Z" });
+    await db.adapter.update(mcpUploadTable, old.upload_id, {
+      expiresAt: "2000-01-01T00:00:00.000Z",
+    });
 
     await newTicket();
 

@@ -1,26 +1,23 @@
 import { createHash, randomBytes } from "node:crypto";
 import Elysia from "elysia";
 import moment from "moment";
-import { RecordId, Table } from "surrealdb";
 import { getConfig } from "../core/config";
+import { oauthClientTable, oauthCodeTable } from "../core/db/internal";
 import { escapeHtml, noStore, page } from "../core/html_page";
 import { makeModule } from "../core/module";
 import { publicBase } from "../core/public_url";
+import db from "./db";
 import elysia from "./elysia";
 import {
   issueOAuthTokens,
   revokeOAuthToken,
   rotateOAuthTokens,
 } from "./mcp_token";
-import surreal from "./surreal";
 
 // OAuth 2.1 authorization server for MCP clients (Claude etc.), living in the same process as
 // the MCP endpoint: the user signs in with their normal njin account on a page served here and
 // the agent gets its own revocable token — nobody pastes a token anywhere. Public clients only
 // (PKCE S256, no client secret), registered through RFC 7591 dynamic client registration.
-
-const clientTable = new Table("oauth_client");
-const codeTable = new Table("oauth_code");
 
 const CODE_TTL_MINUTES = 10;
 const UNUSED_CLIENT_TTL_HOURS = 24;
@@ -98,7 +95,7 @@ const redirectMatches = (requested: string, registered: string[]) => {
 };
 
 type OAuthClient = {
-  id: RecordId;
+  id: string;
   clientName: string;
   redirectUris: string[];
   // Flipped once any user completes sign-in for it, so abandoned registrations (Claude
@@ -108,9 +105,9 @@ type OAuthClient = {
 };
 
 type OAuthCode = {
-  id: RecordId;
+  id: string;
   clientId: string;
-  userId: RecordId;
+  userId: string;
   redirectUri: string;
   codeChallenge: string;
   expiresAt: string;
@@ -236,13 +233,17 @@ const readForm = async (request: Request) =>
   new URLSearchParams(await request.text());
 
 const pruneExpired = async () => {
-  await surreal().query(
-    "DELETE oauth_code WHERE expiresAt < $now; DELETE oauth_client WHERE used = false AND createdAt < $cutoff;",
+  await db().removeWhere(oauthCodeTable, [
+    { field: "expiresAt", op: "$lt", value: moment().toISOString() },
+  ]);
+  await db().removeWhere(oauthClientTable, [
+    { field: "used", op: "$eq", value: false },
     {
-      now: moment().toISOString(),
-      cutoff: moment().subtract(UNUSED_CLIENT_TTL_HOURS, "hours").toISOString(),
+      field: "createdAt",
+      op: "$lt",
+      value: moment().subtract(UNUSED_CLIENT_TTL_HOURS, "hours").toISOString(),
     },
-  );
+  ]);
 };
 
 const oauth = makeModule(() => {
@@ -262,9 +263,10 @@ const oauth = makeModule(() => {
 
     const lookupClient = async (clientId: string) =>
       clientId
-        ? ((await surreal().select<OAuthClient>(
-            new RecordId(clientTable, clientId),
-          )) ?? null)
+        ? (((await db().find(
+            oauthClientTable,
+            clientId,
+          )) as OAuthClient | null) ?? null)
         : null;
 
     // Shared by GET (show the page) and POST (submit it): resolves the client and validates the
@@ -375,18 +377,16 @@ const oauth = makeModule(() => {
 
           await pruneExpired();
 
-          const [created] = await surreal()
-            .create<OAuthClient>(clientTable)
-            .content({
-              clientName,
-              redirectUris: redirect_uris as string[],
-              used: false,
-              createdAt: moment().toISOString(),
-            });
+          const created = await db().insert(oauthClientTable, {
+            clientName,
+            redirectUris: redirect_uris as string[],
+            used: false,
+            createdAt: moment().toISOString(),
+          });
 
           return json(
             {
-              client_id: created!.id.id.toString(),
+              client_id: created.id,
               client_name: clientName,
               redirect_uris,
               token_endpoint_auth_method: "none",
@@ -438,7 +438,7 @@ const oauth = makeModule(() => {
             "../models/user"
           );
           const account = await findUserByEmail<{
-            id: RecordId;
+            id: string;
             password: string;
           }>(email);
 
@@ -463,19 +463,21 @@ const oauth = makeModule(() => {
 
           // The record id is the code's hash, so redeeming is a direct lookup and the plain
           // code never touches the DB.
-          await surreal()
-            .create<OAuthCode>(new RecordId(codeTable, hashCode(code)))
-            .content({
+          await db().insert(
+            oauthCodeTable,
+            {
               clientId: params.clientId,
-              userId: account.id as unknown as OAuthCode["userId"],
+              userId: account.id,
               redirectUri: params.redirectUri,
               codeChallenge: params.codeChallenge,
               expiresAt: moment()
                 .add(CODE_TTL_MINUTES, "minutes")
                 .toISOString(),
-            });
+            },
+            { id: hashCode(code) },
+          );
 
-          await surreal().update(client.id).merge({ used: true });
+          await db().update(oauthClientTable, client.id, { used: true });
 
           return redirectWith(params.redirectUri, {
             code,
@@ -516,18 +518,18 @@ const oauth = makeModule(() => {
 
           const code = values.get("code") ?? "";
           const verifier = values.get("code_verifier") ?? "";
-          const id = new RecordId(codeTable, hashCode(code));
+          const id = hashCode(code);
 
           const record = code
-            ? await surreal().select<OAuthCode>(id)
-            : undefined;
+            ? ((await db().find(oauthCodeTable, id)) as OAuthCode | null)
+            : null;
           if (!record) {
             return oauthError("invalid_grant", "Code is not valid.");
           }
 
           // Single use, burned before any other check: a code that fails PKCE or redirect
           // verification is dead too, so it can't be retried with guessed verifiers.
-          await surreal().delete(id);
+          await db().remove(oauthCodeTable, id);
 
           const challengeMatches =
             verifier.length >= 43 &&

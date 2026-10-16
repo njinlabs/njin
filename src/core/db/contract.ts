@@ -78,16 +78,24 @@ export type TableDef = {
   name: string;
   fields: readonly FieldDef[];
   search: readonly SearchTarget[];
+  // A free-form document table: rows hold arbitrary top-level keys that are not declared in
+  // `fields` (njin's VARS groups, whose shape differs per group but share one table). An
+  // adapter with fixed columns keeps the undeclared keys together in a single JSON column;
+  // one with native documents stores them as given. Such a table is only ever read and
+  // written by id — no filtering, sorting or search on the undeclared keys.
+  document?: boolean;
 };
 
 // ---------------------------------------------------------------------------------------
 // Rows
 // ---------------------------------------------------------------------------------------
 
+// createdAt/updatedAt are whatever the caller stored: the model layer always sets both, but
+// some internal tables (oauth_code, vars) carry only one or neither.
 export type Row = {
   id: string;
-  createdAt: string;
-  updatedAt: string;
+  createdAt?: string;
+  updatedAt?: string;
   [field: string]: unknown;
 };
 

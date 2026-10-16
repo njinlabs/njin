@@ -1,35 +1,11 @@
 import { describe, expect, it, mock } from "bun:test";
+import { pageviewTable } from "../../src/core/db/internal";
 import * as realElysiaModule from "../../src/modules/elysia";
-import * as realSurrealModule from "../../src/modules/surreal";
 import { makeFakeAuthPlugin } from "../helpers/fake_auth";
 import { makeFakeElysia } from "../helpers/fake_elysia";
+import { useTestDb } from "../helpers/test_db";
 
-const queryCalls: { sql: string; params: Record<string, unknown> }[] = [];
-const createCalls: Record<string, unknown>[] = [];
-let queryResult: unknown[] = [[]];
-let createShouldThrow = false;
-
-const fakeDb = {
-  query: async (sql: string, params: Record<string, unknown> = {}) => {
-    queryCalls.push({ sql, params });
-    return queryResult;
-  },
-  create: (_table: unknown) => ({
-    content: async (data: Record<string, unknown>) => {
-      if (createShouldThrow) throw new Error("db unavailable");
-      createCalls.push(data);
-      return [data];
-    },
-  }),
-};
-
-// Spreading real exports below — without --isolate, mock.module() replaces the module
-// in a registry shared across the whole test run, so a partial mock would otherwise
-// break other files that import isRemotePath/injectBracketQuery from these specifiers.
-mock.module("../../src/modules/surreal", () => ({
-  ...realSurrealModule,
-  default: () => fakeDb,
-}));
+const db = await useTestDb();
 
 const loggerErrorCalls: unknown[] = [];
 mock.module("../../src/modules/logger", () => ({
@@ -61,7 +37,7 @@ const {
   default: analytics,
 } = await import("../../src/modules/analytics");
 
-const initResult = await analytics.init();
+await analytics.init();
 const app = fakeElysia.buildApp();
 
 describe("resolveClientIp", () => {
@@ -116,10 +92,18 @@ describe("resolveRequestOrigin", () => {
   });
 });
 
+const allPageviews = async () =>
+  (await db.adapter.list(pageviewTable, { page: 1, limit: 100, populate: [] }))
+    .rows;
+
+const clearPageviews = () =>
+  db.adapter.removeWhere(pageviewTable, [
+    { field: "path", op: "$startsWith", value: "" },
+  ]);
+
 describe("analytics().track", () => {
   it("records a pageview with country lookup and a visitor hash", async () => {
-    createCalls.length = 0;
-    createShouldThrow = false;
+    await clearPageviews();
     await analytics().track({
       path: "/blog",
       referrer: "https://google.com",
@@ -128,15 +112,17 @@ describe("analytics().track", () => {
       requestUrl: "https://mysite.com/blog",
     });
 
-    expect(createCalls).toHaveLength(1);
-    expect(createCalls[0]!.country).toBe("US");
-    expect(createCalls[0]!.path).toBe("/blog");
-    expect(createCalls[0]!.referrer).toBe("https://google.com");
-    expect(typeof createCalls[0]!.visitorHash).toBe("string");
+    const rows = await allPageviews();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.country).toBe("US");
+    expect(rows[0]!.path).toBe("/blog");
+    expect(rows[0]!.referrer).toBe("https://google.com");
+    expect(typeof rows[0]!.visitorHash).toBe("string");
+    expect(typeof rows[0]!.createdAt).toBe("string");
   });
 
   it("nulls out a same-origin referrer", async () => {
-    createCalls.length = 0;
+    await clearPageviews();
     await analytics().track({
       path: "/blog",
       referrer: "https://mysite.com/home",
@@ -144,11 +130,11 @@ describe("analytics().track", () => {
       ip: "1.2.3.4",
       requestUrl: "https://mysite.com/blog",
     });
-    expect(createCalls[0]!.referrer).toBeNull();
+    expect((await allPageviews())[0]!.referrer).toBeNull();
   });
 
   it("swallows errors and logs them instead of throwing", async () => {
-    createShouldThrow = true;
+    db.failNext("insert");
     loggerErrorCalls.length = 0;
     await analytics().track({
       path: "/x",
@@ -158,105 +144,97 @@ describe("analytics().track", () => {
       requestUrl: "https://mysite.com/x",
     });
     expect(loggerErrorCalls).toHaveLength(1);
-    createShouldThrow = false;
   });
 });
 
 describe("analytics routes", () => {
-  it("GET /api/analytics/summary aggregates total and unique visitors", async () => {
-    queryResult = [
-      [{ visitorHash: "a" }, { visitorHash: "a" }, { visitorHash: null }],
-    ];
-    queryCalls.length = 0;
+  const get = async (path: string) => {
     const res = await app.handle(
-      new Request(
-        "http://localhost/api/analytics/summary?from=2024-01-01T00:00:00Z&to=2024-02-01T00:00:00Z&path=/x",
-        {
-          headers: { Authorization: "Bearer x" },
-        },
+      new Request(`http://localhost/api/analytics/${path}`, {
+        headers: { Authorization: "Bearer x" },
+      }),
+    );
+    expect(res.status).toBe(200);
+    return ((await res.json()) as { data: unknown }).data;
+  };
+
+  const seed = async () => {
+    await clearPageviews();
+    const rows = [
+      ["/blog", "US", "https://google.com", "a", "2024-01-01T10:00:00.000Z"],
+      ["/blog", "US", "https://google.com", "a", "2024-01-01T11:00:00.000Z"],
+      ["/blog", "ID", null, "b", "2024-01-02T10:00:00.000Z"],
+      ["/about", "US", null, null, "2024-02-05T10:00:00.000Z"],
+    ] as const;
+    for (const [path, country, referrer, visitorHash, createdAt] of rows) {
+      await db.adapter.insert(pageviewTable, {
+        path,
+        country,
+        referrer,
+        visitorHash,
+        userAgent: "ua",
+        createdAt,
+      });
+    }
+  };
+
+  it("summary aggregates total pageviews and unique visitors", async () => {
+    await seed();
+    expect(await get("summary")).toEqual({
+      totalPageviews: 4,
+      uniqueVisitors: 2,
+    });
+  });
+
+  it("summary honours from, to and path", async () => {
+    await seed();
+    expect(
+      await get(
+        "summary?from=2024-01-01T00:00:00Z&to=2024-01-31T00:00:00Z&path=/blog",
       ),
-    );
-    expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({
-      data: { totalPageviews: 3, uniqueVisitors: 1 },
-    });
-    expect(queryCalls[0]!.sql).toContain("createdAt >= $from");
-    expect(queryCalls[0]!.sql).toContain("createdAt <= $to");
-    expect(queryCalls[0]!.sql).toContain("path = $path");
+    ).toEqual({ totalPageviews: 3, uniqueVisitors: 2 });
   });
 
-  it("GET /api/analytics/summary with no filters omits the WHERE clause", async () => {
-    queryResult = [[]];
-    queryCalls.length = 0;
-    const res = await app.handle(
-      new Request("http://localhost/api/analytics/summary", {
-        headers: { Authorization: "Bearer x" },
-      }),
-    );
-    expect(res.status).toBe(200);
-    expect(queryCalls[0]!.sql).not.toContain("WHERE");
+  it("by-country returns grouped rows, most frequent first", async () => {
+    await seed();
+    expect(await get("by-country")).toEqual([
+      { country: "US", count: 3 },
+      { country: "ID", count: 1 },
+    ]);
   });
 
-  it("GET /api/analytics/by-country returns grouped rows", async () => {
-    queryResult = [[{ country: "US", count: 5 }]];
-    const res = await app.handle(
-      new Request("http://localhost/api/analytics/by-country", {
-        headers: { Authorization: "Bearer x" },
-      }),
-    );
-    expect(await res.json()).toEqual({ data: [{ country: "US", count: 5 }] });
+  it("by-referrer returns grouped rows", async () => {
+    await seed();
+    const rows = (await get("by-referrer")) as {
+      referrer: string | null;
+      count: number;
+    }[];
+    // Two groups tie on count, so their relative order isn't defined.
+    expect(rows).toHaveLength(2);
+    expect(rows).toContainEqual({ referrer: null, count: 2 });
+    expect(rows).toContainEqual({ referrer: "https://google.com", count: 2 });
   });
 
-  it("GET /api/analytics/by-referrer returns grouped rows", async () => {
-    queryResult = [[{ referrer: "https://google.com", count: 2 }]];
-    const res = await app.handle(
-      new Request("http://localhost/api/analytics/by-referrer", {
-        headers: { Authorization: "Bearer x" },
-      }),
-    );
-    expect(await res.json()).toEqual({
-      data: [{ referrer: "https://google.com", count: 2 }],
-    });
+  it("by-page returns grouped rows", async () => {
+    await seed();
+    expect(await get("by-page")).toEqual([
+      { path: "/blog", count: 3 },
+      { path: "/about", count: 1 },
+    ]);
   });
 
-  it("GET /api/analytics/by-page returns grouped rows", async () => {
-    queryResult = [[{ path: "/blog", count: 9 }]];
-    const res = await app.handle(
-      new Request("http://localhost/api/analytics/by-page", {
-        headers: { Authorization: "Bearer x" },
-      }),
-    );
-    expect(await res.json()).toEqual({ data: [{ path: "/blog", count: 9 }] });
-  });
-
-  it("GET /api/analytics/timeseries buckets by day by default and by hour when requested", async () => {
-    queryResult = [[{ date: "2024-01-01", count: 3 }]];
-    queryCalls.length = 0;
-
-    const dayRes = await app.handle(
-      new Request("http://localhost/api/analytics/timeseries", {
-        headers: { Authorization: "Bearer x" },
-      }),
-    );
-    expect(await dayRes.json()).toEqual({
-      data: [{ date: "2024-01-01", count: 3 }],
-    });
-    expect(queryCalls[0]!.sql).toContain("string::slice(createdAt, 0, 10)");
-
-    queryCalls.length = 0;
-    await app.handle(
-      new Request("http://localhost/api/analytics/timeseries?interval=hour", {
-        headers: { Authorization: "Bearer x" },
-      }),
-    );
-    expect(queryCalls[0]!.sql).toContain("string::slice(createdAt, 0, 13)");
-  });
-});
-
-describe("analytics().spin", () => {
-  it("defines the pageview table", async () => {
-    queryCalls.length = 0;
-    await initResult.spin!();
-    expect(queryCalls[0]!.sql).toContain("DEFINE TABLE IF NOT EXISTS pageview");
+  it("timeseries buckets by day by default and by hour when requested", async () => {
+    await seed();
+    expect(await get("timeseries")).toEqual([
+      { date: "2024-01-01", count: 2 },
+      { date: "2024-01-02", count: 1 },
+      { date: "2024-02-05", count: 1 },
+    ]);
+    expect(await get("timeseries?interval=hour")).toEqual([
+      { date: "2024-01-01T10", count: 1 },
+      { date: "2024-01-01T11", count: 1 },
+      { date: "2024-01-02T10", count: 1 },
+      { date: "2024-02-05T10", count: 1 },
+    ]);
   });
 });

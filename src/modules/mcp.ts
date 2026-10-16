@@ -1,7 +1,6 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import Elysia from "elysia";
-import { RecordId } from "surrealdb";
 import z from "zod";
 import { toAdminSchema } from "../core/admin_schema";
 import { getConfig, type ModelFactory, type VarsFactory } from "../core/config";
@@ -36,16 +35,8 @@ type ToolResult = {
   isError?: boolean;
 };
 
-// Record ids go out as the bare id ("abc123"), never "post:abc123": that bare form is what
-// every tool parameter and every relation/file field takes back in. A relation field given the
-// full "file:abc123" would silently become a record id of its own and dangle.
-function plainIds(this: Record<string, unknown>, key: string, value: unknown) {
-  const raw = this[key];
-  return raw instanceof RecordId ? String(raw.id) : value;
-}
-
 const ok = (data: unknown): ToolResult => ({
-  content: [{ type: "text", text: JSON.stringify(data ?? null, plainIds) }],
+  content: [{ type: "text", text: JSON.stringify(data ?? null) }],
 });
 
 // Agents copy ids out of earlier results, and occasionally from a record link they saw as
@@ -117,12 +108,9 @@ const normalizeRelations = (
 
 // An expanded link always carries the target's own fields; a bare `{ id }` is what an embedded
 // stub looks like (a link written as an object before this was normalised).
-//
-// A RecordId (a link that wasn't expanded) has no own enumerable keys, so it must be ruled out
-// first — `[].every(...)` is true and every healthy bare link would be reported as a stub.
 const isStub = (value: unknown) => {
   if (!value || typeof value !== "object") return false;
-  if (Array.isArray(value) || value instanceof RecordId) return false;
+  if (Array.isArray(value)) return false;
 
   const keys = Object.keys(value);
   return keys.length > 0 && keys.every((key) => key === "id");
@@ -141,12 +129,11 @@ const stubWarning = (field: string, recordId?: string) =>
   `${recordId ? `Record ${recordId}: ` : ""}"${field}" holds an embedded {id} object, not a link, so it cannot expand. Fix it with update_record, sending "${field}" as the plain id string.`;
 
 // create()/update() hand back the row exactly as stored, so every relation field is a bare id —
-// the agent can't tell a link that resolved from one pointing at nothing (SurrealDB drops a
-// dangling link from a FETCH instead of erroring). Re-read through show(), the same FETCH
+// the agent can't tell a link that resolved from one pointing at nothing (a dangling link
+// comes back as a bare id, not as a record). Re-read through show(), the same FETCH
 // get_record uses, so related records come back expanded, and flag any link that didn't resolve.
 const readBack = async (model: Model, written: Record<string, unknown>) => {
-  const id =
-    written.id instanceof RecordId ? String(written.id.id) : String(written.id);
+  const id = String(written.id);
   const shown = ((await model.show(id)) ?? written) as Record<string, unknown>;
 
   const warnings: string[] = [];
@@ -387,12 +374,7 @@ const mcp = makeModule(() => {
             const warnings = (result.data as Record<string, unknown>[]).flatMap(
               (row) =>
                 stubFieldsOf(target, row).map((field) =>
-                  stubWarning(
-                    field,
-                    row.id instanceof RecordId
-                      ? String(row.id.id)
-                      : String(row.id),
-                  ),
+                  stubWarning(field, String(row.id)),
                 ),
             );
 

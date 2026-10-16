@@ -278,7 +278,7 @@ import { afterCreate } from "@njinlabs/njin";
 import orderPaid from "../events/order_paid";
 
 afterCreate(order, (record) => {
-  orderPaid.dispatch({ orderId: record.id.id, total: record.total });
+  orderPaid.dispatch({ orderId: record.id, total: record.total });
 });
 ```
 
@@ -358,7 +358,7 @@ pages/portfolio/[id]/index.edge  → GET /portfolio/:id
     <div class="max-w-6xl mx-auto px-6 py-16">
       <div class="grid grid-cols-1 md:grid-cols-3 gap-8">
         @each(item in result.data)
-          <a href="/blog/{{ item.id.id }}" class="group block">
+          <a href="/blog/{{ item.id }}" class="group block">
             <h2 class="font-semibold group-hover:text-violet-600 transition-colors">{{ item.title }}</h2>
             <time class="text-sm text-slate-400">{{ item.publishedAt }}</time>
           </a>

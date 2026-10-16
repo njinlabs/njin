@@ -1,9 +1,10 @@
 import { describe, expect, it, mock } from "bun:test";
 import * as realConfig from "../../src/core/config";
+import type { TableDef } from "../../src/core/db/contract";
 import * as realElysiaModule from "../../src/modules/elysia";
-import * as realSurrealModule from "../../src/modules/surreal";
 import { makeFakeAuthPlugin } from "../helpers/fake_auth";
 import { makeFakeElysia } from "../helpers/fake_elysia";
+import { useTestDb } from "../helpers/test_db";
 
 // Separate file (not just a separate describe block) so --isolate gives it its own
 // fresh module registry — src/modules/file.ts is a singleton whose behavior depends on
@@ -13,16 +14,15 @@ import { makeFakeElysia } from "../helpers/fake_elysia";
 // Each mock below spreads the real module's other exports — without --isolate,
 // mock.module() replaces the module in a registry shared across the whole test run, so
 // a partial mock would otherwise break other files importing the un-mocked exports.
-mock.module("../../src/modules/surreal", () => ({
-  ...realSurrealModule,
-  default: () => ({
-    read: async () => ({ data: [], meta: {} }),
-    create: () => ({ content: async (data: unknown) => data }),
-  }),
-}));
+const fileDef: TableDef = { name: "file", fields: [], search: [] };
+await useTestDb([fileDef]);
 
 mock.module("../../src/models/file", () => ({
-  default: { read: async () => ({ data: [], meta: {} }), table: "file" },
+  default: {
+    prefix: "file",
+    def: fileDef,
+    read: async () => ({ data: [], meta: {} }),
+  },
 }));
 
 mock.module("../../src/core/config", () => ({

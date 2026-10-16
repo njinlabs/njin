@@ -1,27 +1,9 @@
-import { describe, expect, it, mock } from "bun:test";
-import { RecordId } from "surrealdb";
+import { describe, expect, it } from "bun:test";
+import { varsTable } from "../../../src/core/db/internal";
+import { useTestDb } from "../../helpers/test_db";
 
-// makeVars talks to SurrealDB via `surreal()` — replace it with an in-memory
-// fake so get/update semantics can be verified without a live database
-// connection. Mirrors tests/core/model/index.test.ts's mocking idiom.
-const records = new Map<string, Record<string, unknown>>();
-
-const fakeDb = {
-  select: async (id: RecordId) => records.get(String(id)),
-  upsert: (id: RecordId) => ({
-    merge: (data: Record<string, unknown>) => ({
-      output: async (_mode: string) => {
-        const merged = { ...(records.get(String(id)) ?? {}), ...data };
-        records.set(String(id), merged);
-        return merged;
-      },
-    }),
-  }),
-};
-
-mock.module("../../../src/modules/surreal", () => ({
-  default: () => fakeDb,
-}));
+// makeVars talks to the database through the db module — swap it for a real in-memory adapter.
+const db = await useTestDb();
 
 const { makeVars } = await import("../../../src/core/vars/index");
 const { afterVarsUpdate, beforeVarsUpdate } = await import(
@@ -100,7 +82,7 @@ describe("makeVars", () => {
   it("fills in a newly-added schema field via its default for an already-stored row", async () => {
     const prefix = uniquePrefix();
     // Seed a row directly, simulating data stored before `maintenanceMode` existed.
-    records.set(String(new RecordId("vars", prefix)), { siteName: "Existing" });
+    await db.adapter.upsert(varsTable, prefix, { siteName: "Existing" });
 
     const general = makeVars(prefix, { name: "General", schema: schema() });
     const result = await general.get();

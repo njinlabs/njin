@@ -1,4 +1,3 @@
-import { RecordId } from "surrealdb";
 import z from "zod";
 import type { FormMeta, makeModel } from "..";
 
@@ -20,7 +19,7 @@ export type RelationType<Relation> = z.ZodPreprocess<
           updatedAt?: string;
           _write?: boolean;
         })
-      | RecordId<string, any>,
+      | string,
       Relation & {
         id: unknown;
         createdAt?: string;
@@ -60,10 +59,6 @@ export function relation(
         return { id: value, _write: true };
       }
 
-      if (value instanceof RecordId) {
-        return { id: value.toString().split(":")[1], _write: true };
-      }
-
       return value;
     },
     model.validation
@@ -75,7 +70,7 @@ export function relation(
       })
       .partial()
       .transform((value) => {
-        if (value._write) return new RecordId(model.table, value.id);
+        if (value._write) return String(value.id);
 
         return value;
       }),

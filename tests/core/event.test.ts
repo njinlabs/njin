@@ -3,7 +3,7 @@ import { describe, expect, it, mock } from "bun:test";
 // dispatch() calls logger().error(...) when a listener throws — logger is a makeModule
 // singleton that only becomes callable after logger.init() runs (done once at boot in
 // src/config/module.ts), which never happens in these plain unit tests, so replace it
-// with a no-op fake, same pattern as tests/core/model/index.test.ts fakes ../modules/surreal.
+// with a no-op fake, same pattern as tests/core/model/index.test.ts fakes ../modules/db.
 const loggedErrors: unknown[] = [];
 mock.module("../../src/modules/logger", () => ({
   default: () => ({

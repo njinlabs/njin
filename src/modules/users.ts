@@ -81,7 +81,7 @@ const users = makeModule(() => {
         async ({ params, user: actingUser }) => {
           // The only recovery path for a locked-out instance is a manual DB edit —
           // setup is permanently disabled once any user exists, so block self-delete.
-          if (params.id === actingUser.id.id) {
+          if (params.id === actingUser.id) {
             return status(400, {
               message: "You cannot delete your own account",
             });

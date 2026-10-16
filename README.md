@@ -11,7 +11,7 @@ A modern framework for building company profiles, landing pages, and content-dri
 
 - **[Bun](https://bun.sh)** — runtime, package manager, bundler (njin is Bun-only — no Node/Deno support)
 - **[Elysia](https://elysiajs.com)** — HTTP framework with type-safe CRUD generation
-- **[SurrealDB](https://surrealdb.com)** — multi-model database, embedded by default (no separate server) or pointed at a remote instance
+- **[SurrealDB](https://surrealdb.com)** — the default database, embedded (no separate server) or pointed at a remote instance. Storage goes through a swappable database adapter (see [Database adapters](#database-adapters))
 - **[EdgeJS](https://edgejs.dev)** — server-side template engine with file-based routing
 - **[Vite](https://vitejs.dev)** + **[Tailwind CSS v4](https://tailwindcss.com)** + **[Alpine.js](https://alpinejs.dev)** — frontend tooling
 
@@ -250,7 +250,7 @@ import orderPaid from "../events/order_paid";
 const order = makeModel("order", { /* ... */ });
 
 afterCreate(order, (record) => {
-  orderPaid.dispatch({ orderId: record.id.id, total: record.total });
+  orderPaid.dispatch({ orderId: record.id, total: record.total });
 });
 
 export default order;
@@ -502,6 +502,25 @@ export default defineConfig({
 ```
 
 `db.path` accepts either an embedded scheme — `rocksdb://<dir>` (default), `mem://` (in-memory, wiped on restart), `surrealkv://<dir>` — or a remote one — `ws://`, `wss://`, `http://`, `https://` — pointed at a running `surreal start` instance or SurrealDB Cloud. `db.auth` is only needed for a remote instance that requires it, and accepts either `{ username, password }` (root/system auth) or a bearer token string. Switching between embedded and remote is just a config/env change for `njin dev`/`njin start`; a compiled `njin build` binary bakes in whichever mode was resolved at build time (see below).
+
+### Database adapters
+
+The database sits behind an adapter (`adapters.db`), so njin is not tied to one engine. `db: { ... }` above is shorthand for the default adapter, SurrealDB. To construct it yourself, or to use another adapter:
+
+```ts
+import surrealAdapter from "@njinlabs/njin/adapters/surreal";
+
+adapters: {
+  db: surrealAdapter({ path: "rocksdb://data", namespace: "general", database: "general" }),
+},
+```
+
+An adapter implements the `DbAdapter` interface in [`src/core/db/contract.ts`](src/core/db/contract.ts) and can be checked against the shared contract tests in `tests/core/db/contract_suite.ts` (`describeAdapter(name, factory)`). Things every adapter guarantees:
+
+- **Record ids are plain strings** — `record.id` is `"abc123"`, never a `table:id` or a driver type. Relation and file fields take and return the same plain id.
+- `object()` fields are one-to-one and `array()` fields one-to-many — adapters keep them structured (a SQL adapter can flatten objects into columns and give arrays a child table) rather than storing opaque JSON.
+- `update()` is partial: only the keys you send change; an `object()` field is merged key by key, an `array()` or relation list is replaced whole.
+- Full-text search is the adapter's own business (`capabilities.search`); SurrealDB ranks with BM25 plus a containment boost.
 
 To store uploads in S3 (or an S3-compatible service like R2/Spaces/MinIO) instead:
 

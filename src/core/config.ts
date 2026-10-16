@@ -3,6 +3,8 @@ import type { AnyElysia } from "elysia";
 import type { DestinationStream, Level } from "pino";
 import type { FileAdapter } from "../modules/file";
 import bunFilesystemAdapter from "./adapters/bun_filesystem";
+import surrealAdapter from "./adapters/surreal";
+import type { DbAdapter } from "./db/contract";
 import type { Helper } from "./helper";
 import type { McpTool } from "./mcp_tool";
 import type { makeModel } from "./model";
@@ -133,6 +135,9 @@ export type NjinConfig = {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   adapters?: {
     file?: FileAdapter<any>;
+    // The database. Defaults to a SurrealDB adapter built from `db` above; set this to use
+    // another adapter instead (then `db` is ignored).
+    db?: DbAdapter;
   };
   models?: ModelFactory[];
   hooks?: HookFactory[];
@@ -161,7 +166,7 @@ export type ResolvedConfig = {
   };
   img: { hosts: string[] };
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  adapters: { file: FileAdapter<any> };
+  adapters: { file: FileAdapter<any>; db: DbAdapter };
   models: ModelFactory[];
   hooks: HookFactory[];
   events: EventFactory[];
@@ -216,6 +221,13 @@ export const loadConfig = async (preloaded?: NjinConfig): Promise<void> => {
 
   const plugins = userConfig.plugins ?? [];
 
+  const db = {
+    path: userConfig.db?.path ?? "rocksdb://data",
+    namespace: userConfig.db?.namespace ?? "general",
+    database: userConfig.db?.database ?? "general",
+    auth: userConfig.db?.auth,
+  };
+
   // Plugin-contributed models/vars/hooks/events/routes come first, then the project's
   // own — a plugin is the foundation being extended, so its registrations run first and
   // the project's own can build on top of (or follow) whatever the plugin set up. No
@@ -240,14 +252,12 @@ export const loadConfig = async (preloaded?: NjinConfig): Promise<void> => {
       ],
     },
     rootDir: userConfig.rootDir ?? process.cwd(),
-    db: {
-      path: userConfig.db?.path ?? "rocksdb://data",
-      namespace: userConfig.db?.namespace ?? "general",
-      database: userConfig.db?.database ?? "general",
-      auth: userConfig.db?.auth,
-    },
+    db,
     img: { hosts: userConfig.img?.hosts ?? [] },
-    adapters: { file: userConfig.adapters?.file ?? bunFilesystemAdapter() },
+    adapters: {
+      file: userConfig.adapters?.file ?? bunFilesystemAdapter(),
+      db: userConfig.adapters?.db ?? surrealAdapter(db),
+    },
     models: [
       ...plugins.flatMap((p) => p.models ?? []),
       ...(userConfig.models ?? []),

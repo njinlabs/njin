@@ -1,6 +1,5 @@
 import { describe, expect, it, mock } from "bun:test";
 import Elysia, { status } from "elysia";
-import { RecordId } from "surrealdb";
 import z from "zod";
 import * as realConfig from "../../src/core/config";
 import { defineTool } from "../../src/core/mcp_tool";
@@ -12,18 +11,17 @@ const records = new Map<string, Record<string, unknown>>();
 records.set("p1", { id: "p1", title: "Hello" });
 // A link that was written as an {id} object — njin stored it as an embedded stub, not a link.
 records.set("p4", { id: "p4", title: "Legacy", author: { id: "a1" } });
-records.set("p3", { id: new RecordId("post", "p3"), title: "Linked" });
+records.set("p3", { id: "p3", title: "Linked" });
 const readCalls: Record<string, unknown>[] = [];
 
 const authors = new Map([["a1", { id: "a1", name: "Ann" }]]);
 
-// What the real show() does with FETCH: a resolvable link becomes the related record, a
-// dangling one disappears from the row altogether (verified against embedded SurrealDB).
+// What the db adapter's populate does: a resolvable link becomes the related record, a
+// dangling one is left as its bare id (that is how callers tell the two apart).
 const expand = (record: Record<string, unknown>) => {
   if (typeof record.author !== "string") return record;
-  const { author, ...rest } = record;
-  const found = authors.get(author);
-  return found ? { ...rest, author: found } : rest;
+  const found = authors.get(record.author);
+  return found ? { ...record, author: found } : record;
 };
 
 const fakeModel = {
@@ -644,16 +642,16 @@ describe("embedded-stub detection", () => {
     expect(json()._warnings).toBeUndefined();
   });
 
-  it("does not mistake an unexpanded link (a RecordId) for a stub", async () => {
+  it("does not mistake an unexpanded link (a bare id that points at nothing) for a stub", async () => {
     records.set("p6", {
       id: "p6",
       title: "Raw link",
-      author: new RecordId("author", "a1"),
-      reviewers: [new RecordId("author", "a1")],
+      author: "ghost",
+      reviewers: ["ghost"],
     });
     const { json } = await callTool("get_record", { model: "post", id: "p6" });
 
-    expect(json().author).toBe("a1");
+    expect(json().author).toBe("ghost");
     expect(json()._warnings).toBeUndefined();
 
     const list = await callTool("read_records", { model: "post" });

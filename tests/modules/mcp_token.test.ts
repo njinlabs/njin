@@ -1,51 +1,18 @@
 import { describe, expect, it, mock } from "bun:test";
 import Elysia from "elysia";
-import { RecordId, type Table } from "surrealdb";
 import * as realConfig from "../../src/core/config";
+import { mcpTokenTable } from "../../src/core/db/internal";
 import * as realElysiaModule from "../../src/modules/elysia";
-import * as realSurrealModule from "../../src/modules/surreal";
 import { makeFakeAuthPlugin } from "../helpers/fake_auth";
 import { makeFakeElysia } from "../helpers/fake_elysia";
+import { useTestDb } from "../helpers/test_db";
 
-const tokens = new Map<string, Record<string, unknown>>();
-
-const fakeDb = {
-  select: async (target: RecordId | Table) => {
-    if (target instanceof RecordId) return tokens.get(String(target)) ?? null;
-    return [...tokens.values()];
-  },
-  create: (table: Table) => ({
-    content: async (data: Record<string, unknown>) => {
-      const id = new RecordId(table.name, `mcp${tokens.size + 1}`);
-      const record = { ...data, id };
-      tokens.set(String(id), record);
-      return [record];
-    },
-  }),
-  update: (id: RecordId) => ({
-    merge: async (data: Record<string, unknown>) => {
-      const record = { ...tokens.get(String(id)), ...data };
-      tokens.set(String(id), record);
-      return record;
-    },
-  }),
-  delete: async (id: RecordId) => {
-    tokens.delete(String(id));
-    return {};
-  },
-};
+const db = await useTestDb();
 
 // publicBase() reads config for the 401's resource_metadata pointer.
 mock.module("../../src/core/config", () => ({
   ...realConfig,
   getConfig: () => ({ publicUrl: "https://site.example" }),
-}));
-
-// Spreading real exports — without --isolate, mock.module() replaces the module in a
-// registry shared across the whole test run, so a partial mock would break other files.
-mock.module("../../src/modules/surreal", () => ({
-  ...realSurrealModule,
-  default: () => fakeDb,
 }));
 
 mock.module("../../src/modules/auth", () => ({
@@ -99,10 +66,10 @@ describe("POST /api/mcp-token", () => {
 
     expect(res.status).toBe(200);
     expect(data.name).toBe("Claude Desktop");
-    expect(data.token).toMatch(/^mcp:mcp\d+:.{40,}$/);
+    expect(data.token).toMatch(/^mcp:[^:]+:.{40,}$/);
     expect(data.hash).toBeUndefined();
 
-    const stored = tokens.get(String(new RecordId("mcp_token", data.id!)))!;
+    const stored = (await db.adapter.find(mcpTokenTable, data.id!))!;
     const plain = data.token!.split(":")[2]!;
     expect(stored.hash).toBe(
       new Bun.CryptoHasher("sha256").update(plain).digest("hex"),
@@ -212,7 +179,7 @@ describe("401 discovery pointer", () => {
 });
 
 describe("OAuth-issued tokens", () => {
-  const userId = new RecordId("user", "u1");
+  const userId = "u1";
 
   const issue = () =>
     issueOAuthTokens({ name: "Claude", clientId: "client1", userId });
@@ -229,9 +196,7 @@ describe("OAuth-issued tokens", () => {
   it("rejects an expired access token", async () => {
     const issued = await issue();
     const id = issued.access_token.split(":")[1]!;
-    const key = String(new RecordId("mcp_token", id));
-    tokens.set(key, {
-      ...tokens.get(key),
+    await db.adapter.update(mcpTokenTable, id, {
       expiresAt: new Date(Date.now() - 1000).toISOString(),
     });
 
@@ -257,9 +222,7 @@ describe("OAuth-issued tokens", () => {
   it("refuses a refresh token whose lifetime ran out", async () => {
     const issued = await issue();
     const id = issued.refresh_token.split(":")[1]!;
-    const key = String(new RecordId("mcp_token", id));
-    tokens.set(key, {
-      ...tokens.get(key),
+    await db.adapter.update(mcpTokenTable, id, {
       refreshExpiresAt: new Date(Date.now() - 1000).toISOString(),
     });
 

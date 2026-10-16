@@ -1,5 +1,4 @@
 import { describe, expect, it } from "bun:test";
-import { RecordId } from "surrealdb";
 import z from "zod";
 import { makeModel } from "../../../../src/core/model";
 import { relationMany } from "../../../../src/core/model/data_type/relation_many";
@@ -12,29 +11,18 @@ const target = makeModel("relation_many_test_target", {
 });
 
 describe("relationMany", () => {
-  it("transforms an array of string ids into RecordId instances", () => {
-    const result = relationMany({ label: "Tags" }, target).parse([
+  it("keeps an array of string ids as plain string ids", () => {
+    expect(relationMany({ label: "Tags" }, target).parse(["a", "b"])).toEqual([
       "a",
       "b",
-    ]) as unknown[];
-    expect(result).toHaveLength(2);
-    expect(result[0]).toBeInstanceOf(RecordId);
+    ]);
   });
 
   it("wraps a single non-array value into a one-item array", () => {
     const result = relationMany({ label: "Tags" }, target).parse(
       "solo",
     ) as unknown[];
-    expect(result).toHaveLength(1);
-    expect(result[0]).toBeInstanceOf(RecordId);
-  });
-
-  it("accepts existing RecordId instances in the array", () => {
-    const result = relationMany({ label: "Tags" }, target).parse([
-      new RecordId(target.table, "abc"),
-    ]) as RecordId[];
-    expect(result[0]).toBeInstanceOf(RecordId);
-    expect(String(result[0]!.id)).toBe("abc");
+    expect(result).toEqual(["solo"]);
   });
 
   it("passes an embedded object through unchanged instead of linking it", () => {

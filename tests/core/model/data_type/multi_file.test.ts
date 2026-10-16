@@ -1,5 +1,4 @@
 import { beforeAll, describe, expect, it } from "bun:test";
-import { RecordId } from "surrealdb";
 import { loadConfig } from "../../../../src/core/config";
 import { multiFile } from "../../../../src/core/model/data_type/multi_file";
 import elysia from "../../../../src/modules/elysia";
@@ -13,13 +12,11 @@ beforeAll(async () => {
 });
 
 describe("multiFile", () => {
-  it("transforms an array of string ids into RecordId instances", () => {
-    const result = multiFile({ label: "Gallery" }).parse([
+  it("keeps an array of string ids as plain string ids", () => {
+    expect(multiFile({ label: "Gallery" }).parse(["a", "b"])).toEqual([
       "a",
       "b",
-    ]) as unknown[];
-    expect(result).toHaveLength(2);
-    expect(result[0]).toBeInstanceOf(RecordId);
+    ]);
   });
 
   it("wraps a single non-array value into a one-item array", () => {

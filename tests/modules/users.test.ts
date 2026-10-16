@@ -1,5 +1,4 @@
 import { describe, expect, it, mock } from "bun:test";
-import { RecordId } from "surrealdb";
 import z from "zod";
 import realUserModel from "../../src/models/user";
 import * as realElysiaModule from "../../src/modules/elysia";
@@ -14,7 +13,7 @@ const userValidation = z.object({
 
 const records = new Map<string, Record<string, unknown>>();
 const alice = {
-  id: new RecordId("user", "u1"),
+  id: "u1",
   name: "Alice",
   email: "alice@example.com",
   password: "hashed",
@@ -31,20 +30,20 @@ const fakeDb = {
       meta: { total: records.size, page: 1, limit: 20, pageCount: 1 },
     };
   },
-  select: async (id: RecordId) => records.get(String(id)) ?? null,
+  select: async (id: string) => records.get(String(id)) ?? null,
   create: async (data: Record<string, unknown>) => {
-    const id = new RecordId("user", `u${records.size + 1}`);
+    const id = `u${records.size + 1}`;
     const record = { ...data, id };
     records.set(String(id), record);
     return record;
   },
-  update: async (id: RecordId, data: Record<string, unknown>) => {
+  update: async (id: string, data: Record<string, unknown>) => {
     const existing = records.get(String(id)) ?? {};
     const record = { ...existing, ...data, id };
     records.set(String(id), record);
     return record;
   },
-  destroy: async (id: RecordId) => {
+  destroy: async (id: string) => {
     const record = records.get(String(id)) ?? { id };
     records.delete(String(id));
     return record;
@@ -64,11 +63,11 @@ mock.module("../../src/models/user", () => ({
     ...realUserModel,
     validation: userValidation,
     read: fakeDb.read,
-    show: (id: string) => fakeDb.select(new RecordId("user", id)),
+    show: (id: string) => fakeDb.select(id),
     create: fakeDb.create,
     update: (id: string, data: Record<string, unknown>) =>
-      fakeDb.update(new RecordId("user", id), data),
-    destroy: (id: string) => fakeDb.destroy(new RecordId("user", id)),
+      fakeDb.update(id, data),
+    destroy: (id: string) => fakeDb.destroy(id),
   },
 }));
 
@@ -184,7 +183,7 @@ describe("PUT /api/user/:id", () => {
 
 describe("DELETE /api/user/:id", () => {
   it("refuses to let a user delete their own account", async () => {
-    // The fake auth plugin resolves `user.id.id` to "fixeduser1" — see tests/helpers/fake_auth.ts.
+    // The fake auth plugin resolves `user.id` to "fixeduser1" — see tests/helpers/fake_auth.ts.
     const res = await app.handle(
       new Request("http://localhost/api/user/fixeduser1", {
         method: "DELETE",

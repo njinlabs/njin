@@ -378,7 +378,7 @@ const view = makeModule(() => {
     elysia().use(controller);
 
     return {
-      // Warming queries the database, whose tables only exist once surreal's spin() has run —
+      // Warming queries the database, whose tables only exist once the db module's spin() has run —
       // so it can't happen in init(). Fire-and-forget: it must not delay the server coming up.
       spin: () => {
         if (!isDev) void warmStatic();
