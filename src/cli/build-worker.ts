@@ -9,6 +9,16 @@ console.log("Building worker for production...\n");
 
 await stageBuildAssets(root, outDir);
 
+// The database adapter says which packages it needs left out of the bundle — this command
+// doesn't know which database is in use.
+const { loadConfig, getConfig } = await import("../core/config");
+await loadConfig();
+const dbBuild = await getConfig().adapters.db.build?.({
+  target: "worker",
+  outDir,
+  log: console.log,
+});
+
 // Unlike `njin build`, this targets `bun out/worker.js` (or `new Worker("out/worker.js")`)
 // running from inside the project tree (not a self-contained binary), so node_modules is
 // always reachable via Bun's normal upward directory resolution — no need for build.ts's
@@ -66,22 +76,23 @@ await boot();
     // logger/Sentry report src/*.ts paths and lines instead of worker.js:12:33.
     sourcemap: "inline",
     // @njinlabs/njin's own source bundles directly into worker.js (see the comment in the
-    // generated entry above for why) — only the two packages that genuinely can't survive
+    // generated entry above for why) — only the packages that genuinely can't survive
     // bundling stay external, same reasoning build.ts already documents for its own build:
     // vite is dev-only (dead code once NODE_ENV is baked in as "production" below, but its own
-    // internal lazy import("esbuild") isn't installed as a real dependency) and @surrealdb/node
-    // is a native binding whose loader resolves its .node file relative to its own real
-    // file location — bundled, that location would become worker.js's, breaking the lookup.
+    // internal lazy import("esbuild") isn't installed as a real dependency), and the database
+    // adapter names whatever it can't have bundled (a native binding resolves its .node file
+    // relative to its own real file location — bundled, that location would become worker.js's).
     // geoip-lite is external for a related reason: it resolves its .dat files via
     // path.resolve(__dirname, '../data/'), and Bun bakes __dirname into bundled output as the
     // literal build-time path (see build.ts) — fine on the exact machine that ran this build,
     // but not guaranteed if out/ is copied elsewhere before running. Staying external keeps
     // its own real file location intact.
-    // Unlike build.ts's compiled-binary case, none of these three need a copy/patch step here:
+    // Unlike build.ts's compiled-binary case, none of these need a copy/patch step here:
     // worker.js still runs from inside a real project tree, so external resolution just finds
-    // the real node_modules/{vite,@surrealdb/node,geoip-lite} (vite is dev only, never
+    // the real node_modules (vite is dev only, never
     // actually reached).
-    external: ["vite", "@surrealdb/node", "geoip-lite"],
+    external: ["vite", "geoip-lite", ...(dbBuild?.external ?? [])],
+    plugins: [...(dbBuild?.plugins ?? [])],
     define: {
       "process.env.NODE_ENV": JSON.stringify("production"),
     },

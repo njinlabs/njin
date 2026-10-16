@@ -2,6 +2,7 @@ import { cp, mkdir, rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { BunPlugin } from "bun";
+import type { DbAdapter } from "../core/db/contract";
 import { stageBuildAssets } from "./build-assets";
 
 const root = process.cwd();
@@ -11,102 +12,25 @@ console.log("Building for production...\n");
 
 await stageBuildAssets(root, outDir);
 
-// adapters/surreal.ts only imports @surrealdb/node dynamically, on the embedded-db.path branch — so a
-// project whose resolved db.path is remote (ws/wss/http/https) never needs its native binding
-// at all. We resolve the project's own config here (same file loadConfig() reads from
-// process.cwd() at runtime) to decide, at build time, whether to bundle it.
+// The database adapter says what the build needs from it (native bindings to copy, packages to
+// keep out of the bundle, bundler patches) — this command doesn't know which database is in use.
+// We resolve the project's own config here (same file loadConfig() reads from process.cwd() at
+// runtime) to get at the adapter it configures.
 const { loadConfig, getConfig } = await import("../core/config");
-const { isRemotePath } = await import("../core/adapters/surreal");
+await loadConfig();
 
-// If the project's config.ts can't be resolved here (missing, throws, or its db.path depends
-// on an env var not set at build time), default to embedded — the binding just goes unused in
-// a genuinely remote deployment, same as today, rather than risking a binary that can't do
-// embedded mode if the env var resolves differently at runtime than it did at build time.
-let isRemoteBuild = false;
+let dbBuild: Awaited<ReturnType<NonNullable<DbAdapter["build"]>>>;
 try {
-  await loadConfig();
-  // Another adapter brings its own driver, so the embedded SurrealDB binding is dead weight
-  // there just as it is for a remote path.
-  isRemoteBuild =
-    getConfig().adapters.db.name !== "surreal" ||
-    isRemotePath(getConfig().db.path);
-} catch {
-  isRemoteBuild = false;
-}
-
-// adapters/surreal.ts's dynamic import() of @surrealdb/node is still literal-specifier, so Bun's
-// bundler would otherwise trace and embed it regardless of which branch runs at runtime. Its
-// loader resolves the platform .node file via `const require = createRequire(import.meta.url);
-// require("./surrealdb-node.<platform>.node")` — using a local `require` value rather than the
-// literal CJS keyword means Bun's bundler never statically recognizes that call as an import to
-// resolve/embed, so when the package IS bundled it survives untouched and then fails at runtime
-// in a compiled binary (no real filesystem path next to `import.meta.url` to load it from). So
-// for an embedded build, instead of embedding it, the matching platform binary is copied next
-// to the executable as a plain file, and a build plugin patches the loader's source to read
-// from there (via `process.execPath`'s directory) at runtime. For a remote build, the package
-// is excluded from the bundle entirely (see `external` below) since that branch is unreachable.
-const NATIVE_FILE: Record<string, string> = {
-  "win32-x64": "surrealdb-node.win32-x64-msvc.node",
-  "win32-arm64": "surrealdb-node.win32-arm64-msvc.node",
-  "darwin-x64": "surrealdb-node.darwin-x64.node",
-  "darwin-arm64": "surrealdb-node.darwin-arm64.node",
-  // musl isn't detected here (njin build doesn't cross-compile); glibc is assumed on Linux.
-  "linux-x64": "surrealdb-node.linux-x64-gnu.node",
-  "linux-arm64": "surrealdb-node.linux-arm64-gnu.node",
-};
-
-let surrealNativePlugin: BunPlugin | undefined;
-if (isRemoteBuild) {
-  console.log(
-    "• Remote db.path detected — skipping @surrealdb/node native binding",
+  dbBuild = await getConfig().adapters.db.build?.({
+    target: "compile",
+    outDir,
+    log: console.log,
+  });
+} catch (error) {
+  console.error(
+    `\n✗ ${error instanceof Error ? error.message : String(error)}`,
   );
-} else {
-  const nativeFile = NATIVE_FILE[`${process.platform}-${process.arch}`];
-  if (!nativeFile) {
-    console.error(
-      `\n✗ Unsupported platform for @surrealdb/node: ${process.platform}-${process.arch}`,
-    );
-    process.exit(1);
-  }
-
-  const surrealNodeDistDir = dirname(
-    fileURLToPath(import.meta.resolve("@surrealdb/node")),
-  );
-  const bindingsDir = join(outDir, "bindings");
-  await mkdir(bindingsDir, { recursive: true });
-  await cp(join(surrealNodeDistDir, nativeFile), join(bindingsDir, nativeFile));
-  console.log(`✓ Copied native binding -> out/bindings/${nativeFile}`);
-
-  surrealNativePlugin = {
-    name: "surrealdb-native-binding",
-    setup(build) {
-      build.onLoad({ filter: /surrealdb-node\.mjs$/ }, async (args) => {
-        const original = await Bun.file(args.path).text();
-        const marker = "const require = createRequire(import.meta.url);";
-        if (!original.includes(marker)) {
-          throw new Error(
-            "@surrealdb/node's loader shape changed — expected createRequire marker not found",
-          );
-        }
-        // Wrap `require` so the host platform's own .node lookup is redirected to the copy in
-        // out/bindings/; every other platform's file and the optional sibling npm packages fall
-        // through to the real require() and fail exactly as they would unpatched (still recorded
-        // in the loader's own loadErrors, so a genuinely missing binding still throws clearly).
-        const patched = original.replace(
-          marker,
-          `const __realRequire = createRequire(import.meta.url);
-const require = (specifier) => {
-  if (specifier === ${JSON.stringify(`./${nativeFile}`)}) {
-    const path = __realRequire("node:path");
-    return __realRequire(path.join(path.dirname(process.execPath), "bindings", ${JSON.stringify(nativeFile)}));
-  }
-  return __realRequire(specifier);
-};`,
-        );
-        return { contents: patched, loader: "js" };
-      });
-    },
-  };
+  process.exit(1);
 }
 
 // Generated build entry — a static, literal import of the project's config.ts so
@@ -122,8 +46,8 @@ const require = (specifier) => {
 // geoip-lite resolves its .dat files via path.resolve(__dirname, '../data/') at module-load
 // time. Bun bakes __dirname into bundled output as the literal build-time path, so a compiled
 // binary still points at node_modules/geoip-lite/data on the machine that ran `njin build` —
-// which won't exist wherever the binary is actually deployed. Same fix shape as the SurrealDB
-// native binding above: ship the data dir next to the executable and patch the lookup.
+// which won't exist wherever the binary is actually deployed. Same fix shape as a database
+// adapter's native binding: ship the data dir next to the executable and patch the lookup.
 // Only the country .dat files are shipped — analytics.ts only ever reads the `country` field,
 // and geoip-lite falls back to country-only mode automatically when the (much larger, ~100MB)
 // city .dat files are absent, keeping the buffers it preloads into memory at startup small.
@@ -198,13 +122,10 @@ printBanner({ mode: "production" });
     // paths instead of positions inside the bundle.
     sourcemap: "inline",
     // vite is dev-only (view.ts gates it behind `if (isDev)`, dead in production) — bundling
-    // it would also drag in its own internal (not-installed) lazy `import("esbuild")`. Same
-    // reasoning for @surrealdb/node on a remote build — adapters/surreal.ts's dynamic import of it is
-    // unreachable when db.path is remote, so it's safe to leave unresolved.
-    external: isRemoteBuild ? ["vite", "@surrealdb/node"] : ["vite"],
-    plugins: [surrealNativePlugin, geoipDataPlugin].filter(
-      (p): p is BunPlugin => p !== undefined,
-    ),
+    // it would also drag in its own internal (not-installed) lazy `import("esbuild")`. The
+    // database adapter adds whatever else it can't have bundled.
+    external: ["vite", ...(dbBuild?.external ?? [])],
+    plugins: [...(dbBuild?.plugins ?? []), geoipDataPlugin],
     // The CLI's `bun build --compile` implicitly inlines process.env.NODE_ENV as "production";
     // the Bun.build() JS API doesn't, so view.ts's top-level `isDev` check would otherwise read
     // undefined and take the dev branch (importing the externalized, not-on-disk `vite`).
@@ -221,11 +142,11 @@ printBanner({ mode: "production" });
 
   console.log(`\n✓ Compiled server -> out/${exeName}`);
   console.log(
-    isRemoteBuild
-      ? "\nNote: out/geoip-data/ must ship alongside the executable — it holds the geoip-lite " +
-          "database loaded at runtime. No native SurrealDB binding was bundled (remote db.path)."
-      : "\nNote: out/bindings/ and out/geoip-data/ must ship alongside the executable — they hold " +
-          "the native SurrealDB binding and the geoip-lite database loaded at runtime.",
+    [
+      "\nNote: out/geoip-data/ must ship alongside the executable — it holds the geoip-lite " +
+        "database loaded at runtime.",
+      ...(dbBuild?.notes ?? []),
+    ].join("\n"),
   );
   console.log(`\nRun it with:\n  cd out && ./${exeName}`);
 } finally {

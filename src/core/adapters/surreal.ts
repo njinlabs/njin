@@ -352,6 +352,15 @@ export const surrealAdapter = (
       await db.close();
     },
 
+    async build(ctx) {
+      // Imported through a variable so the bundler doesn't trace this build-only helper (and
+      // the filesystem code in it) into an application's runtime bundle — it only ever runs
+      // from source, inside the build commands.
+      const helper = "./surreal_build";
+      const { surrealBuild } = await import(helper);
+      return surrealBuild(isRemotePath(path), ctx);
+    },
+
     async sync(tables) {
       const names = new Set(tables.map((t) => ident(t.name)));
 
