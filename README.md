@@ -522,6 +522,42 @@ An adapter implements the `DbAdapter` interface in [`src/core/db/contract.ts`](s
 - `update()` is partial: only the keys you send change; an `object()` field is merged key by key, an `array()` or relation list is replaced whole.
 - Full-text search is the adapter's own business (`capabilities.search`); SurrealDB ranks with BM25 plus a containment boost.
 
+#### PostgreSQL
+
+```bash
+bun add drizzle-orm
+```
+
+```ts
+import postgresAdapter from "@njinlabs/njin/adapters/postgres";
+
+adapters: {
+  db: postgresAdapter({ url: process.env.DATABASE_URL! }),
+},
+```
+
+It runs on [Drizzle](https://orm.drizzle.team), so instead of `url` you can hand it any Drizzle PG database (node-postgres, postgres-js, pglite, ...) through `connect: () => ({ db, close })`. `schema: "tenant_1"` puts every table in that schema (it must already exist).
+
+Tables are created and migrated automatically on boot, and the data is stored as real, queryable columns — not JSON:
+
+| Model field | In Postgres |
+| --- | --- |
+| `text`, `richtext`, `email`, `select` | `text` column |
+| `numeric` / `boolean` / `date` | `double precision` / `boolean` / `timestamptz` column |
+| `relation()` / `file()` | a `text` column holding the target id (indexed, no foreign key) |
+| `object()` | its fields flattened into columns on the same table (`seo__title`) |
+| `array()` | a child table `post__tags (_id, _owner, _parent, _pos, value ...)`, one row per element |
+| `relationMany()` / `multiFile()` | a pivot table `post__categories (_parent, _pos, target)` |
+| `z.any()`, `z.record()` and other shapeless types | the only `jsonb` columns |
+
+- **Migrations only add.** A new field becomes a new column or table; nothing is ever dropped or retyped, so removing a field leaves its column (and data) in place. The applied layout is recorded in `njin_schema_meta`, so a warm boot skips all DDL.
+- **Ids** are UUIDv7 strings; datetimes are `timestamptz` and still come out as ISO-8601 strings.
+- **Search** uses the `pg_trgm` extension (substring match plus typo-tolerant ranking) when the database lets it be created, and falls back to plain substring matching otherwise.
+- Filters, sorting and search work on top-level fields; an element of an `array()` or `relationMany()` can be matched with `$in`.
+- An `object()` whose every field is empty reads back as `null` — it is stored as columns, so it can't be told apart from an absent one.
+
+The adapter is checked against the same contract suite as SurrealDB (`bun test tests/core/db`, on an in-process Postgres), and the whole test suite can be run on it with `NJIN_TEST_ADAPTER=postgres bun test --isolate`. To run the contract suite against a real server: `NJIN_TEST_POSTGRES_URL=postgres://user:pass@host/db bun test tests/core/db/postgres_server.test.ts` (it only creates and drops schemas of its own).
+
 To store uploads in S3 (or an S3-compatible service like R2/Spaces/MinIO) instead:
 
 ```ts

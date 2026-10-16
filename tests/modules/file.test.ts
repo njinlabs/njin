@@ -25,7 +25,18 @@ const unlinkCalls: unknown[] = [];
 
 // The file table, standing in for models/file.ts (which reads the configured file adapter at
 // import time) — a real in-memory database sits behind it.
-const fileDef: TableDef = { name: "file", fields: [], search: [] };
+// The columns models/file.ts declares.
+const fileDef: TableDef = {
+  name: "file",
+  fields: [
+    { kind: "scalar", name: "name", type: "string" },
+    { kind: "scalar", name: "size", type: "number" },
+    { kind: "scalar", name: "type", type: "string" },
+    { kind: "scalar", name: "url", type: "string" },
+    { kind: "scalar", name: "meta", type: "json" },
+  ],
+  search: [],
+};
 const db = await useTestDb([fileDef]);
 
 mock.module("../../src/models/file", () => ({

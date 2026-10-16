@@ -36,7 +36,12 @@ const setValidToken = async (id = "tok-valid") => {
   const plainToken = "plain-token-value";
   await db.adapter.insert(
     tokenTable,
-    { hash: hashOf(plainToken), user: alice.id, createdAt: "", updatedAt: "" },
+    {
+      hash: hashOf(plainToken),
+      user: alice.id,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    },
     { id },
   );
   return `token:${id}:${plainToken}`;

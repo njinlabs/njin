@@ -211,6 +211,10 @@ export interface DbAdapter {
   readonly name: string;
   readonly capabilities: AdapterCapabilities;
 
+  // A one-line, human-readable summary for the startup banner ("localhost:5432/app (public)").
+  // Must not contain credentials. Falls back to `name` when an adapter has nothing to add.
+  describe?(): string;
+
   // Connect. Called once from the db module's init(), before anything else.
   connect(): Promise<void>;
   close(): Promise<void>;
