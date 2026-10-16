@@ -38,8 +38,10 @@ import {
 
 type Executor = { execute(query: SQL): PromiseLike<unknown> };
 
+// A database or a transaction: both can run statements and open a (nested) transaction, which
+// is a savepoint inside one.
 export type PgDb = Executor & {
-  transaction<T>(fn: (tx: Executor) => Promise<T>): Promise<T>;
+  transaction<T>(fn: (tx: PgDb) => Promise<T>): Promise<T>;
 };
 
 type Connection = {
@@ -76,6 +78,18 @@ const SQL_TYPE: Record<ScalarType, string> = {
   datetime: "timestamptz",
   json: "jsonb",
 };
+
+// What information_schema reports for each of the above.
+const DATA_TYPE: Record<ScalarType, string> = {
+  string: "text",
+  number: "double precision",
+  boolean: "boolean",
+  datetime: "timestamp with time zone",
+  json: "jsonb",
+};
+
+// Serialises schema changes across processes (njin runs several workers against one database).
+const SCHEMA_LOCK = "njin:schema";
 
 const STANDARD_DATETIMES = ["createdAt", "updatedAt"] as const;
 const standardColumns: Column[] = STANDARD_DATETIMES.map((name) => ({
@@ -809,107 +823,136 @@ export const postgresAdapter = (
   const qualified = (name: string) =>
     config.schema ? `${quote(config.schema)}.${quote(name)}` : quote(name);
 
-  const ddl = async (statement: string) => {
-    await db.execute(sql.raw(statement));
+  const ddl = async (x: Executor, statement: string) => {
+    await x.execute(sql.raw(statement));
   };
 
   const columnDef = (c: { name: string; type: ScalarType }) =>
     `${quote(c.name)} ${SQL_TYPE[c.type]}`;
 
-  const ensureTable = async (
-    table: string,
-    primary: string,
-    columns: { name: string; type: ScalarType; unique?: boolean }[],
-    indexes: string[][],
-    extraSql: string[] = [],
-  ) => {
-    const first = columns.filter((c) => c.name === primary);
+  // One physical table of a plan, described independently of how it is created or checked, so
+  // the migration and the post-migration type check can't drift apart.
+  type PhysicalTable = {
+    name: string;
+    // The primary key column, or undefined when the table has none (pivots).
+    primary?: string;
+    columns: { name: string; type: ScalarType; unique?: boolean }[];
+    indexes: string[][];
+  };
+
+  const childColumns = (): PhysicalTable["columns"] => [
+    { name: "_id", type: "string" },
+    { name: "_owner", type: "string" },
+    { name: "_parent", type: "string" },
+    { name: "_pos", type: "number" },
+  ];
+
+  const pivotTable = (pivot: Pivot): PhysicalTable => ({
+    name: pivot.table,
+    columns: [
+      { name: "_owner", type: "string" },
+      { name: "_parent", type: "string" },
+      { name: "_pos", type: "number" },
+      { name: "target", type: "string" },
+    ],
+    indexes: [["_owner"], ["_parent", "_pos"], ["target"]],
+  });
+
+  const arrayTables = (array: ArrayPlan): PhysicalTable[] => [
+    {
+      name: array.table,
+      primary: "_id",
+      columns: [
+        ...childColumns(),
+        ...array.columns.map((c) => ({ name: c.name, type: c.type })),
+      ],
+      indexes: [
+        ["_owner"],
+        ["_parent", "_pos"],
+        ...array.columns.filter((c) => c.link).map((c) => [c.name]),
+      ],
+    },
+    ...array.pivots.map(pivotTable),
+    ...array.arrays.flatMap(arrayTables),
+  ];
+
+  const physicalTables = (plan: TablePlan): PhysicalTable[] => [
+    {
+      name: plan.name,
+      primary: "id",
+      columns: [
+        { name: "id", type: "string" },
+        { name: "createdAt", type: "datetime" },
+        { name: "updatedAt", type: "datetime" },
+        ...plan.columns,
+        ...(plan.document ? [{ name: "data", type: "json" as const }] : []),
+      ],
+      indexes: plan.columns.filter((c) => c.link).map((c) => [c.name]),
+    },
+    ...plan.pivots.map(pivotTable),
+    ...plan.arrays.flatMap(arrayTables),
+  ];
+
+  // A statement that is allowed to fail without failing the migration. Inside a transaction a
+  // failed statement poisons everything after it, so it runs in a savepoint.
+  const attempt = async (x: Executor, run: (x: Executor) => Promise<void>) => {
+    try {
+      await (x as PgDb).transaction(run);
+      return undefined;
+    } catch (error) {
+      return error instanceof Error ? error.message : String(error);
+    }
+  };
+
+  const ensureTable = async (x: Executor, table: PhysicalTable) => {
     await ddl(
-      `create table if not exists ${qualified(table)} (${[
-        ...first.map((c) => `${columnDef(c)} primary key`),
-        ...columns.filter((c) => c.name !== primary).map(columnDef),
-        ...extraSql,
+      x,
+      `create table if not exists ${qualified(table.name)} (${[
+        ...table.columns
+          .filter((c) => c.name === table.primary)
+          .map((c) => `${columnDef(c)} primary key`),
+        ...table.columns.filter((c) => c.name !== table.primary).map(columnDef),
       ].join(", ")})`,
     );
     // Additive migration: any column the table doesn't have yet is added; nothing is dropped
-    // or retyped.
-    for (const c of columns) {
+    // or retyped (a column whose type no longer matches is reported by checkColumnTypes()).
+    for (const c of table.columns) {
       await ddl(
-        `alter table ${qualified(table)} add column if not exists ${columnDef(c)}`,
+        x,
+        `alter table ${qualified(table.name)} add column if not exists ${columnDef(c)}`,
       );
     }
-    for (const index of indexes) {
+    for (const index of table.indexes) {
       await ddl(
-        `create index if not exists ${quote(physicalName(`idx_${table}_${index.join("_")}`))} on ${qualified(table)} (${index.map(quote).join(", ")})`,
+        x,
+        `create index if not exists ${quote(physicalName(`idx_${table.name}_${index.join("_")}`))} on ${qualified(table.name)} (${index.map(quote).join(", ")})`,
       );
     }
-    for (const c of columns) {
+    for (const c of table.columns) {
       if (!c.unique) continue;
-      try {
-        await ddl(
-          `create unique index if not exists ${quote(physicalName(`uq_${table}_${c.name}`))} on ${qualified(table)} (${quote(c.name)})`,
-        );
-      } catch (error) {
+      const failure = await attempt(x, (sp) =>
+        ddl(
+          sp,
+          `create unique index if not exists ${quote(physicalName(`uq_${table.name}_${c.name}`))} on ${qualified(table.name)} (${quote(c.name)})`,
+        ),
+      );
+      if (failure) {
         console.warn(
-          `[njin] Could not enforce uniqueness of ${table}.${c.name} in the database (existing duplicates?): ${error instanceof Error ? error.message : String(error)}`,
+          `[njin] Could not enforce uniqueness of ${table.name}.${c.name} in the database (existing duplicates?): ${failure}`,
         );
       }
     }
   };
 
-  const ensurePlan = async (plan: TablePlan) => {
-    const columns: { name: string; type: ScalarType; unique?: boolean }[] = [
-      { name: "id", type: "string" },
-      { name: "createdAt", type: "datetime" },
-      { name: "updatedAt", type: "datetime" },
-      ...plan.columns,
-    ];
-    if (plan.document) columns.push({ name: "data", type: "json" });
+  const ensurePlan = async (x: Executor, plan: TablePlan) => {
+    for (const table of physicalTables(plan)) await ensureTable(x, table);
 
-    const linkColumns = plan.columns.filter((c) => c.link).map((c) => [c.name]);
-    await ensureTable(plan.name, "id", columns, linkColumns);
     if (plan.document) {
       await ddl(
+        x,
         `alter table ${qualified(plan.name)} alter column ${quote("data")} set default '{}'::jsonb`,
       );
     }
-
-    const ensureChild = async (array: ArrayPlan) => {
-      await ensureTable(
-        array.table,
-        "_id",
-        [
-          { name: "_id", type: "string" },
-          { name: "_owner", type: "string" },
-          { name: "_parent", type: "string" },
-          { name: "_pos", type: "number" },
-          ...array.columns.map((c) => ({ name: c.name, type: c.type })),
-        ],
-        [
-          ["_owner"],
-          ["_parent", "_pos"],
-          ...array.columns.filter((c) => c.link).map((c) => [c.name]),
-        ],
-      );
-      for (const pivot of array.pivots) await ensurePivot(pivot);
-      for (const child of array.arrays) await ensureChild(child);
-    };
-    const ensurePivot = async (pivot: Pivot) => {
-      await ensureTable(
-        pivot.table,
-        "_none",
-        [
-          { name: "_owner", type: "string" },
-          { name: "_parent", type: "string" },
-          { name: "_pos", type: "number" },
-          { name: "target", type: "string" },
-        ],
-        [["_owner"], ["_parent", "_pos"], ["target"]],
-      );
-    };
-
-    for (const array of plan.arrays) await ensureChild(array);
-    for (const pivot of plan.pivots) await ensurePivot(pivot);
 
     if (trigrams) {
       for (const target of plan.def.search) {
@@ -919,8 +962,45 @@ export const postgresAdapter = (
         );
         if (!column) continue;
         await ddl(
+          x,
           `create index if not exists ${quote(physicalName(`trgm_${plan.name}_${column.name}`))} on ${qualified(plan.name)} using gin (${quote(column.name)} gin_trgm_ops)`,
         );
+      }
+    }
+  };
+
+  // Migrations never retype a column, so when a field's type changes the column quietly keeps
+  // its old one — and data written or read through the new type goes wrong. Say so, loudly,
+  // on every boot until it is fixed by hand.
+  const warnedMismatches = new Set<string>();
+
+  const checkColumnTypes = async () => {
+    const rows = await rowsOf(
+      db,
+      sql`select table_name, column_name, data_type from information_schema.columns where table_schema = ${config.schema ?? sql`current_schema()`}`,
+    );
+    const actual = new Map(
+      rows.map((r) => [
+        `${r.table_name}.${r.column_name}`,
+        String(r.data_type),
+      ]),
+    );
+
+    for (const plan of plans.values()) {
+      for (const table of physicalTables(plan)) {
+        for (const c of table.columns) {
+          const key = `${table.name}.${c.name}`;
+          const found = actual.get(key);
+          const wanted = DATA_TYPE[c.type];
+          if (!found || found === wanted || warnedMismatches.has(key)) continue;
+
+          warnedMismatches.add(key);
+          console.warn(
+            `[njin] ${key} is "${found}" in the database but the model now says "${wanted}". ` +
+              "Migrations never retype a column, so it was left alone; convert it yourself, e.g. " +
+              `ALTER TABLE ${qualified(table.name)} ALTER COLUMN ${quote(c.name)} TYPE ${SQL_TYPE[c.type]} USING ${quote(c.name)}::${SQL_TYPE[c.type]};`,
+          );
+        }
       }
     }
   };
@@ -969,47 +1049,57 @@ export const postgresAdapter = (
       plans.clear();
       for (const table of tables) plans.set(table.name, planTable(table));
 
-      // Fuzzy search needs pg_trgm; without it (managed databases often restrict extensions)
-      // search still works, just as plain substring matching.
-      try {
-        await db.execute(sql`create extension if not exists pg_trgm`);
-        trigrams = true;
-      } catch {
-        trigrams = false;
-      }
+      // The whole migration is one transaction behind an advisory lock: several processes
+      // booting against the same database take turns (and the later ones find the schema
+      // already recorded and skip), and a failure halfway leaves nothing half-built.
+      await db.transaction(async (tx) => {
+        await tx.execute(
+          sql`select pg_advisory_xact_lock(hashtext(${SCHEMA_LOCK}))`,
+        );
 
-      const hash = createHash("sha256")
-        .update(
-          JSON.stringify({
-            version: LAYOUT_VERSION,
-            trigrams,
-            schema: config.schema ?? null,
-            tables: [...plans.values()].map((p) => ({
-              name: p.name,
-              columns: p.columns,
-              arrays: p.arrays,
-              pivots: p.pivots,
-              document: p.document,
-              search: p.def.search,
-            })),
-          }),
-        )
-        .digest("hex");
+        // Fuzzy search needs pg_trgm; without it (managed databases often restrict
+        // extensions) search still works, just as plain substring matching.
+        trigrams =
+          (await attempt(tx, (sp) =>
+            ddl(sp, "create extension if not exists pg_trgm"),
+          )) === undefined;
 
-      await ddl(
-        `create table if not exists ${qualified(SCHEMA_META_TABLE)} ("key" text primary key, "hash" text not null)`,
-      );
-      const [recorded] = await rowsOf(
-        db,
-        sql`select "hash" from ${tableRef(SCHEMA_META_TABLE)} where "key" = 'current'`,
-      );
-      if (recorded?.hash === hash) return;
+        const hash = createHash("sha256")
+          .update(
+            JSON.stringify({
+              version: LAYOUT_VERSION,
+              trigrams,
+              schema: config.schema ?? null,
+              tables: [...plans.values()].map((p) => ({
+                name: p.name,
+                columns: p.columns,
+                arrays: p.arrays,
+                pivots: p.pivots,
+                document: p.document,
+                search: p.def.search,
+              })),
+            }),
+          )
+          .digest("hex");
 
-      for (const plan of plans.values()) await ensurePlan(plan);
+        await ddl(
+          tx,
+          `create table if not exists ${qualified(SCHEMA_META_TABLE)} ("key" text primary key, "hash" text not null)`,
+        );
+        const [recorded] = await rowsOf(
+          tx,
+          sql`select "hash" from ${tableRef(SCHEMA_META_TABLE)} where "key" = 'current'`,
+        );
+        if (recorded?.hash === hash) return;
 
-      await db.execute(
-        sql`insert into ${tableRef(SCHEMA_META_TABLE)} ("key", "hash") values ('current', ${hash}) on conflict ("key") do update set "hash" = excluded."hash"`,
-      );
+        for (const plan of plans.values()) await ensurePlan(tx, plan);
+
+        await tx.execute(
+          sql`insert into ${tableRef(SCHEMA_META_TABLE)} ("key", "hash") values ('current', ${hash}) on conflict ("key") do update set "hash" = excluded."hash"`,
+        );
+      });
+
+      await checkColumnTypes();
     },
 
     async find(table, id, opts) {
