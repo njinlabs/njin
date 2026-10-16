@@ -743,3 +743,74 @@ describe("migration safety", () => {
     }
   });
 });
+
+describe("what a failure reveals", () => {
+  it("does not put the query or its parameters in the error that reaches logs", async () => {
+    const account: TableDef = {
+      name: "account",
+      fields: [str("email"), str("secret")],
+      search: [],
+    };
+    await adapter.sync([account]);
+    await adapter.insert(
+      account,
+      { email: "a@example.com", secret: "S3CRET-HASH" },
+      { id: "dup" },
+    );
+
+    const error = await adapter
+      .insert(
+        account,
+        { email: "victim@example.com", secret: "S3CRET-HASH" },
+        { id: "dup" },
+      )
+      .then(
+        () => undefined,
+        (e: unknown) => e as Error & Record<string, unknown>,
+      );
+
+    expect(error).toBeDefined();
+    const everything = `${error?.message} ${JSON.stringify(error, Object.getOwnPropertyNames(error as object))}`;
+    expect(everything).not.toContain("S3CRET-HASH");
+    expect(everything).not.toContain("victim@example.com");
+    expect(everything).not.toContain("insert into");
+    expect(error).not.toHaveProperty("params");
+    expect(error).not.toHaveProperty("query");
+
+    // Still enough to act on: what kind of failure it was.
+    expect(error?.name).toBe("DbError");
+    expect(error?.code).toBe("23505");
+  });
+
+  it("leaves errors that did not come from the driver untouched", async () => {
+    await expect(
+      adapter.insert(product, { title: "x", releasedAt: "not a date" }),
+    ).rejects.toThrow(/valid datetime/);
+  });
+});
+
+describe("free-form documents and hostile keys", () => {
+  it("keeps __proto__ in a document from changing the row's prototype", async () => {
+    const vars: TableDef = {
+      name: "vars",
+      fields: [],
+      search: [],
+      document: true,
+    };
+    await adapter.sync([vars]);
+
+    await adapter.upsert(
+      vars,
+      "general",
+      JSON.parse(
+        '{"siteName":"x","__proto__":{"polluted":true},"constructor":{"prototype":{"polluted":true}}}',
+      ),
+    );
+    const row = await adapter.find(vars, "general");
+
+    expect(({} as Record<string, unknown>).polluted).toBeUndefined();
+    expect(Object.getPrototypeOf(row)).toBe(Object.prototype);
+    expect((row as Record<string, unknown>).polluted).toBeUndefined();
+    expect(row?.siteName).toBe("x");
+  });
+});
