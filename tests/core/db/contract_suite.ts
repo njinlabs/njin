@@ -25,6 +25,8 @@ const post: TableDef = {
     { kind: "scalar", name: "status", type: "string" },
     { kind: "scalar", name: "views", type: "number" },
     { kind: "scalar", name: "published", type: "boolean" },
+    // Shapeless data (z.any(), z.record()): the one place a SQL adapter keeps JSON.
+    { kind: "scalar", name: "extra", type: "json" },
     { kind: "array", name: "tags", of: { kind: "scalar", type: "string" } },
     {
       kind: "object",
@@ -54,7 +56,15 @@ const post: TableDef = {
   ],
 };
 
-const ALL = [author, category, post];
+// A free-form document table, like njin's VARS groups.
+const settings: TableDef = {
+  name: "settings",
+  fields: [],
+  search: [],
+  document: true,
+};
+
+const ALL = [author, category, post, settings];
 
 let tick = 0;
 const stamp = () => {
@@ -507,6 +517,72 @@ export const describeAdapter = (
       });
     });
 
+    describe("shapeless and free-form data", () => {
+      const samples: unknown[] = [
+        { a: [1, "two", { three: 3 }], nested: { deep: { deeper: true } } },
+        "just a string",
+        'a "quoted" string with \\ and \n and unicode ✓',
+        42,
+        3.5,
+        true,
+        false,
+        [1, 2, 3],
+        [],
+        {},
+        '{"looks":"like json"}',
+      ];
+
+      it("round-trips any JSON value in a json field, unchanged and not double-encoded", async () => {
+        for (const sample of samples) {
+          const row = await mkPost({ extra: sample });
+          const found = await db.find(post, row.id);
+          expect(found?.extra).toEqual(sample);
+        }
+      });
+
+      it("clears a json field with null", async () => {
+        const row = await mkPost({ extra: { a: 1 } });
+        const updated = await db.update(post, row.id, { extra: null });
+        expect(updated?.extra ?? null).toBeNull();
+      });
+
+      it("keeps free-form documents: undeclared keys stored and read back, nested values intact", async () => {
+        const stamp = "2026-05-06T07:08:09.010Z";
+        await db.upsert(settings, "general", {
+          siteName: "My Site",
+          theme: { dark: true, accents: ["red", "blue"] },
+          maintenance: false,
+          updatedAt: stamp,
+        });
+
+        const found = await db.find(settings, "general");
+        expect(found).toMatchObject({
+          id: "general",
+          siteName: "My Site",
+          theme: { dark: true, accents: ["red", "blue"] },
+          maintenance: false,
+          updatedAt: stamp,
+        });
+      });
+
+      it("merges a document update key by key and leaves the rest", async () => {
+        await db.upsert(settings, "seo", { title: "T", description: "D" });
+        const merged = await db.upsert(settings, "seo", { title: "T2" });
+
+        expect(merged).toMatchObject({ title: "T2", description: "D" });
+        expect(await db.count(settings)).toBe(1);
+      });
+
+      it("keeps documents separate by id, and returns null for a missing one", async () => {
+        await db.upsert(settings, "a", { v: 1 });
+        await db.upsert(settings, "b", { v: 2 });
+
+        expect((await db.find(settings, "a"))?.v).toBe(1);
+        expect((await db.find(settings, "b"))?.v).toBe(2);
+        expect(await db.find(settings, "missing")).toBeNull();
+      });
+    });
+
     // Everything below feeds an adapter the kind of input an attacker controls and checks two
     // things: nothing is executed (the data is intact afterwards) and nothing is mistaken for
     // syntax (hostile text is stored and compared as plain text).
@@ -698,7 +774,8 @@ export const describeAdapter = (
         expect(({} as Record<string, unknown>).polluted).toBeUndefined();
         expect(Object.getPrototypeOf(found)).toBe(Object.prototype);
         expect(Object.getPrototypeOf(found?.seo)).toBe(Object.prototype);
-        expect((found?.items as { sku: string }[])[0]?.sku).toBe("a");
+        const items = (found?.items ?? []) as { sku: string }[];
+        expect(items[0]?.sku).toBe("a");
       });
     });
 

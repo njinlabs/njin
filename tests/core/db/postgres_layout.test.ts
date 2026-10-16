@@ -1,17 +1,14 @@
 import { afterAll, beforeEach, describe, expect, it, spyOn } from "bun:test";
 import { PGlite } from "@electric-sql/pglite";
 import { pg_trgm } from "@electric-sql/pglite/contrib/pg_trgm";
-import { PgDialect } from "drizzle-orm/pg-core";
-import { drizzle } from "drizzle-orm/pglite";
-import {
-  type PgDb,
-  postgresAdapter,
-} from "../../../src/core/adapters/postgres";
+import { postgresAdapter } from "../../../src/core/adapters/postgres";
+import type { SqlClient } from "../../../src/core/adapters/sql/builder";
 import type {
   DbAdapter,
   FieldDef,
   TableDef,
 } from "../../../src/core/db/contract";
+import { pgliteClient } from "../../helpers/pglite_client";
 
 // How the Postgres adapter lays data out physically — real columns, child tables and pivots
 // rather than JSON — and how it migrates. Behaviour through the DbAdapter interface is covered
@@ -34,10 +31,9 @@ const open = async (
   options: { schema?: string } = {},
 ) => {
   const name = options.schema ?? schema;
-  const target = drizzle(which);
   const created = postgresAdapter({
     schema: name,
-    connect: () => ({ db: target as never }),
+    connect: () => ({ client: pgliteClient(which) }),
   });
   await created.connect();
   return created;
@@ -560,7 +556,7 @@ describe("describe()", () => {
 
   it("says so when the connection is supplied by the caller", () => {
     expect(
-      postgresAdapter({ connect: () => ({ db: {} as never }) }).describe!(),
+      postgresAdapter({ connect: () => ({ client: {} as never }) }).describe!(),
     ).toBe("custom connection");
   });
 });
@@ -569,25 +565,25 @@ describe("describe()", () => {
 // Migration safety
 // ---------------------------------------------------------------------------------------
 
-const dialect = new PgDialect();
-
 // A database that reports every statement it runs and can be told to fail on some of them.
 const watched = (fail?: (statement: string) => boolean) => {
   const statements: string[] = [];
-  const wrap = (target: PgDb): PgDb => ({
-    execute: (query) => {
-      const text = dialect.sqlToQuery(query).sql;
+  const wrap = (target: SqlClient): SqlClient => ({
+    query: (text, params) => {
       statements.push(text);
-      if (fail?.(text))
-        throw new Error(`injected failure: ${text.slice(0, 60)}`);
-      return target.execute(query);
+      if (fail?.(text)) {
+        return Promise.reject(
+          new Error(`injected failure: ${text.slice(0, 60)}`),
+        );
+      }
+      return target.query(text, params);
     },
-    transaction: (fn) => target.transaction((tx) => fn(wrap(tx as PgDb))),
+    transaction: (fn) => target.transaction((tx) => fn(wrap(tx))),
   });
 
   const created = postgresAdapter({
     schema,
-    connect: () => ({ db: wrap(drizzle(client) as unknown as PgDb) }),
+    connect: () => ({ client: wrap(pgliteClient(client)) }),
   });
   return { adapter: created, statements };
 };

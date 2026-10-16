@@ -1,8 +1,8 @@
 import { afterAll } from "bun:test";
 import { PGlite } from "@electric-sql/pglite";
 import { pg_trgm } from "@electric-sql/pglite/contrib/pg_trgm";
-import { drizzle } from "drizzle-orm/pglite";
 import { postgresAdapter } from "../../../src/core/adapters/postgres";
+import { pgliteClient } from "../../helpers/pglite_client";
 import { describeAdapter } from "./contract_suite";
 
 // An in-process Postgres (PGlite, with pg_trgm) so the shared contract suite runs against real
@@ -10,7 +10,7 @@ import { describeAdapter } from "./contract_suite";
 // one instance is shared and every test gets a schema of its own (which also exercises the
 // adapter's `schema` option).
 const client = new PGlite({ extensions: { pg_trgm } });
-const db = drizzle(client);
+const db = pgliteClient(client);
 
 afterAll(async () => {
   await client.close();
@@ -27,7 +27,7 @@ describeAdapter("postgres (pglite)", () => {
     connect: async () => {
       await client.exec(`create schema "${schema}"`);
       return {
-        db: db as never,
+        client: db,
         close: async () => {
           await client.exec(`drop schema "${schema}" cascade`);
         },
