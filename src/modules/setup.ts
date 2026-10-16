@@ -3,6 +3,7 @@ import moment from "moment";
 import z from "zod";
 import { tokenTable } from "../core/db/internal";
 import { makeModule } from "../core/module";
+import { hashToken } from "../core/token_hash";
 import db from "./db";
 import elysia from "./elysia";
 
@@ -38,9 +39,7 @@ const setup = makeModule(() => {
 
           const plainToken = Bun.randomUUIDv7();
           const token = await db().insert(tokenTable, {
-            hash: new Bun.CryptoHasher("sha256")
-              .update(plainToken)
-              .digest("utf8"),
+            hash: hashToken(plainToken),
             user: created.id,
             createdAt: moment().toISOString(),
             updatedAt: moment().toISOString(),
