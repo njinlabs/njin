@@ -1,8 +1,12 @@
-import { afterAll, beforeEach, describe, expect, it } from "bun:test";
+import { afterAll, beforeEach, describe, expect, it, spyOn } from "bun:test";
 import { PGlite } from "@electric-sql/pglite";
 import { pg_trgm } from "@electric-sql/pglite/contrib/pg_trgm";
+import { PgDialect } from "drizzle-orm/pg-core";
 import { drizzle } from "drizzle-orm/pglite";
-import { postgresAdapter } from "../../../src/core/adapters/postgres";
+import {
+  type PgDb,
+  postgresAdapter,
+} from "../../../src/core/adapters/postgres";
 import type {
   DbAdapter,
   FieldDef,
@@ -558,5 +562,184 @@ describe("describe()", () => {
     expect(
       postgresAdapter({ connect: () => ({ db: {} as never }) }).describe!(),
     ).toBe("custom connection");
+  });
+});
+
+// ---------------------------------------------------------------------------------------
+// Migration safety
+// ---------------------------------------------------------------------------------------
+
+const dialect = new PgDialect();
+
+// A database that reports every statement it runs and can be told to fail on some of them.
+const watched = (fail?: (statement: string) => boolean) => {
+  const statements: string[] = [];
+  const wrap = (target: PgDb): PgDb => ({
+    execute: (query) => {
+      const text = dialect.sqlToQuery(query).sql;
+      statements.push(text);
+      if (fail?.(text))
+        throw new Error(`injected failure: ${text.slice(0, 60)}`);
+      return target.execute(query);
+    },
+    transaction: (fn) => target.transaction((tx) => fn(wrap(tx as PgDb))),
+  });
+
+  const created = postgresAdapter({
+    schema,
+    connect: () => ({ db: wrap(drizzle(client) as unknown as PgDb) }),
+  });
+  return { adapter: created, statements };
+};
+
+const notes: TableDef = {
+  name: "note",
+  fields: [
+    str("title"),
+    { kind: "array", name: "tags", of: { kind: "scalar", type: "string" } },
+  ],
+  search: [],
+};
+
+describe("migration safety", () => {
+  it("warns, once, when a field changes type — and does not touch the column", async () => {
+    const warn = spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const asText: TableDef = {
+        name: "gauge",
+        fields: [str("reading")],
+        search: [],
+      };
+      const asNumber: TableDef = {
+        name: "gauge",
+        fields: [{ kind: "scalar", name: "reading", type: "number" }],
+        search: [],
+      };
+      await adapter.sync([asText]);
+      expect(warn).not.toHaveBeenCalled();
+
+      await adapter.sync([asNumber]);
+      await adapter.sync([asNumber, { name: "other", fields: [], search: [] }]);
+
+      const messages = warn.mock.calls.map((call) => String(call[0]));
+      expect(messages).toHaveLength(1);
+      expect(messages[0]).toContain("gauge.reading");
+      expect(messages[0]).toContain('"text"');
+      expect(messages[0]).toContain("double precision");
+      expect(messages[0]).toContain("ALTER TABLE");
+
+      expect(await columnsOf("gauge")).toMatchObject({ reading: "text" });
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("stays quiet when nothing changed type", async () => {
+    const warn = spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      await adapter.sync([product, brand, category]);
+      await adapter.sync([product, brand, category]);
+      expect(warn).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("rolls the whole migration back when a statement fails, then succeeds on retry", async () => {
+    const broken = watched((statement) => statement.includes("note__tags"));
+    await broken.adapter.connect();
+
+    await expect(broken.adapter.sync([notes])).rejects.toThrow(
+      /injected failure/,
+    );
+
+    // Nothing half-built: not the table created before the failing statement, and no recorded
+    // schema hash that would make the next boot skip the work.
+    expect(await tablesOf()).not.toContain("note");
+    expect(await tablesOf()).not.toContain("njin_schema_meta");
+
+    await adapter.sync([notes]);
+    expect(await tablesOf()).toEqual(
+      expect.arrayContaining(["note", "note__tags"]),
+    );
+  });
+
+  it("takes the schema lock before changing anything, and a recorded schema does no DDL", async () => {
+    const first = watched();
+    await first.adapter.connect();
+    await first.adapter.sync([notes]);
+
+    const lockAt = first.statements.findIndex((s) =>
+      s.includes("pg_advisory_xact_lock"),
+    );
+    const firstDdl = first.statements.findIndex((s) =>
+      /^(create|alter) /i.test(s),
+    );
+    expect(lockAt).toBeGreaterThan(-1);
+    expect(lockAt).toBeLessThan(firstDdl);
+
+    // A second process booting against the already-migrated database.
+    const second = watched();
+    await second.adapter.connect();
+    await second.adapter.sync([notes]);
+
+    expect(
+      second.statements.some((s) => s.includes("pg_advisory_xact_lock")),
+    ).toBe(true);
+    expect(second.statements.some((s) => /^alter table/i.test(s))).toBe(false);
+    expect(
+      second.statements.some((s) =>
+        /^create table if not exists "[^"]+"\."note/i.test(s),
+      ),
+    ).toBe(false);
+  });
+
+  it("two adapters booting at the same time both end up with the full schema", async () => {
+    // PGlite runs one query at a time, so this checks they don't trip over each other, not
+    // true parallelism — that needs a real server (postgres_server.test.ts).
+    const a = await open();
+    const b = await open();
+
+    const results = await Promise.allSettled([
+      a.sync([notes]),
+      b.sync([notes]),
+    ]);
+
+    expect(results.map((r) => r.status)).toEqual(["fulfilled", "fulfilled"]);
+    expect(await tablesOf()).toEqual(
+      expect.arrayContaining(["note", "note__tags"]),
+    );
+  });
+
+  it("a unique index that can't be built (existing duplicates) is reported and the rest still migrates", async () => {
+    const warn = spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const loose: TableDef = {
+        name: "account",
+        fields: [str("email")],
+        search: [],
+      };
+      await adapter.sync([loose]);
+      await adapter.insert(loose, { email: "same@example.com" });
+      await adapter.insert(loose, { email: "same@example.com" });
+
+      const strict: TableDef = {
+        name: "account",
+        fields: [
+          { kind: "scalar", name: "email", type: "string", unique: true },
+        ],
+        search: [],
+      };
+      await adapter.sync([strict, notes]);
+
+      expect(warn.mock.calls.map((c) => String(c[0])).join(" ")).toContain(
+        "account.email",
+      );
+      // The migration went on to build the other table, inside the same transaction.
+      expect(await tablesOf()).toContain("note__tags");
+      expect(await adapter.count(strict)).toBe(2);
+    } finally {
+      warn.mockRestore();
+    }
   });
 });
