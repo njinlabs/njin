@@ -1,17 +1,17 @@
 import { resolve } from "node:path";
 import Elysia, { status } from "elysia";
-import { RecordId } from "surrealdb";
+import moment from "moment";
 import z from "zod";
 import { getConfig } from "../core/config";
 import type { makeModel } from "../core/model";
 import { makeModule } from "../core/module";
 import { resolveSafePath } from "../core/path_guard";
 import auth from "./auth";
+import db from "./db";
 import elysia from "./elysia";
-import surreal from "./surreal";
 
 export type FileUpload<Meta> = {
-  id: RecordId;
+  id: string;
   name: string;
   size: number;
   type: string;
@@ -66,17 +66,23 @@ const file = makeModule(() => {
 
     type FileUploadCurrent = Awaited<ReturnType<typeof baseModel.create>>;
 
-    upload = async (file) =>
-      surreal()
-        .create<Omit<FileUploadCurrent, "id">>(baseModel.table)
-        .content(await getConfig().adapters.file.write(file));
+    // Resolves to a one-element array — that is the response shape of POST /api/file, which
+    // the admin panel and the MCP upload flow already rely on.
+    upload = async (file) => [
+      await db().insert(baseModel.def, {
+        ...(await getConfig().adapters.file.write(file)),
+        createdAt: moment().toISOString(),
+        updatedAt: moment().toISOString(),
+      }),
+    ];
 
     remove = async (id) => {
-      const data = await surreal().delete<FileUploadCurrent>(
-        new RecordId(baseModel.table, id),
-      );
+      const data = await db().remove(baseModel.def, id);
+      if (!data) return null;
 
-      await getConfig().adapters.file.unlink(data);
+      await getConfig().adapters.file.unlink(
+        data as unknown as FileUploadCurrent,
+      );
 
       return data;
     };

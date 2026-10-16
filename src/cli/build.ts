@@ -11,12 +11,12 @@ console.log("Building for production...\n");
 
 await stageBuildAssets(root, outDir);
 
-// surreal.ts only imports @surrealdb/node dynamically, on the embedded-db.path branch — so a
+// adapters/surreal.ts only imports @surrealdb/node dynamically, on the embedded-db.path branch — so a
 // project whose resolved db.path is remote (ws/wss/http/https) never needs its native binding
 // at all. We resolve the project's own config here (same file loadConfig() reads from
 // process.cwd() at runtime) to decide, at build time, whether to bundle it.
 const { loadConfig, getConfig } = await import("../core/config");
-const { isRemotePath } = await import("../modules/surreal");
+const { isRemotePath } = await import("../core/adapters/surreal");
 
 // If the project's config.ts can't be resolved here (missing, throws, or its db.path depends
 // on an env var not set at build time), default to embedded — the binding just goes unused in
@@ -25,12 +25,16 @@ const { isRemotePath } = await import("../modules/surreal");
 let isRemoteBuild = false;
 try {
   await loadConfig();
-  isRemoteBuild = isRemotePath(getConfig().db.path);
+  // Another adapter brings its own driver, so the embedded SurrealDB binding is dead weight
+  // there just as it is for a remote path.
+  isRemoteBuild =
+    getConfig().adapters.db.name !== "surreal" ||
+    isRemotePath(getConfig().db.path);
 } catch {
   isRemoteBuild = false;
 }
 
-// surreal.ts's dynamic import() of @surrealdb/node is still literal-specifier, so Bun's
+// adapters/surreal.ts's dynamic import() of @surrealdb/node is still literal-specifier, so Bun's
 // bundler would otherwise trace and embed it regardless of which branch runs at runtime. Its
 // loader resolves the platform .node file via `const require = createRequire(import.meta.url);
 // require("./surrealdb-node.<platform>.node")` — using a local `require` value rather than the
@@ -195,7 +199,7 @@ printBanner({ mode: "production" });
     sourcemap: "inline",
     // vite is dev-only (view.ts gates it behind `if (isDev)`, dead in production) — bundling
     // it would also drag in its own internal (not-installed) lazy `import("esbuild")`. Same
-    // reasoning for @surrealdb/node on a remote build — surreal.ts's dynamic import of it is
+    // reasoning for @surrealdb/node on a remote build — adapters/surreal.ts's dynamic import of it is
     // unreachable when db.path is remote, so it's safe to leave unresolved.
     external: isRemoteBuild ? ["vite", "@surrealdb/node"] : ["vite"],
     plugins: [surrealNativePlugin, geoipDataPlugin].filter(

@@ -1,66 +1,12 @@
 import { describe, expect, it, mock, spyOn } from "bun:test";
-import { RecordId, type Table } from "surrealdb";
-import * as realUserModule from "../../src/models/user";
+import { tokenTable } from "../../src/core/db/internal";
 import * as realElysiaModule from "../../src/modules/elysia";
-import * as realSurrealModule from "../../src/modules/surreal";
 import { makeFakeElysia } from "../helpers/fake_elysia";
+import { useTestDb } from "../helpers/test_db";
 
-// auth.ts's login route needs the real user model's `.table` — re-asserted explicitly
-// (rather than relying on nothing else having mocked this specifier yet) since, without
-// --isolate, mock.module() replaces the module in a registry shared across the whole
-// test run, and other files (surreal.test.ts, users.test.ts) mock this same specifier.
-mock.module("../../src/models/user", () => realUserModule);
-
-const tokens = new Map<string, Record<string, unknown>>();
-const users = new Map<string, Record<string, unknown>>();
-const deleteCalls: unknown[] = [];
-const relateCalls: unknown[][] = [];
-// Login's `findUserByEmail()` query (see models/user) is stubbed to return whatever this
-// holds — real Expr objects (from surrealdb's `eq()`) aren't easily inspected in a fake, so
-// each test sets the "query result" it wants directly instead of simulating filtering.
-let userQueryResult: Record<string, unknown>[] = [];
-let queryError: Error | null = null;
-
-const queryCalls: { sql: string; vars: Record<string, unknown> }[] = [];
-
-const fakeDb = {
-  query: async (sql: string, vars: Record<string, unknown>) => {
-    queryCalls.push({ sql, vars });
-    if (queryError) throw queryError;
-    return [userQueryResult];
-  },
-  select: (target: RecordId | Table) => {
-    if (target instanceof RecordId) {
-      return {
-        fetch: async (_field: string) => tokens.get(String(target)) ?? null,
-      };
-    }
-    return {};
-  },
-  create: (table: Table) => ({
-    content: async (data: Record<string, unknown>) => {
-      const id = new RecordId(table.name, `tok${tokens.size + 1}`);
-      const record = { ...data, id };
-      tokens.set(String(id), record);
-      return [record];
-    },
-  }),
-  delete: async (id: unknown) => {
-    deleteCalls.push(id);
-    return {};
-  },
-  relate: async (...args: unknown[]) => {
-    relateCalls.push(args);
-  },
-};
-
-// Spreading real exports below — without --isolate, mock.module() replaces the module
-// in a registry shared across the whole test run, so a partial mock would otherwise
-// break other files that import isRemotePath/injectBracketQuery from these specifiers.
-mock.module("../../src/modules/surreal", () => ({
-  ...realSurrealModule,
-  default: () => fakeDb,
-}));
+// The db module is a real in-memory adapter, so these tests drive the actual user/token
+// round trips instead of a hand-written fake.
+const db = await useTestDb();
 
 const fakeElysia = makeFakeElysia();
 mock.module("../../src/modules/elysia", () => ({
@@ -68,33 +14,45 @@ mock.module("../../src/modules/elysia", () => ({
   default: fakeElysia.fn,
 }));
 
+const { default: userModel, DUMMY_HASH } = await import(
+  "../../src/models/user"
+);
 const { default: auth } = await import("../../src/modules/auth");
 
+await db.sync([userModel.def]);
+
 const plainPassword = "correct-password";
-const userRecordId = new RecordId("user", "u1");
-users.set(String(userRecordId), {
-  id: userRecordId,
+const alice = await userModel.create({
   name: "Alice",
   email: "alice@example.com",
   password: Bun.password.hashSync(plainPassword),
 });
 
-const setValidToken = () => {
+const hashOf = (plain: string) =>
+  new Bun.CryptoHasher("sha256").update(plain).digest("utf8");
+
+// Stores a token for alice and returns the bearer string for it.
+const setValidToken = async (id = "tok-valid") => {
   const plainToken = "plain-token-value";
-  const hash = new Bun.CryptoHasher("sha256").update(plainToken).digest("utf8");
-  const tokenId = new RecordId("token", "tok-valid");
-  tokens.set(String(tokenId), {
-    id: tokenId,
-    hash,
-    createdAt: "",
-    updatedAt: "",
-    user: { ...(users.get(String(userRecordId)) as Record<string, unknown>) },
-  });
-  return `token:tok-valid:${plainToken}`;
+  await db.adapter.insert(
+    tokenTable,
+    { hash: hashOf(plainToken), user: alice.id, createdAt: "", updatedAt: "" },
+    { id },
+  );
+  return `token:${id}:${plainToken}`;
 };
 
 await auth.init();
 const controller = fakeElysia.buildApp();
+
+const post = (path: string, body: unknown) =>
+  controller.handle(
+    new Request(`http://localhost/api/auth${path}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+  );
 
 describe("auth macro (via /check-token)", () => {
   it("returns 401 when no bearer token is supplied", async () => {
@@ -114,17 +72,17 @@ describe("auth macro (via /check-token)", () => {
   });
 
   it("returns 401 when the token hash does not match", async () => {
-    setValidToken();
+    await setValidToken("tok-hash");
     const res = await controller.handle(
       new Request("http://localhost/api/auth/check-token", {
-        headers: { Authorization: "Bearer token:tok-valid:wrong-plain" },
+        headers: { Authorization: "Bearer token:tok-hash:wrong-plain" },
       }),
     );
     expect(res.status).toBe(401);
   });
 
   it("passes through and strips the password/tokenId for a valid bearer", async () => {
-    const bearer = setValidToken();
+    const bearer = await setValidToken("tok-ok");
     const res = await controller.handle(
       new Request("http://localhost/api/auth/check-token", {
         headers: { Authorization: `Bearer ${bearer}` },
@@ -133,13 +91,36 @@ describe("auth macro (via /check-token)", () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as { data: Record<string, unknown> };
     expect(body.data.email).toBe("alice@example.com");
+    expect(body.data.id).toBe(alice.id);
+    expect(body.data.password).toBeUndefined();
     expect(body.data.tokenId).toBeUndefined();
+  });
+
+  it("returns 401 for a token whose user has since been deleted", async () => {
+    const orphan = await userModel.create({
+      name: "Gone",
+      email: "gone@example.com",
+      password: "x",
+    });
+    await db.adapter.insert(
+      tokenTable,
+      { hash: hashOf("orphan"), user: orphan.id },
+      { id: "tok-orphan" },
+    );
+    await userModel.destroy(orphan.id);
+
+    const res = await controller.handle(
+      new Request("http://localhost/api/auth/check-token", {
+        headers: { Authorization: "Bearer token:tok-orphan:orphan" },
+      }),
+    );
+    expect(res.status).toBe(401);
   });
 });
 
 describe("DELETE /logout", () => {
   it("deletes the token and returns the user", async () => {
-    const bearer = setValidToken();
+    const bearer = await setValidToken("tok-logout");
     const res = await controller.handle(
       new Request("http://localhost/api/auth/logout", {
         method: "DELETE",
@@ -149,26 +130,19 @@ describe("DELETE /logout", () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as { data: Record<string, unknown> };
     expect(body.data.email).toBe("alice@example.com");
-    expect(deleteCalls).toHaveLength(1);
+    expect(await db.adapter.find(tokenTable, "tok-logout")).toBeNull();
   });
 });
 
 describe("bearer auth", () => {
   it("surfaces an unexpected lookup failure as 500, not 401", async () => {
-    const original = fakeDb.select;
-    fakeDb.select = (() => {
-      throw new Error("db down");
-    }) as never;
-    try {
-      const res = await controller.handle(
-        new Request("http://localhost/api/auth/check-token", {
-          headers: { Authorization: "Bearer token:id:secret" },
-        }),
-      );
-      expect(res.status).toBe(500);
-    } finally {
-      fakeDb.select = original;
-    }
+    db.failNext("find");
+    const res = await controller.handle(
+      new Request("http://localhost/api/auth/check-token", {
+        headers: { Authorization: "Bearer token:id:secret" },
+      }),
+    );
+    expect(res.status).toBe(500);
   });
 
   it("returns 401, not 500, for a malformed bearer token", async () => {
@@ -185,113 +159,73 @@ describe("bearer auth", () => {
 
 describe("POST /login", () => {
   it("still verifies a password when the email is unknown (no timing shortcut)", async () => {
-    userQueryResult = [];
     const verify = spyOn(Bun.password, "verify");
     try {
-      await controller.handle(
-        new Request("http://localhost/api/auth/login", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ email: "x@example.com", password: "pw" }),
-        }),
-      );
+      await post("/login", { email: "x@example.com", password: "pw" });
       expect(verify).toHaveBeenCalledTimes(1);
-      expect(verify.mock.calls[0]?.[1]).toBe(realUserModule.DUMMY_HASH);
+      expect(verify.mock.calls[0]?.[1]).toBe(DUMMY_HASH);
     } finally {
       verify.mockRestore();
     }
   });
 
   it("surfaces unexpected database errors as 500, not 401", async () => {
-    queryError = new Error("db down");
-    try {
-      const res = await controller.handle(
-        new Request("http://localhost/api/auth/login", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ email: "a@example.com", password: "pw" }),
-        }),
-      );
-      expect(res.status).toBe(500);
-    } finally {
-      queryError = null;
-    }
+    db.failNext("list");
+    const res = await post("/login", {
+      email: "a@example.com",
+      password: "pw",
+    });
+    expect(res.status).toBe(500);
   });
 
   it("matches the email case-insensitively", async () => {
-    userQueryResult = [
-      users.get(String(userRecordId)) as Record<string, unknown>,
-    ];
-    queryCalls.length = 0;
-    const res = await controller.handle(
-      new Request("http://localhost/api/auth/login", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          email: "Alice@Example.com",
-          password: plainPassword,
-        }),
-      }),
-    );
+    const res = await post("/login", {
+      email: "Alice@Example.com",
+      password: plainPassword,
+    });
 
     expect(res.status).toBe(200);
-    expect(queryCalls[0]?.sql).toContain("string::lowercase(email)");
-    expect(queryCalls[0]?.vars.email).toBe("alice@example.com");
   });
 
   it("returns 401 when the user does not exist", async () => {
-    userQueryResult = [];
-    const res = await controller.handle(
-      new Request("http://localhost/api/auth/login", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          email: "nobody@example.com",
-          password: "whatever",
-        }),
-      }),
-    );
+    const res = await post("/login", {
+      email: "nobody@example.com",
+      password: "whatever",
+    });
 
     expect(res.status).toBe(401);
   });
 
   it("returns 401 when the password is wrong", async () => {
-    userQueryResult = [
-      users.get(String(userRecordId)) as Record<string, unknown>,
-    ];
-    const res = await controller.handle(
-      new Request("http://localhost/api/auth/login", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          email: "alice@example.com",
-          password: "wrong-password",
-        }),
-      }),
-    );
+    const res = await post("/login", {
+      email: "alice@example.com",
+      password: "wrong-password",
+    });
     expect(res.status).toBe(401);
   });
 
-  it("logs in successfully and returns a token string without the password", async () => {
-    userQueryResult = [
-      users.get(String(userRecordId)) as Record<string, unknown>,
-    ];
-    relateCalls.length = 0;
-    const res = await controller.handle(
-      new Request("http://localhost/api/auth/login", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          email: "alice@example.com",
-          password: plainPassword,
-        }),
-      }),
-    );
+  it("logs in, stores a token for the user, and returns a usable token without the password", async () => {
+    const res = await post("/login", {
+      email: "alice@example.com",
+      password: plainPassword,
+    });
 
     expect(res.status).toBe(200);
     const body = (await res.json()) as { data: Record<string, unknown> };
     expect(body.data.password).toBeUndefined();
-    expect(body.data.token).toMatch(/^token:tok\d+:.+$/);
-    expect(relateCalls).toHaveLength(1);
+    expect(body.data.token).toMatch(/^token:[^:]+:.+$/);
+
+    // The token it returned actually authenticates.
+    const check = await controller.handle(
+      new Request("http://localhost/api/auth/check-token", {
+        headers: { Authorization: `Bearer ${body.data.token}` },
+      }),
+    );
+    expect(check.status).toBe(200);
+
+    // And the stored token points at the user by plain id.
+    const [id] = (body.data.token as string).split(":").slice(1);
+    const stored = await db.adapter.find(tokenTable, id as string);
+    expect(stored?.user).toBe(alice.id);
   });
 });

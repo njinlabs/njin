@@ -2,12 +2,12 @@ import { afterAll, describe, expect, it, mock } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { RecordId } from "surrealdb";
 import * as realConfig from "../../src/core/config";
+import type { TableDef } from "../../src/core/db/contract";
 import * as realElysiaModule from "../../src/modules/elysia";
-import * as realSurrealModule from "../../src/modules/surreal";
 import { makeFakeAuthPlugin } from "../helpers/fake_auth";
 import { makeFakeElysia } from "../helpers/fake_elysia";
+import { useTestDb } from "../helpers/test_db";
 
 // file.ts resolves its static uploads dir as `resolve(getConfig().rootDir, adapters.file.dir)`
 // — `dir` here is relative, so the mocked getConfig() below points rootDir at this temp root.
@@ -20,39 +20,23 @@ writeFileSync(
 );
 writeFileSync(join(projectRoot, "uploads", "logo.svg"), "<svg></svg>");
 
-const deleteCalls: unknown[] = [];
-const createCalls: unknown[] = [];
 const writeCalls: unknown[] = [];
 const unlinkCalls: unknown[] = [];
 
-const fakeDb = {
-  read: async () => ({
-    data: [],
-    meta: { total: 0, page: 1, limit: 20, pageCount: 0 },
-  }),
-  delete: async (id: unknown) => {
-    deleteCalls.push(id);
-    return { id, name: "deleted.txt" };
-  },
-  create: (_table: unknown) => ({
-    content: async (data: Record<string, unknown>) => {
-      createCalls.push(data);
-      return { ...data, id: new RecordId("file", "f1") };
-    },
-  }),
-};
-
-// Spreading each real module's other exports below — without --isolate, mock.module()
-// replaces the module in a registry shared across the whole test run, so a partial
-// mock would otherwise break other files importing the un-mocked exports from these
-// same specifiers (isRemotePath, loadConfig, injectBracketQuery).
-mock.module("../../src/modules/surreal", () => ({
-  ...realSurrealModule,
-  default: () => fakeDb,
-}));
+// The file table, standing in for models/file.ts (which reads the configured file adapter at
+// import time) — a real in-memory database sits behind it.
+const fileDef: TableDef = { name: "file", fields: [], search: [] };
+const db = await useTestDb([fileDef]);
 
 mock.module("../../src/models/file", () => ({
-  default: { read: fakeDb.read, table: "file" },
+  default: {
+    prefix: "file",
+    def: fileDef,
+    read: async () => ({
+      data: [],
+      meta: { total: 0, page: 1, limit: 20, pageCount: 0 },
+    }),
+  },
 }));
 
 mock.module("../../src/core/config", () => ({
@@ -113,6 +97,8 @@ describe("GET /api/file", () => {
 
 describe("DELETE /api/file/:id", () => {
   it("deletes the record and unlinks the underlying file via the adapter", async () => {
+    await db.adapter.insert(fileDef, { name: "deleted.txt" }, { id: "f1" });
+
     const res = await app.handle(
       new Request("http://localhost/api/file/f1", {
         method: "DELETE",
@@ -120,8 +106,21 @@ describe("DELETE /api/file/:id", () => {
       }),
     );
     expect(res.status).toBe(200);
-    expect(deleteCalls).toHaveLength(1);
     expect(unlinkCalls).toHaveLength(1);
+    expect(unlinkCalls[0]).toMatchObject({ id: "f1", name: "deleted.txt" });
+    expect(await db.adapter.find(fileDef, "f1")).toBeNull();
+  });
+
+  it("answers with null and unlinks nothing for an unknown file", async () => {
+    const before = unlinkCalls.length;
+    const res = await app.handle(
+      new Request("http://localhost/api/file/nope", {
+        method: "DELETE",
+        headers: { Authorization: "Bearer x" },
+      }),
+    );
+    expect(res.status).toBe(200);
+    expect(unlinkCalls).toHaveLength(before);
   });
 });
 
@@ -140,9 +139,15 @@ describe("POST /api/file", () => {
 
     expect(res.status).toBe(200);
     expect(writeCalls).toHaveLength(1);
-    expect(createCalls).toHaveLength(1);
-    const body = (await res.json()) as { data: Record<string, unknown> };
-    expect(body.data.name).toBe("upload.txt");
+    // A one-element array — the response shape the admin panel relies on.
+    const body = (await res.json()) as { data: Record<string, unknown>[] };
+    expect(body.data).toHaveLength(1);
+    expect(body.data[0]!.name).toBe("upload.txt");
+    expect(typeof body.data[0]!.id).toBe("string");
+
+    const stored = await db.adapter.find(fileDef, body.data[0]!.id as string);
+    expect(stored?.name).toBe("upload.txt");
+    expect(stored?.createdAt).toBeString();
   });
 });
 

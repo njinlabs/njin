@@ -1,12 +1,10 @@
 import Elysia, { status } from "elysia";
 import moment from "moment";
-import { type RecordId, Table, Uuid } from "surrealdb";
 import z from "zod";
+import { tokenTable } from "../core/db/internal";
 import { makeModule } from "../core/module";
+import db from "./db";
 import elysia from "./elysia";
-import surreal from "./surreal";
-
-const tokenTable = new Table("token");
 
 const setup = makeModule(() => {
   const fn = () => {};
@@ -14,18 +12,8 @@ const setup = makeModule(() => {
   fn.init = async () => {
     const { default: user } = await import("../models/user");
 
-    type Token = {
-      hash: string;
-      createdAt: string;
-      updatedAt: string;
-      user: RecordId;
-    };
-
     const hasUsers = async () => {
-      const [[row]] = await surreal().query<[{ count: number }[]]>(
-        `SELECT count() as count FROM ${user.prefix} GROUP ALL`,
-      );
-      return (row?.count ?? 0) > 0;
+      return (await db().count(user.def)) > 0;
     };
 
     const controller = new Elysia({ prefix: "/api/setup" })
@@ -48,23 +36,15 @@ const setup = makeModule(() => {
             password: Bun.password.hashSync(body.password),
           });
 
-          const plainToken = Uuid.v7().toString();
-          const [token] = await surreal()
-            .create<Token>(tokenTable)
-            .content({
-              hash: new Bun.CryptoHasher("sha256")
-                .update(plainToken)
-                .digest("utf8"),
-              user: created.id,
-              createdAt: moment().toISOString(),
-              updatedAt: moment().toISOString(),
-            });
-
-          await surreal().relate(
-            token!.id,
-            new Table("user_token"),
-            created.id,
-          );
+          const plainToken = Bun.randomUUIDv7();
+          const token = await db().insert(tokenTable, {
+            hash: new Bun.CryptoHasher("sha256")
+              .update(plainToken)
+              .digest("utf8"),
+            user: created.id,
+            createdAt: moment().toISOString(),
+            updatedAt: moment().toISOString(),
+          });
 
           const { password: _, ...safeUser } = created as typeof created & {
             password: string;
@@ -72,7 +52,7 @@ const setup = makeModule(() => {
 
           return {
             data: {
-              token: `${tokenTable.toString()}:${token!.id.id}:${plainToken}`,
+              token: `token:${token.id}:${plainToken}`,
               user: safeUser,
             },
           };

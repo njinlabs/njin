@@ -1,55 +1,10 @@
-import { describe, expect, it, mock } from "bun:test";
-import { RecordId, type Table } from "surrealdb";
+import { describe, expect, it } from "bun:test";
+import type { ListQuery } from "../../../src/core/db/contract";
+import { useTestDb } from "../../helpers/test_db";
 
-// makeModel's create/update/destroy talk to SurrealDB via `surreal()` — replace it with
-// an in-memory fake so hook wiring can be verified without a live database connection.
-const records = new Map<string, Record<string, unknown>>();
-
-const fakeDb = {
-  create: (table: Table) => ({
-    content: (data: Record<string, unknown>) => ({
-      output: async (_mode: string) => {
-        const id = new RecordId(table.name, "1");
-        const record = { ...data, id };
-        records.set(String(id), record);
-        return [record];
-      },
-    }),
-  }),
-  update: (id: RecordId) => ({
-    merge: async (data: Record<string, unknown>) => {
-      const existing = records.get(String(id)) ?? {};
-      const record = { ...existing, ...data, id };
-      records.set(String(id), record);
-      return record;
-    },
-  }),
-  delete: async (id: RecordId) => {
-    const record = records.get(String(id)) ?? { id };
-    records.delete(String(id));
-    return record;
-  },
-  selected: [] as { target: unknown; fetched: unknown[] | null }[],
-  select: (target: unknown) => {
-    const entry = { target, fetched: null as unknown[] | null };
-    fakeDb.selected.push(entry);
-    return Object.assign(Promise.resolve({ id: target }), {
-      fetch: (...fields: unknown[]) => {
-        entry.fetched = fields;
-        return Promise.resolve({ id: target });
-      },
-    });
-  },
-  queries: [] as { sql: string; params: Record<string, unknown> }[],
-  query: async (sql: string, params: Record<string, unknown> = {}) => {
-    fakeDb.queries.push({ sql, params });
-    return [[], [{ count: 0 }]];
-  },
-};
-
-mock.module("../../../src/modules/surreal", () => ({
-  default: () => fakeDb,
-}));
+// makeModel talks to the database through the db module — swap it for a real in-memory
+// adapter (recording every call) so the model layer is exercised end to end.
+const db = await useTestDb();
 
 const {
   makeModel,
@@ -69,13 +24,33 @@ const { relationMany } = await import(
 );
 const z = (await import("zod")).default;
 
+type AnyModel = ReturnType<typeof makeModel>;
+
+const unique = (base: string) =>
+  `${base}_${crypto.randomUUID().replace(/-/g, "")}`;
+
+// Registers the model's table with the test database (what the db module's spin() does).
+const sync = async <M extends AnyModel>(first: M, ...rest: AnyModel[]) => {
+  await db.sync([first.def, ...rest.map((m) => m.def)]);
+  return first;
+};
+
+// The ListQuery the model passed to the adapter on its most recent read().
+const lastQuery = () => {
+  const lists = db.callsTo("list");
+  return lists[lists.length - 1]![1] as ListQuery;
+};
+
 describe("makeModel hook wiring", () => {
-  it("runs beforeCreate/afterCreate around create()", async () => {
-    const post = makeModel(`post_${crypto.randomUUID().replace(/-/g, "")}`, {
+  const build = () =>
+    makeModel(unique("post"), {
       name: "Post",
       searchFields: [],
       schema: z.object({ title: text({ label: "Title" }) }),
     });
+
+  it("runs beforeCreate/afterCreate around create()", async () => {
+    const post = await sync(build());
 
     const events: string[] = [];
     let createdRecord: unknown;
@@ -96,15 +71,21 @@ describe("makeModel hook wiring", () => {
     expect(createdRecord).toEqual(result);
   });
 
+  it("returns a plain string id with timestamps", async () => {
+    const post = await sync(build());
+
+    const result = await post.create({ title: "Hello" });
+
+    expect(typeof result.id).toBe("string");
+    expect(result.createdAt).toBeString();
+    expect(result.updatedAt).toBe(result.createdAt);
+  });
+
   it("runs beforeUpdate/afterUpdate around update()", async () => {
-    const post = makeModel(`post_${crypto.randomUUID().replace(/-/g, "")}`, {
-      name: "Post",
-      searchFields: [],
-      schema: z.object({ title: text({ label: "Title" }) }),
-    });
+    const post = await sync(build());
 
     const created = await post.create({ title: "Hello" });
-    const id = created.id.id as string;
+    const id = created.id;
 
     const events: string[] = [];
     let receivedContext: unknown;
@@ -126,14 +107,10 @@ describe("makeModel hook wiring", () => {
   });
 
   it("runs beforeDestroy/afterDestroy around destroy()", async () => {
-    const post = makeModel(`post_${crypto.randomUUID().replace(/-/g, "")}`, {
-      name: "Post",
-      searchFields: [],
-      schema: z.object({ title: text({ label: "Title" }) }),
-    });
+    const post = await sync(build());
 
     const created = await post.create({ title: "Hello" });
-    const id = created.id.id as string;
+    const id = created.id;
 
     const events: string[] = [];
     let receivedId: unknown;
@@ -150,14 +127,11 @@ describe("makeModel hook wiring", () => {
 
     expect(events).toEqual(["beforeDestroy", "afterDestroy"]);
     expect(receivedId).toBe(id);
+    expect(await post.show(id)).toBeUndefined();
   });
 
   it("aborts create() when a beforeCreate hook throws", async () => {
-    const post = makeModel(`post_${crypto.randomUUID().replace(/-/g, "")}`, {
-      name: "Post",
-      searchFields: [],
-      schema: z.object({ title: text({ label: "Title" }) }),
-    });
+    const post = await sync(build());
 
     beforeCreate(post, () => {
       throw new Error("nope");
@@ -167,46 +141,72 @@ describe("makeModel hook wiring", () => {
   });
 });
 
+describe("makeModel unique fields", () => {
+  const build = () =>
+    makeModel(unique("account"), {
+      name: "Account",
+      searchFields: [],
+      schema: z.object({
+        email: text({ label: "Email", unique: true }),
+      }),
+    });
+
+  it("rejects a duplicate on create and on update, but lets a record keep its own value", async () => {
+    const account = await sync(build());
+
+    const first = await account.create({ email: "a@example.com" });
+    const second = await account.create({ email: "b@example.com" });
+
+    await expect(account.create({ email: "a@example.com" })).rejects.toThrow(
+      /must be unique/,
+    );
+    await expect(
+      account.update(second.id, { email: "a@example.com" }),
+    ).rejects.toThrow(/must be unique/);
+
+    // Updating a record to the value it already has is not a duplicate of itself.
+    const same = await account.update(first.id, { email: "a@example.com" });
+    expect(same.email).toBe("a@example.com");
+  });
+});
+
 describe("makeModel read() filter whitelist", () => {
-  it("ignores a filter key that isn't a real schema field, even one only reachable via Object.prototype", async () => {
-    const post = makeModel(`post_${crypto.randomUUID().replace(/-/g, "")}`, {
+  const build = () =>
+    makeModel(unique("post"), {
       name: "Post",
       searchFields: [],
       schema: z.object({ title: text({ label: "Title" }) }),
     });
 
-    fakeDb.queries.length = 0;
+  it("ignores a filter key that isn't a real schema field, even one only reachable via Object.prototype", async () => {
+    const post = await sync(build());
 
     // `"constructor" in {}` is true (inherited from Object.prototype) even though no
     // schema field is named "constructor" — a plain `key in shape` check would let this
-    // through and interpolate "constructor" as a raw SQL field name.
+    // through and hand "constructor" to the adapter as a field name.
     await post.read({ filters: { constructor: "evil" } as never });
 
-    const [call] = fakeDb.queries;
-    expect(call!.sql).not.toContain("constructor");
-    expect(call!.params).not.toHaveProperty("f_constructor");
+    expect(lastQuery().where).toEqual([]);
   });
 
   it("still applies a filter on a real schema field", async () => {
-    const post = makeModel(`post_${crypto.randomUUID().replace(/-/g, "")}`, {
-      name: "Post",
-      searchFields: [],
-      schema: z.object({ title: text({ label: "Title" }) }),
-    });
+    const post = await sync(build());
+    await post.create({ title: "Hello" });
+    await post.create({ title: "World" });
 
-    fakeDb.queries.length = 0;
+    const result = await post.read({ filters: { title: "Hello" } });
 
-    await post.read({ filters: { title: "Hello" } });
-
-    const [call] = fakeDb.queries;
-    expect(call!.sql).toContain("title = $f_title");
-    expect(call!.params.f_title).toBe("Hello");
+    expect(lastQuery().where).toEqual([
+      { field: "title", op: "$eq", value: "Hello" },
+    ]);
+    expect(result.data.map((r) => r.title)).toEqual(["Hello"]);
+    expect(result.meta.total).toBe(1);
   });
 });
 
 describe("makeModel read() select", () => {
   const build = () =>
-    makeModel(`post_${crypto.randomUUID().replace(/-/g, "")}`, {
+    makeModel(unique("post"), {
       name: "Post",
       searchFields: [],
       schema: z.object({
@@ -216,31 +216,33 @@ describe("makeModel read() select", () => {
     });
 
   it("projects only the selected fields, always including id", async () => {
-    const post = build();
-    fakeDb.queries.length = 0;
+    const post = await sync(build());
+    const created = await post.create({ title: "T", slug: "s" });
 
-    await post.read({ select: ["title", "createdAt"] });
+    const result = await post.read({ select: ["title", "createdAt"] });
 
-    expect(fakeDb.queries[0]!.sql).toContain(
-      "SELECT id, title, createdAt FROM",
-    );
-    expect(fakeDb.queries[0]!.sql).not.toContain("SELECT *");
+    expect(lastQuery().select).toEqual({
+      fields: ["title", "createdAt"],
+      nested: {},
+    });
+    expect(result.data[0]).toEqual({
+      id: created.id,
+      title: "T",
+      createdAt: created.createdAt,
+    } as never);
   });
 
   it("selects everything when select is omitted or has no valid field", async () => {
-    const post = build();
-    fakeDb.queries.length = 0;
+    const post = await sync(build());
 
-    await post.read({});
-    await post.read({ select: [] });
-    await post.read({ select: ["nope"] });
-
-    for (const q of fakeDb.queries) expect(q.sql).toContain("SELECT * FROM");
+    for (const select of [undefined, [], ["nope"]]) {
+      await post.read({ select });
+      expect(lastQuery().select).toBeUndefined();
+    }
   });
 
   it("drops unknown, prototype-inherited and injection-shaped field names", async () => {
-    const post = build();
-    fakeDb.queries.length = 0;
+    const post = await sync(build());
 
     await post.read({
       select: [
@@ -255,15 +257,16 @@ describe("makeModel read() select", () => {
       ],
     });
 
-    const { sql } = fakeDb.queries[0]!;
-    expect(sql).toContain("SELECT id, slug FROM");
-    for (const bad of ["constructor", "__proto__", "toString", "leak", "user"])
-      expect(sql).not.toContain(bad);
+    expect(lastQuery().select).toEqual({ fields: ["slug"], nested: {} });
   });
 
-  it("only FETCHes relations that are selected", async () => {
-    const author = build();
-    const post = makeModel(`post_${crypto.randomUUID().replace(/-/g, "")}`, {
+  it("only populates relations that are selected", async () => {
+    const author = makeModel(unique("author"), {
+      name: "Author",
+      searchFields: [],
+      schema: z.object({ name: text({ label: "Name" }) }),
+    });
+    const post = makeModel(unique("post"), {
       name: "Post",
       searchFields: [],
       schema: z.object({
@@ -271,35 +274,32 @@ describe("makeModel read() select", () => {
         author: relation({ label: "Author" }, author),
       }),
     });
-    fakeDb.queries.length = 0;
+    await sync(author, post);
 
     await post.read({ select: ["title"] });
-    await post.read({ select: ["title", "author"] });
+    expect(lastQuery().populate).toEqual([]);
 
-    expect(fakeDb.queries[0]!.sql).not.toContain("FETCH");
-    expect(fakeDb.queries[1]!.sql).toContain("FETCH author");
+    await post.read({ select: ["title", "author"] });
+    expect(lastQuery().populate).toEqual(["author"]);
   });
 });
 
 describe("makeModel read() select on relations", () => {
-  const build = () => {
-    const author = makeModel(
-      `author_${crypto.randomUUID().replace(/-/g, "")}`,
-      {
-        name: "Author",
-        searchFields: [],
-        schema: z.object({
-          name: text({ label: "Name" }),
-          secret: text({ label: "Secret" }),
-        }),
-      },
-    );
-    const tag = makeModel(`tag_${crypto.randomUUID().replace(/-/g, "")}`, {
+  const build = async () => {
+    const author = makeModel(unique("author"), {
+      name: "Author",
+      searchFields: [],
+      schema: z.object({
+        name: text({ label: "Name" }),
+        secret: text({ label: "Secret" }),
+      }),
+    });
+    const tag = makeModel(unique("tag"), {
       name: "Tag",
       searchFields: [],
       schema: z.object({ label: text({ label: "Label" }) }),
     });
-    const post = makeModel(`post_${crypto.randomUUID().replace(/-/g, "")}`, {
+    const post = makeModel(unique("post"), {
       name: "Post",
       searchFields: [],
       schema: z.object({
@@ -308,47 +308,55 @@ describe("makeModel read() select on relations", () => {
         tags: relationMany({ label: "Tags" }, tag),
       }),
     });
-    return post;
+    await sync(author, tag, post);
+    return { post, author, tag };
   };
 
-  const sqlOf = async (select: string[], populate?: string[] | "none") => {
-    fakeDb.queries.length = 0;
-    await build().read({ select, populate });
-    return fakeDb.queries[0]!.sql;
+  const queryOf = async (select: string[], populate?: string[] | "none") => {
+    const { post } = await build();
+    await post.read({ select, populate });
+    return lastQuery();
   };
 
-  it("projects the picked fields of a related record, always with its id, and skips FETCH for it", async () => {
-    const sql = await sqlOf(["title", "author.name"]);
-    expect(sql).toContain("SELECT id, title, author.{id, name} AS author FROM");
-    expect(sql).not.toContain("FETCH");
+  it("projects the picked fields of a related record and does not populate it", async () => {
+    const q = await queryOf(["title", "author.name"]);
+    expect(q.select).toEqual({
+      fields: ["title"],
+      nested: { author: ["name"] },
+    });
+    expect(q.populate).toEqual([]);
   });
 
   it("groups several fields per relation and supports multi relations", async () => {
-    const sql = await sqlOf(["author.name", "author.secret", "tags.label"]);
-    expect(sql).toContain(
-      "id, author.{id, name, secret} AS author, tags.{id, label} AS tags FROM",
-    );
+    const q = await queryOf(["author.name", "author.secret", "tags.label"]);
+    expect(q.select).toEqual({
+      fields: [],
+      nested: { author: ["name", "secret"], tags: ["label"] },
+    });
   });
 
   it("accepts id/createdAt/updatedAt on the related record", async () => {
-    const sql = await sqlOf(["author.createdAt", "author.id"]);
-    expect(sql).toContain("author.{id, createdAt} AS author");
+    const q = await queryOf(["author.createdAt", "author.id"]);
+    expect(q.select!.nested).toEqual({ author: ["createdAt", "id"] });
   });
 
   it("lets the nested projection win over the same relation selected whole", async () => {
-    const sql = await sqlOf(["author", "author.name"]);
-    expect(sql).toContain("author.{id, name} AS author");
-    expect(sql).not.toContain("FETCH");
+    const q = await queryOf(["author", "author.name"]);
+    expect(q.select).toEqual({ fields: [], nested: { author: ["name"] } });
+    expect(q.populate).toEqual([]);
   });
 
-  it("still FETCHes a relation selected whole next to a nested one", async () => {
-    const sql = await sqlOf(["author.name", "tags"]);
-    expect(sql).toContain("FETCH tags");
-    expect(sql).not.toContain("FETCH author");
+  it("still populates a relation selected whole next to a nested one", async () => {
+    const q = await queryOf(["author.name", "tags"]);
+    expect(q.select).toEqual({
+      fields: ["tags"],
+      nested: { author: ["name"] },
+    });
+    expect(q.populate).toEqual(["tags"]);
   });
 
   it("drops nested entries that point at unknown relations, unknown target fields, or too deep", async () => {
-    const sql = await sqlOf([
+    const q = await queryOf([
       "title.x", // not a relation
       "author.nope", // not a field of the target
       "author.constructor", // inherited, not an own field
@@ -358,15 +366,33 @@ describe("makeModel read() select on relations", () => {
       "author.",
       ".name",
     ]);
-    expect(sql).toContain("SELECT * FROM");
-    for (const bad of ["nope", "constructor", "deep", "title.x", "AS x"])
-      expect(sql).not.toContain(bad);
+    expect(q.select).toBeUndefined();
+  });
+
+  it("returns the projected related record for real", async () => {
+    const { post, author, tag } = await build();
+    const a = await author.create({ name: "Ann", secret: "s3" });
+    const t = await tag.create({ label: "news" });
+    await post.create({ title: "Hello", author: a.id, tags: [t.id] } as never);
+
+    const result = await post.read({
+      select: ["title", "author.name", "tags.label"],
+    });
+
+    expect(result.data[0]).toMatchObject({
+      title: "Hello",
+      author: { id: a.id, name: "Ann" },
+      tags: [{ id: t.id, label: "news" }],
+    });
+    expect((result.data[0] as { author: object }).author).not.toHaveProperty(
+      "secret",
+    );
   });
 });
 
 describe("makeModel read() filter values and limit", () => {
   const make = () =>
-    makeModel(`item_${crypto.randomUUID().replace(/-/g, "")}`, {
+    makeModel(unique("item"), {
       name: "Item",
       searchFields: [],
       schema: z.object({
@@ -377,10 +403,12 @@ describe("makeModel read() filter values and limit", () => {
     });
 
   it("converts numeric and boolean filter values to their real types", async () => {
-    const item = make();
-    fakeDb.queries.length = 0;
+    const item = await sync(make());
+    await item.create({ title: "ab cheap", price: 50, active: true });
+    await item.create({ title: "AB pricey", price: 150, active: true });
+    await item.create({ title: "AB off", price: 200, active: false });
 
-    await item.read({
+    const result = await item.read({
       filters: {
         price: { $gt: "100" },
         active: "true",
@@ -388,54 +416,66 @@ describe("makeModel read() filter values and limit", () => {
       },
     });
 
-    const { sql, params } = fakeDb.queries[0]!;
-    expect(sql).toContain("price > $f_price_gt");
-    expect(params.f_price_gt).toBe(100);
-    expect(params.f_active).toBe(true);
-    expect(params.f_title_contains).toBe("ab");
+    expect(lastQuery().where).toEqual([
+      { field: "price", op: "$gt", value: 100 },
+      { field: "active", op: "$eq", value: true },
+      { field: "title", op: "$contains", value: "AB" },
+    ]);
+    expect(result.data.map((r) => r.title)).toEqual(["AB pricey"]);
   });
 
   it("drops a numeric filter whose value isn't a number", async () => {
-    const item = make();
-    fakeDb.queries.length = 0;
+    const item = await sync(make());
 
     await item.read({ filters: { price: "abc" } });
 
-    expect(fakeDb.queries[0]!.sql).not.toContain("price");
+    expect(lastQuery().where).toEqual([]);
   });
 
   it("ignores filters whose value is undefined", async () => {
-    const item = make();
-    fakeDb.queries.length = 0;
+    const item = await sync(make());
 
     await item.read({ filters: { title: undefined } });
 
-    expect(fakeDb.queries[0]!.sql).not.toContain("WHERE");
+    expect(lastQuery().where).toEqual([]);
   });
 
-  it("never interpolates a non-numeric limit into the query", async () => {
-    const item = make();
-    fakeDb.queries.length = 0;
+  it("never passes a non-numeric limit on", async () => {
+    const item = await sync(make());
 
     await item.read({ limit: "1; DELETE item; //" as never });
 
-    const { sql } = fakeDb.queries[0]!;
-    expect(sql).toContain("LIMIT 20 START 0");
-    expect(sql).not.toContain("DELETE");
+    expect(lastQuery().limit).toBe(20);
+    expect(lastQuery().page).toBe(1);
+  });
+
+  it("ignores an unknown filter operator", async () => {
+    const item = await sync(make());
+
+    await item.read({ filters: { title: { $regex: ".*" } as never } });
+
+    expect(lastQuery().where).toEqual([]);
+  });
+
+  it("ignores a sort field that isn't in the schema", async () => {
+    const item = await sync(make());
+
+    await item.read({ sort: "constructor" });
+    expect(lastQuery().sort).toBeUndefined();
+
+    await item.read({ sort: "price", order: "desc" });
+    expect(lastQuery().sort).toEqual({ field: "price", order: "desc" });
   });
 });
 
 describe("makeModel show()", () => {
-  it("fetches relation fields when the model has any", async () => {
-    const author = makeModel(
-      `author_${crypto.randomUUID().replace(/-/g, "")}`,
-      {
-        name: "Author",
-        searchFields: [],
-        schema: z.object({ name: text({ label: "Name" }) }),
-      },
-    );
-    const post = makeModel(`post_${crypto.randomUUID().replace(/-/g, "")}`, {
+  it("populates relation fields when the model has any", async () => {
+    const author = makeModel(unique("author"), {
+      name: "Author",
+      searchFields: [],
+      schema: z.object({ name: text({ label: "Name" }) }),
+    });
+    const post = makeModel(unique("post"), {
       name: "Post",
       searchFields: [],
       schema: z.object({
@@ -443,24 +483,42 @@ describe("makeModel show()", () => {
         author: relation({ label: "Author" }, author),
       }),
     });
-    fakeDb.selected.length = 0;
+    await sync(author, post);
 
-    await post.show("p1");
+    const a = await author.create({ name: "Ann" });
+    const p = await post.create({ title: "Hello", author: a.id } as never);
 
-    expect(fakeDb.selected[0]!.fetched).toEqual(["author"]);
+    const shown = await post.show(p.id);
+
+    expect(db.callsTo("find").at(-1)![2]).toEqual({ populate: ["author"] });
+    expect(shown.author).toMatchObject({ id: a.id, name: "Ann" });
   });
 
-  it("does not call fetch for a model without relations", async () => {
-    const plain = makeModel(`plain_${crypto.randomUUID().replace(/-/g, "")}`, {
-      name: "Plain",
-      searchFields: [],
-      schema: z.object({ title: text({ label: "Title" }) }),
-    });
-    fakeDb.selected.length = 0;
+  it("asks for no population for a model without relations", async () => {
+    const plain = await sync(
+      makeModel(unique("plain"), {
+        name: "Plain",
+        searchFields: [],
+        schema: z.object({ title: text({ label: "Title" }) }),
+      }),
+    );
+    const p = await plain.create({ title: "x" });
 
-    await plain.show("p1");
+    await plain.show(p.id);
 
-    expect(fakeDb.selected[0]!.fetched).toBeNull();
+    expect(db.callsTo("find").at(-1)![2]).toEqual({ populate: [] });
+  });
+
+  it("returns undefined for a record that doesn't exist", async () => {
+    const plain = await sync(
+      makeModel(unique("plain"), {
+        name: "Plain",
+        searchFields: [],
+        schema: z.object({ title: text({ label: "Title" }) }),
+      }),
+    );
+
+    expect(await plain.show("missing")).toBeUndefined();
   });
 });
 
@@ -478,8 +536,8 @@ describe("filtersQuerySchema", () => {
 });
 
 describe("makeModel read() search", () => {
-  it("matches with the @N@ full-text operator and orders by relevance, stripping __relevance from results", async () => {
-    const post = makeModel(`post_${crypto.randomUUID().replace(/-/g, "")}`, {
+  const build = () =>
+    makeModel(unique("post"), {
       name: "Post",
       searchFields: ["title", "body"],
       schema: z.object({
@@ -488,71 +546,54 @@ describe("makeModel read() search", () => {
       }),
     });
 
-    fakeDb.queries.length = 0;
-    const originalQuery = fakeDb.query;
-    fakeDb.query = (async (
-      sql: string,
-      params: Record<string, unknown> = {},
-    ) => {
-      fakeDb.queries.push({ sql, params });
-      return [
-        [{ title: "Hello", body: "World", __relevance: 1.5 }],
-        [{ count: 1 }],
-      ];
-    }) as typeof fakeDb.query;
+  it("describes the searchable fields to the adapter and returns ranked results without leaking the ranking column", async () => {
+    const post = await sync(build());
+    await post.create({ title: "Hello", body: "World" });
+    await post.create({ title: "Unrelated", body: "Nothing here" });
 
-    try {
-      const result = await post.read({ search: "hello" });
+    const result = await post.read({ search: "hello" });
 
-      const [call] = fakeDb.queries;
-      // @N@, not string::similarity::jaro_winkler — a whole-field comparison would score a
-      // short query against a long field far below any usable threshold.
-      expect(call!.sql).toContain("(title @1@ $search OR body @2@ $search)");
-      // Each field's BM25 score gets a containment boost (see CONTAINMENT_BOOST) so a document
-      // that literally contains the search string outranks one that only shares ngrams with it.
-      // Both sides have spaces stripped before comparing (run-together variants like "REDWING").
-      expect(call!.sql).toContain(
-        '((search::score(1) + (IF string::contains(string::replace(string::lowercase(title), " ", ""), string::replace(string::lowercase($search), " ", "")) THEN 100 ELSE 0 END)) + ' +
-          '(search::score(2) + (IF string::contains(string::replace(string::lowercase(body), " ", ""), string::replace(string::lowercase($search), " ", "")) THEN 100 ELSE 0 END))) AS __relevance',
-      );
-      expect(call!.sql).toContain("ORDER BY __relevance DESC");
-      expect(call!.params.search).toBe("hello");
+    expect(post.def.search).toEqual([
+      { table: post.prefix, field: "title" },
+      { table: post.prefix, field: "body" },
+    ]);
+    expect(lastQuery().search).toBe("hello");
+    expect(result.data).toHaveLength(1);
+    expect(result.data[0]).toMatchObject({ title: "Hello", body: "World" });
+    expect(Object.keys(result.data[0] as object)).not.toContain("__relevance");
+  });
 
-      expect(result.data).toEqual([{ title: "Hello", body: "World" }] as never);
-    } finally {
-      fakeDb.query = originalQuery;
-    }
+  it("does not pass a search on when the model has no searchFields", async () => {
+    const plain = await sync(
+      makeModel(unique("plain"), {
+        name: "Plain",
+        searchFields: [],
+        schema: z.object({ title: text({ label: "Title" }) }),
+      }),
+    );
+
+    await plain.read({ search: "hello" });
+
+    expect(lastQuery().search).toBeUndefined();
   });
 
   it("lets an explicit sort win over relevance ordering", async () => {
-    const post = makeModel(`post_${crypto.randomUUID().replace(/-/g, "")}`, {
-      name: "Post",
-      searchFields: ["title"],
-      schema: z.object({ title: text({ label: "Title" }) }),
-    });
-
-    fakeDb.queries.length = 0;
+    const post = await sync(build());
 
     await post.read({ search: "hello", sort: "title", order: "desc" });
 
-    const [call] = fakeDb.queries;
-    expect(call!.sql).toContain("ORDER BY title DESC");
-    expect(call!.sql).not.toContain("__relevance");
+    expect(lastQuery().sort).toEqual({ field: "title", order: "desc" });
   });
 });
 
 describe("makeModel read() nested relation search", () => {
-  it("turns a relation searchField into an IN subquery, contributing its own BM25 + containment boost to relevance via $parent", async () => {
-    const author = makeModel(
-      `author_${crypto.randomUUID().replace(/-/g, "")}`,
-      {
-        name: "Author",
-        searchFields: [],
-        schema: z.object({ name: text({ label: "Name" }) }),
-      },
-    );
-
-    const post = makeModel(`post_${crypto.randomUUID().replace(/-/g, "")}`, {
+  it("describes a relation searchField as a target on the linked table, reached via the local field", async () => {
+    const author = makeModel(unique("author"), {
+      name: "Author",
+      searchFields: ["name"],
+      schema: z.object({ name: text({ label: "Name" }) }),
+    });
+    const post = makeModel(unique("post"), {
       name: "Post",
       searchFields: ["title", "author.name"],
       schema: z.object({
@@ -561,61 +602,51 @@ describe("makeModel read() nested relation search", () => {
       }),
     });
 
-    fakeDb.queries.length = 0;
+    expect(post.def.search).toEqual([
+      { table: post.prefix, field: "title" },
+      { table: author.prefix, field: "name", via: "author" },
+    ]);
 
-    await post.read({ search: "hello" });
+    await sync(author, post);
+    const a = await author.create({ name: "Red Wing" });
+    await post.create({ title: "Boots", author: a.id } as never);
+    await post.create({ title: "Sandals" } as never);
 
-    const [call] = fakeDb.queries;
-    expect(call!.sql).toContain(
-      `(title @1@ $search OR author IN (SELECT VALUE id FROM ${author.prefix} WHERE name @2@ $search))`,
-    );
-    // The flat "title" field contributes BM25 + containment boost directly. The nested
-    // "author.name" match pulls its BM25 score back via a correlated subquery keyed on
-    // $parent.author (the current post's link), re-running the same @2@ match scoped to just
-    // that one author record and summing the (0 or 1 row) result with math::sum — so a real
-    // relation match (e.g. the author's name is exactly the query) gets a genuine score instead
-    // of the flat 0 it used to be stuck with.
-    expect(call!.sql).toContain(
-      '((search::score(1) + (IF string::contains(string::replace(string::lowercase(title), " ", ""), string::replace(string::lowercase($search), " ", "")) THEN 100 ELSE 0 END)) + ' +
-        `math::sum((SELECT VALUE (search::score(2) + (IF string::contains(string::replace(string::lowercase(name), " ", ""), string::replace(string::lowercase($search), " ", "")) THEN 100 ELSE 0 END)) FROM ${author.prefix} WHERE id = $parent.author AND name @2@ $search))) AS __relevance`,
-    );
+    const result = await post.read({ search: "red wing" });
+    expect(result.data.map((r) => r.title)).toEqual(["Boots"]);
   });
 
-  it("turns a multi_relation searchField into a CONTAINSANY subquery, still ranked by BM25 + containment via $parent even with no flat fields", async () => {
-    const tag = makeModel(`tag_${crypto.randomUUID().replace(/-/g, "")}`, {
+  it("describes a multi_relation searchField the same way", async () => {
+    const tag = makeModel(unique("tag"), {
       name: "Tag",
-      searchFields: [],
+      searchFields: ["name"],
       schema: z.object({ name: text({ label: "Name" }) }),
     });
-
-    const post = makeModel(`post_${crypto.randomUUID().replace(/-/g, "")}`, {
+    const post = makeModel(unique("post"), {
       name: "Post",
       searchFields: ["tags.name"],
       schema: z.object({
+        title: text({ label: "Title" }),
         tags: relationMany({ label: "Tags" }, tag),
       }),
     });
 
-    fakeDb.queries.length = 0;
+    expect(post.def.search).toEqual([
+      { table: tag.prefix, field: "name", via: "tags" },
+    ]);
 
-    await post.read({ search: "hello" });
+    await sync(tag, post);
+    const t = await tag.create({ name: "typescript" });
+    await post.create({ title: "A", tags: [t.id] } as never);
+    await post.create({ title: "B", tags: [] } as never);
 
-    const [call] = fakeDb.queries;
-    expect(call!.sql).toContain(
-      `(tags CONTAINSANY (SELECT VALUE id FROM ${tag.prefix} WHERE name @1@ $search))`,
-    );
-    // No flat fields at all, but the nested match still gets a real BM25 + containment signal to
-    // rank by (summed over every matching tag via $parent.tags) — relevance ordering is no
-    // longer skipped just because every searchField is nested.
-    expect(call!.sql).toContain(
-      `(math::sum((SELECT VALUE (search::score(1) + (IF string::contains(string::replace(string::lowercase(name), " ", ""), string::replace(string::lowercase($search), " ", "")) THEN 100 ELSE 0 END)) FROM ${tag.prefix} WHERE id IN $parent.tags AND name @1@ $search))) AS __relevance`,
-    );
-    expect(call!.sql).toContain("ORDER BY __relevance DESC");
+    const result = await post.read({ search: "typescript" });
+    expect(result.data.map((r) => r.title)).toEqual(["A"]);
   });
 
   it("throws at model-definition time when a searchField references a non-relation field", () => {
     expect(() =>
-      makeModel(`post_${crypto.randomUUID().replace(/-/g, "")}`, {
+      makeModel(unique("post"), {
         name: "Post",
         searchFields: ["title.name"],
         schema: z.object({ title: text({ label: "Title" }) }),
@@ -625,7 +656,7 @@ describe("makeModel read() nested relation search", () => {
 
   it("throws at model-definition time on more than one level of nesting", () => {
     expect(() =>
-      makeModel(`post_${crypto.randomUUID().replace(/-/g, "")}`, {
+      makeModel(unique("post"), {
         name: "Post",
         searchFields: ["author.company.name"],
         schema: z.object({ title: text({ label: "Title" }) }),
@@ -634,17 +665,14 @@ describe("makeModel read() nested relation search", () => {
   });
 
   it("throws at model-definition time when the target field doesn't exist on an already-registered target model", () => {
-    const author = makeModel(
-      `author_${crypto.randomUUID().replace(/-/g, "")}`,
-      {
-        name: "Author",
-        searchFields: [],
-        schema: z.object({ name: text({ label: "Name" }) }),
-      },
-    );
+    const author = makeModel(unique("author"), {
+      name: "Author",
+      searchFields: [],
+      schema: z.object({ name: text({ label: "Name" }) }),
+    });
 
     expect(() =>
-      makeModel(`post_${crypto.randomUUID().replace(/-/g, "")}`, {
+      makeModel(unique("post"), {
         name: "Post",
         searchFields: ["author.nickname"],
         schema: z.object({

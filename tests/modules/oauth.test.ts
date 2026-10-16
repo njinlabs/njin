@@ -1,38 +1,17 @@
-import {
-  afterAll,
-  beforeAll,
-  describe,
-  expect,
-  it,
-  mock,
-  spyOn,
-} from "bun:test";
+import { beforeAll, describe, expect, it, mock, spyOn } from "bun:test";
 import { createHash } from "node:crypto";
-import { createNodeEngines } from "@surrealdb/node";
 import Elysia from "elysia";
-import { RecordId, Surreal, Table } from "surrealdb";
 import * as realConfig from "../../src/core/config";
-import * as realUserModule from "../../src/models/user";
+import { oauthClientTable, oauthCodeTable } from "../../src/core/db/internal";
 import * as realElysiaModule from "../../src/modules/elysia";
-import * as realSurrealModule from "../../src/modules/surreal";
 import { makeFakeAuthPlugin } from "../helpers/fake_auth";
 import { makeFakeElysia } from "../helpers/fake_elysia";
+import { useTestDb } from "../helpers/test_db";
 
-// Real embedded SurrealDB rather than a hand-rolled fake — the OAuth flow leans on record-id
-// creates, merges and DELETE ... WHERE queries, which a fake would only echo back.
-const db = new Surreal({ engines: createNodeEngines() });
-await db.connect("mem://");
-await db.use({ namespace: "test", database: "test" });
-// Mirrors ensureTables(): selecting by record id on a never-DEFINE'd table throws.
-await db.query(
-  "DEFINE TABLE IF NOT EXISTS user SCHEMALESS; DEFINE TABLE IF NOT EXISTS mcp_token SCHEMALESS; DEFINE TABLE IF NOT EXISTS oauth_client SCHEMALESS; DEFINE TABLE IF NOT EXISTS oauth_code SCHEMALESS;",
-);
+// Real in-memory database rather than a hand-rolled fake — the OAuth flow leans on id-keyed
+// creates, merges and conditional deletes, which a fake would only echo back.
+const db = await useTestDb();
 
-mock.module("../../src/modules/surreal", () => ({
-  ...realSurrealModule,
-  default: () => db,
-}));
-mock.module("../../src/models/user", () => realUserModule);
 mock.module("../../src/core/config", () => ({
   ...realConfig,
   getConfig: () => ({
@@ -55,11 +34,13 @@ mock.module("../../src/modules/elysia", () => ({
   default: fakeElysia.fn,
 }));
 
+const { default: userModel } = await import("../../src/models/user");
 const { default: oauth } = await import("../../src/modules/oauth");
 const { default: mcpToken } = await import("../../src/modules/mcp_token");
 
 await oauth.init();
 await mcpToken.init();
+await db.sync([userModel.def]);
 const app = fakeElysia.buildApp();
 
 // A real mcpAuth-protected route, so a token coming out of the OAuth flow is proven against
@@ -73,18 +54,16 @@ const CALLBACK = "https://claude.ai/api/mcp/auth_callback";
 const PASSWORD = "correct-horse";
 const EMAIL = "admin@example.com";
 
-// An embedded engine left open at exit crashed Bun with a segfault on Linux CI (after all
-// tests had passed) — close it explicitly.
-afterAll(async () => {
-  await db.close();
-});
-
 beforeAll(async () => {
-  await db.create(new RecordId("user", "admin1")).content({
-    name: "Admin",
-    email: EMAIL,
-    password: Bun.password.hashSync(PASSWORD),
-  });
+  await db.adapter.insert(
+    userModel.def,
+    {
+      name: "Admin",
+      email: EMAIL,
+      password: Bun.password.hashSync(PASSWORD),
+    },
+    { id: "admin1" },
+  );
 });
 
 const request = (path: string, init?: RequestInit) =>
@@ -427,11 +406,10 @@ describe("POST /oauth/token — authorization_code", () => {
   it("rejects an expired code", async () => {
     const { res, client, verifier } = await signIn();
     const code = codeFrom(res);
-    const id = new RecordId(
-      "oauth_code",
-      createHash("sha256").update(code).digest("hex"),
-    );
-    await db.update(id).merge({ expiresAt: "2000-01-01T00:00:00.000Z" });
+    const id = createHash("sha256").update(code).digest("hex");
+    await db.adapter.update(oauthCodeTable, id, {
+      expiresAt: "2000-01-01T00:00:00.000Z",
+    });
 
     const bad = await exchange(client.client_id, code, verifier);
     expect(((await bad.json()) as any).error).toBe("invalid_grant");
@@ -528,17 +506,16 @@ describe("POST /oauth/revoke", () => {
 
 describe("pruning", () => {
   it("drops abandoned clients and expired codes when a new client registers", async () => {
-    const stale = await db.create(new Table("oauth_client")).content({
+    const stale = await db.adapter.insert(oauthClientTable, {
       clientName: "Stale",
       redirectUris: [CALLBACK],
       used: false,
       createdAt: "2000-01-01T00:00:00.000Z",
     });
-    const staleId = (stale as any)[0].id as RecordId;
 
     await register();
 
-    expect(await db.select(staleId)).toBeUndefined();
+    expect(await db.adapter.find(oauthClientTable, stale.id)).toBeNull();
   });
 });
 
@@ -646,11 +623,15 @@ describe("sign-in email matching", () => {
   });
 
   it("matches an account that was stored with a mixed-case email", async () => {
-    await db.create(new RecordId("user", "mixed1")).content({
-      name: "Mixed",
-      email: "Mixed.Case@Example.com",
-      password: Bun.password.hashSync(PASSWORD),
-    });
+    await db.adapter.insert(
+      userModel.def,
+      {
+        name: "Mixed",
+        email: "Mixed.Case@Example.com",
+        password: Bun.password.hashSync(PASSWORD),
+      },
+      { id: "mixed1" },
+    );
 
     for (const email of ["mixed.case@example.com", "MIXED.CASE@EXAMPLE.COM"]) {
       const { res } = await signIn({ email });
@@ -663,7 +644,9 @@ describe("sign-in email matching", () => {
     try {
       await signIn({ email: "ghost@example.com" });
       expect(verify).toHaveBeenCalledTimes(1);
-      expect(verify.mock.calls[0]?.[1]).toBe(realUserModule.DUMMY_HASH);
+      expect(verify.mock.calls[0]?.[1]).toBe(
+        (await import("../../src/models/user")).DUMMY_HASH,
+      );
     } finally {
       verify.mockRestore();
     }

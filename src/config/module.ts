@@ -3,6 +3,7 @@ import admin from "../modules/admin";
 import analytics from "../modules/analytics";
 import api from "../modules/api";
 import auth from "../modules/auth";
+import db from "../modules/db";
 import elysia from "../modules/elysia";
 import file from "../modules/file";
 import img from "../modules/img";
@@ -13,7 +14,6 @@ import mcpUpload from "../modules/mcp_upload";
 import oauth from "../modules/oauth";
 import plugin from "../modules/plugin";
 import setup from "../modules/setup";
-import surreal from "../modules/surreal";
 import users from "../modules/users";
 import vars from "../modules/vars";
 import view from "../modules/view";
@@ -24,12 +24,12 @@ await loadConfig();
 
 const modules = [
   logger.init(),
-  // Awaited — surreal's init() now performs the actual DB connect (see surreal.ts),
-  // so plugin.init() below (which may query the DB, e.g. reading its own vars group)
-  // never runs against an unconnected instance.
-  await surreal.init(),
+  // Awaited — db's init() performs the actual DB connect (see db.ts), so plugin.init()
+  // below (which may query the DB, e.g. reading its own vars group) never runs against an
+  // unconnected instance.
+  await db.init(),
   elysia.init(),
-  // Early — after elysia/surreal singletons exist (and surreal is connected), but well
+  // Early — after elysia/db singletons exist (and db is connected), but well
   // before api.init() (which drains hooks/events and mounts models/routes) — so a
   // plugin's own setup always finishes before its own contributed routes/hooks/events go live.
   await plugin.init(),

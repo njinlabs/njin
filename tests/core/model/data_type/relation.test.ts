@@ -1,5 +1,4 @@
 import { describe, expect, it } from "bun:test";
-import { RecordId } from "surrealdb";
 import z from "zod";
 import { makeModel } from "../../../../src/core/model";
 import { relation } from "../../../../src/core/model/data_type/relation";
@@ -12,16 +11,9 @@ const target = makeModel("relation_test_target", {
 });
 
 describe("relation", () => {
-  it("transforms a plain string id into a RecordId", () => {
-    const result = relation({ label: "Category" }, target).parse("abc123");
-    expect(result).toBeInstanceOf(RecordId);
-    expect((result as RecordId).table.toString()).toBe("relation_test_target");
-  });
-
-  it("passes through an existing RecordId instance", () => {
-    const id = new RecordId(target.table, "xyz789");
-    expect(relation({ label: "Category" }, target).parse(id)).toBeInstanceOf(
-      RecordId,
+  it("keeps a plain string id as the plain string id", () => {
+    expect(relation({ label: "Category" }, target).parse("abc123")).toBe(
+      "abc123",
     );
   });
 

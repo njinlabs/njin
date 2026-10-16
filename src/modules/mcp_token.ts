@@ -2,15 +2,13 @@ import { randomBytes, timingSafeEqual } from "node:crypto";
 import bearer from "@elysia/bearer";
 import Elysia, { status } from "elysia";
 import moment from "moment";
-import { RecordId, Table } from "surrealdb";
 import z from "zod";
+import { mcpTokenTable } from "../core/db/internal";
 import { makeModule } from "../core/module";
 import { publicBase } from "../core/public_url";
 import auth from "./auth";
+import db from "./db";
 import elysia from "./elysia";
-import surreal from "./surreal";
-
-const table = new Table("mcp_token");
 
 // Bearer prefixes, not just cosmetic — a session token ("token:<id>:<plain>") fed to an
 // MCP-only route (or the reverse) fails the prefix check before any DB lookup happens, and an
@@ -26,11 +24,11 @@ const REFRESH_TTL_DAYS = 30;
 // specific user + client, expire quickly, and renew through a rotating refresh token that
 // lives on the same record — so listing/revoking connections is one table for both kinds.
 type McpToken = {
-  id: RecordId;
+  id: string;
   name: string;
   hash: string;
   createdAt: string;
-  createdBy: RecordId;
+  createdBy: string;
   kind?: "manual" | "oauth";
   expiresAt?: string;
   refreshHash?: string;
@@ -73,11 +71,11 @@ const toPublic = ({
   expiresAt,
   clientId,
 }: McpToken) => ({
-  id: id.id.toString(),
+  id,
   name,
   kind: kind ?? "manual",
   createdAt,
-  createdBy: createdBy?.id?.toString() ?? null,
+  createdBy: createdBy ?? null,
   expiresAt: expiresAt ?? null,
   clientId: clientId ?? null,
 });
@@ -86,9 +84,7 @@ const verifyToken = async (bearerValue: string | undefined) => {
   const parsed = parseBearer(bearerValue, ACCESS_PREFIX);
   if (!parsed) return null;
 
-  const token = await surreal().select<McpToken>(
-    new RecordId(table, parsed.id),
-  );
+  const token = (await db().find(mcpTokenTable, parsed.id)) as McpToken | null;
   if (!token) return null;
 
   if (!safeEqual(token.hash, hashSecret(parsed.secret))) return null;
@@ -113,26 +109,24 @@ const refreshExpiry = () =>
 export const issueOAuthTokens = async (input: {
   name: string;
   clientId: string;
-  userId: RecordId;
+  userId: string;
 }) => {
   const access = newSecret();
   const refresh = newSecret();
 
-  const [created] = await surreal()
-    .create<McpToken>(table)
-    .content({
-      name: input.name,
-      kind: "oauth",
-      clientId: input.clientId,
-      createdBy: input.userId as unknown as McpToken["createdBy"],
-      createdAt: moment().toISOString(),
-      hash: hashSecret(access),
-      expiresAt: accessExpiry(),
-      refreshHash: hashSecret(refresh),
-      refreshExpiresAt: refreshExpiry(),
-    });
+  const created = await db().insert(mcpTokenTable, {
+    name: input.name,
+    kind: "oauth",
+    clientId: input.clientId,
+    createdBy: input.userId,
+    createdAt: moment().toISOString(),
+    hash: hashSecret(access),
+    expiresAt: accessExpiry(),
+    refreshHash: hashSecret(refresh),
+    refreshExpiresAt: refreshExpiry(),
+  });
 
-  return tokenResponse(created!.id.id.toString(), access, refresh);
+  return tokenResponse(created.id, access, refresh);
 };
 
 // Refresh-token rotation: the presented token is replaced in place, so it can never be used
@@ -145,8 +139,7 @@ export const rotateOAuthTokens = async (
   const parsed = parseBearer(refreshBearer, REFRESH_PREFIX);
   if (!parsed) return null;
 
-  const id = new RecordId(table, parsed.id);
-  const token = await surreal().select<McpToken>(id);
+  const token = (await db().find(mcpTokenTable, parsed.id)) as McpToken | null;
 
   if (
     token?.kind !== "oauth" ||
@@ -161,14 +154,12 @@ export const rotateOAuthTokens = async (
   const access = newSecret();
   const refresh = newSecret();
 
-  await surreal()
-    .update<McpToken>(id)
-    .merge({
-      hash: hashSecret(access),
-      expiresAt: accessExpiry(),
-      refreshHash: hashSecret(refresh),
-      refreshExpiresAt: refreshExpiry(),
-    });
+  await db().update(mcpTokenTable, parsed.id, {
+    hash: hashSecret(access),
+    expiresAt: accessExpiry(),
+    refreshHash: hashSecret(refresh),
+    refreshExpiresAt: refreshExpiry(),
+  });
 
   return tokenResponse(parsed.id, access, refresh);
 };
@@ -179,13 +170,15 @@ export const revokeOAuthToken = async (bearerValue: string) => {
     const parsed = parseBearer(bearerValue, prefix);
     if (!parsed) continue;
 
-    const id = new RecordId(table, parsed.id);
-    const token = await surreal().select<McpToken>(id);
+    const token = (await db().find(
+      mcpTokenTable,
+      parsed.id,
+    )) as McpToken | null;
     if (!token) return;
 
     const expected = prefix === ACCESS_PREFIX ? token.hash : token.refreshHash;
     if (expected && safeEqual(expected, hashSecret(parsed.secret))) {
-      await surreal().delete(id);
+      await db().remove(mcpTokenTable, parsed.id);
     }
     return;
   }
@@ -229,13 +222,14 @@ const mcpToken = makeModule(() => {
       .get(
         "/",
         async () => {
-          const tokens = await surreal().select<McpToken>(table);
+          const { rows } = await db().list(mcpTokenTable, {
+            page: 1,
+            limit: 1000,
+            sort: { field: "createdAt", order: "desc" },
+            populate: [],
+          });
 
-          return {
-            data: tokens
-              .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
-              .map(toPublic),
-          };
+          return { data: (rows as McpToken[]).map(toPublic) };
         },
         { auth: true },
       )
@@ -244,21 +238,19 @@ const mcpToken = makeModule(() => {
         async ({ body, user }) => {
           const plain = newSecret();
 
-          const [created] = await surreal()
-            .create<McpToken>(table)
-            .content({
-              name: body.name,
-              kind: "manual",
-              hash: hashSecret(plain),
-              createdAt: moment().toISOString(),
-              createdBy: user.id as unknown as McpToken["createdBy"],
-            });
+          const created = (await db().insert(mcpTokenTable, {
+            name: body.name,
+            kind: "manual",
+            hash: hashSecret(plain),
+            createdAt: moment().toISOString(),
+            createdBy: user.id,
+          })) as McpToken;
 
           return {
             data: {
-              ...toPublic(created!),
+              ...toPublic(created),
               // Returned exactly once — only the hash is stored, so it can't be shown again.
-              token: `${ACCESS_PREFIX}:${created!.id.id}:${plain}`,
+              token: `${ACCESS_PREFIX}:${created.id}:${plain}`,
             },
           };
         },
@@ -270,14 +262,16 @@ const mcpToken = makeModule(() => {
       .delete(
         "/:id",
         async ({ params }) => {
-          const id = new RecordId(table, params.id);
-          const existing = await surreal().select<McpToken>(id);
+          const existing = (await db().find(
+            mcpTokenTable,
+            params.id,
+          )) as McpToken | null;
 
           if (!existing) {
             return status(404, { message: "Token not found" });
           }
 
-          await surreal().delete(id);
+          await db().remove(mcpTokenTable, params.id);
 
           return { data: toPublic(existing) };
         },

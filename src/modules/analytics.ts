@@ -1,15 +1,14 @@
 import Elysia from "elysia";
 import geoip from "geoip-lite";
 import moment from "moment";
-import { Table } from "surrealdb";
 import z from "zod";
+import type { Condition } from "../core/db/contract";
+import { pageviewTable } from "../core/db/internal";
 import { makeModule } from "../core/module";
 import auth from "./auth";
+import db from "./db";
 import elysia from "./elysia";
 import logger from "./logger";
-import surreal from "./surreal";
-
-const table = new Table("pageview");
 
 type TrackInput = {
   path: string;
@@ -84,23 +83,13 @@ const rangeQuery = z.object({
 });
 
 const buildWhere = (from?: string, to?: string, path?: string) => {
-  const parts: string[] = [];
-  const params: Record<string, unknown> = {};
+  const where: Condition[] = [];
 
-  if (from) {
-    parts.push("createdAt >= $from");
-    params.from = from;
-  }
-  if (to) {
-    parts.push("createdAt <= $to");
-    params.to = to;
-  }
-  if (path) {
-    parts.push("path = $path");
-    params.path = path;
-  }
+  if (from) where.push({ field: "createdAt", op: "$gte", value: from });
+  if (to) where.push({ field: "createdAt", op: "$lte", value: to });
+  if (path) where.push({ field: "path", op: "$eq", value: path });
 
-  return { where: parts.length ? `WHERE ${parts.join(" AND ")}` : "", params };
+  return where;
 };
 
 const analytics = makeModule(() => {
@@ -119,13 +108,14 @@ const analytics = makeModule(() => {
           ? null
           : referrer;
 
-        await surreal().create(table).content({
+        await db().insert(pageviewTable, {
           path,
           referrer: externalReferrer,
           userAgent,
           country,
           visitorHash,
           createdAt: moment().toISOString(),
+          updatedAt: moment().toISOString(),
         });
       } catch (e) {
         logger().error(e, "[analytics] failed to track pageview");
@@ -141,15 +131,15 @@ const analytics = makeModule(() => {
       .get(
         "/summary",
         async ({ query: { from, to, path } }) => {
-          const { where, params } = buildWhere(from, to, path);
-          const [rows] = await surreal().query<
-            [{ visitorHash: string | null }[]]
-          >(`SELECT visitorHash FROM pageview ${where}`, params);
-
-          const totalPageviews = rows?.length ?? 0;
-          const uniqueVisitors = new Set(
-            (rows ?? []).map((r) => r.visitorHash).filter(Boolean),
-          ).size;
+          const where = buildWhere(from, to, path);
+          const totalPageviews = await db().count(pageviewTable, where);
+          const uniqueVisitors = (
+            await db().countBy({
+              table: "pageview",
+              groupBy: "visitorHash",
+              where,
+            })
+          ).filter((r) => r.key).length;
 
           return { data: { totalPageviews, uniqueVisitors } };
         },
@@ -158,45 +148,48 @@ const analytics = makeModule(() => {
       .get(
         "/by-country",
         async ({ query: { from, to, path } }) => {
-          const { where, params } = buildWhere(from, to, path);
-          const [rows] = await surreal().query<
-            [{ country: string | null; count: number }[]]
-          >(
-            `SELECT country, count() AS count FROM pageview ${where} GROUP BY country ORDER BY count DESC`,
-            params,
-          );
+          const where = buildWhere(from, to, path);
+          const rows = await db().countBy({
+            table: "pageview",
+            groupBy: "country",
+            where,
+          });
 
-          return { data: rows ?? [] };
+          return {
+            data: rows.map(({ key, count }) => ({ country: key, count })),
+          };
         },
         { auth: true, query: rangeQuery },
       )
       .get(
         "/by-referrer",
         async ({ query: { from, to, path } }) => {
-          const { where, params } = buildWhere(from, to, path);
-          const [rows] = await surreal().query<
-            [{ referrer: string | null; count: number }[]]
-          >(
-            `SELECT referrer, count() AS count FROM pageview ${where} GROUP BY referrer ORDER BY count DESC`,
-            params,
-          );
+          const where = buildWhere(from, to, path);
+          const rows = await db().countBy({
+            table: "pageview",
+            groupBy: "referrer",
+            where,
+          });
 
-          return { data: rows ?? [] };
+          return {
+            data: rows.map(({ key, count }) => ({ referrer: key, count })),
+          };
         },
         { auth: true, query: rangeQuery },
       )
       .get(
         "/by-page",
         async ({ query: { from, to } }) => {
-          const { where, params } = buildWhere(from, to, undefined);
-          const [rows] = await surreal().query<
-            [{ path: string; count: number }[]]
-          >(
-            `SELECT path, count() AS count FROM pageview ${where} GROUP BY path ORDER BY count DESC`,
-            params,
-          );
+          const where = buildWhere(from, to, undefined);
+          const rows = await db().countBy({
+            table: "pageview",
+            groupBy: "path",
+            where,
+          });
 
-          return { data: rows ?? [] };
+          return {
+            data: rows.map(({ key, count }) => ({ path: key, count })),
+          };
         },
         {
           auth: true,
@@ -206,20 +199,19 @@ const analytics = makeModule(() => {
       .get(
         "/timeseries",
         async ({ query: { from, to, path, interval } }) => {
-          const { where, params } = buildWhere(from, to, path);
+          const where = buildWhere(from, to, path);
           const bucketLen = interval === "hour" ? 13 : 10; // "YYYY-MM-DDTHH" vs "YYYY-MM-DD"
 
-          const [rows] = await surreal().query<
-            [{ date: string; count: number }[]]
-          >(
-            `SELECT string::slice(createdAt, 0, ${bucketLen}) AS date, count() AS count
-             FROM pageview ${where}
-             GROUP BY date
-             ORDER BY date ASC`,
-            params,
-          );
+          const rows = await db().countBy({
+            table: "pageview",
+            groupBy: "createdAt",
+            prefix: bucketLen,
+            where,
+          });
 
-          return { data: rows ?? [] };
+          return {
+            data: rows.map(({ key, count }) => ({ date: key, count })),
+          };
         },
         {
           auth: true,
@@ -231,14 +223,7 @@ const analytics = makeModule(() => {
 
     elysia().use(controller);
 
-    return {
-      // Runs after surreal's own spin() has connected — init() itself runs too early for DB queries.
-      spin: async () => {
-        await surreal().query(
-          "DEFINE TABLE IF NOT EXISTS pageview SCHEMALESS;",
-        );
-      },
-    };
+    return {};
   };
 
   return fn;

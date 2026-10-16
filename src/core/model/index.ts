@@ -1,12 +1,18 @@
 import moment from "moment";
-import { RecordId, Table, type Values } from "surrealdb";
 import { z } from "zod";
-import surreal from "../../modules/surreal";
+import db from "../../modules/db";
+import type {
+  Condition,
+  ListQuery,
+  SearchTarget,
+  TableDef,
+} from "../db/contract";
+import { fieldsFromSchema } from "../db/table_def";
 import { runAfterHooks, runBeforeDestroyHooks, runBeforeHooks } from "./hooks";
 
-// See the containment-boost comment in read()'s relevanceSelect below for why this exists and
-// why the value just needs to clear typical BM25 scores (~0-10), not be precisely tuned.
-const CONTAINMENT_BOOST = 100;
+// Input shape of create()/update(): the schema's own data, with relation fields given as plain
+// id strings.
+type Values<T> = T;
 
 export type FormMeta = {
   label: string;
@@ -45,8 +51,7 @@ export const filtersQuerySchema = z.record(
   z.union([z.string(), z.record(z.string(), z.string())]),
 );
 
-// Pagination numbers are interpolated into the query string (SurrealQL can't bind them in
-// every position we use), so anything that isn't a plain positive integer is replaced.
+// Anything that isn't a plain positive integer is replaced with the fallback.
 const toPositiveInt = (value: unknown, fallback: number) => {
   const n = Number(value);
   return Number.isSafeInteger(n) && n > 0 ? n : fallback;
@@ -96,30 +101,26 @@ type Selected<T, S> = S extends readonly (infer K)[]
 // "author.name" narrows the record's `author` property (its inner shape isn't tracked).
 type RelationRoot<K> = K extends `${infer Root}.${string}` ? Root : K;
 
-// Field names go straight into the SELECT list, so on top of the schema whitelist they must be
-// plain identifiers.
+// On top of the schema whitelist, field names must be plain identifiers.
 const SAFE_IDENTIFIER = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
 // Present on every record but not part of the user-defined schema shape.
 const RECORD_META_FIELDS = ["id", "createdAt", "updatedAt"];
 
-// Whitelist of operators — unknown operators are silently dropped, never interpolated.
-const OPERATORS: Record<
-  FilterOperator,
-  (field: string, param: string) => string
-> = {
-  $eq: (f, p) => `${f} = $${p}`,
-  $ne: (f, p) => `${f} != $${p}`,
-  $gt: (f, p) => `${f} > $${p}`,
-  $gte: (f, p) => `${f} >= $${p}`,
-  $lt: (f, p) => `${f} < $${p}`,
-  $lte: (f, p) => `${f} <= $${p}`,
-  $contains: (f, p) => `string::contains(string::lowercase(${f}), $${p})`,
-  $startsWith: (f, p) => `string::starts_with(string::lowercase(${f}), $${p})`,
-  $in: (f, p) => `${f} CONTAINS $${p}`,
-};
+// Whitelist of operators — unknown operators are silently dropped, never passed on.
+const OPERATORS = new Set<FilterOperator>([
+  "$eq",
+  "$ne",
+  "$gt",
+  "$gte",
+  "$lt",
+  "$lte",
+  "$contains",
+  "$startsWith",
+  "$in",
+]);
 
-// Query strings only carry text, but SurrealDB compares strictly by type — so numeric and
+// Query strings only carry text, but the database compares strictly by type — so numeric and
 // boolean fields need their filter value converted. Returns undefined when it can't be
 // converted, and the caller drops that condition instead of matching nothing by accident.
 const coerceFilterValue = (
@@ -219,12 +220,10 @@ export const makeModel = <Rules extends z.ZodObject>(
 ) => {
   type Data = z.infer<Rules>;
   type Returning = Data & {
-    id: RecordId;
+    id: string;
     createdAt: string;
     updatedAt: string;
   };
-
-  const table = new Table(prefix);
 
   schemaRegistry.set(prefix, config.schema);
 
@@ -243,6 +242,24 @@ export const makeModel = <Rules extends z.ZodObject>(
     config.name,
   );
 
+  // What the db adapter works from. A nested searchFields entry ("author.name") is indexed on
+  // the *target* table/field — the local relation field holds a link, not text.
+  const searchTargets: SearchTarget[] = searchPlan.map((entry) =>
+    entry.kind === "flat"
+      ? { table: prefix, field: entry.field }
+      : {
+          table: entry.targetPrefix,
+          field: entry.targetField,
+          via: entry.local,
+        },
+  );
+
+  const def: TableDef = {
+    name: prefix,
+    fields: fieldsFromSchema(config.schema),
+    search: searchTargets,
+  };
+
   const uniqueFields = Object.entries(config.schema.shape)
     .filter(([, v]) => (v as z.ZodType).meta()?.unique === true)
     .map(([k]) => k);
@@ -252,8 +269,7 @@ export const makeModel = <Rules extends z.ZodObject>(
   // A real Set, not `key in config.schema.shape` — `in` also matches inherited
   // Object.prototype members (e.g. "constructor", "toString"), and JSON.parse can
   // produce those as literal own-properties on a request body/query object, letting
-  // them slip past a schema-shape membership check and get interpolated as a field
-  // name into the raw query string built below.
+  // them slip past a schema-shape membership check and get passed on as a field name.
   const filterableFieldSet = new Set(Object.keys(config.schema.shape));
 
   const renderAsOf = (field: string) =>
@@ -268,16 +284,12 @@ export const makeModel = <Rules extends z.ZodObject>(
   ) => {
     if (!uniqueFieldSet.has(field)) return false;
 
-    const excludeClause = excludeId ? "AND id != $excludeId" : "";
-    const [[row]] = await surreal().query<[{ count: number }[]]>(
-      `SELECT count() AS count FROM ${prefix} WHERE ${field} = $value ${excludeClause} GROUP ALL`,
-      {
-        value,
-        excludeId: excludeId ? new RecordId(table, excludeId) : undefined,
-      },
-    );
+    const where: Condition[] = [
+      { field, op: "$eq", value: value as FilterScalar },
+    ];
+    if (excludeId) where.push({ field: "id", op: "$ne", value: excludeId });
 
-    return (row?.count ?? 0) > 0;
+    return (await db().count(def, where)) > 0;
   };
 
   const assertUnique = async (
@@ -304,15 +316,11 @@ export const makeModel = <Rules extends z.ZodObject>(
 
     await assertUnique(merged);
 
-    const record = (await surreal()
-      .create<Data>(table)
-      .content({
-        ...merged,
-        createdAt: moment().toISOString(),
-        updatedAt: moment().toISOString(),
-      })
-      .output("after")
-      .then(([data]) => data)) as Returning;
+    const record = (await db().insert(def, {
+      ...merged,
+      createdAt: moment().toISOString(),
+      updatedAt: moment().toISOString(),
+    })) as unknown as Returning;
 
     await runAfterHooks("afterCreate", prefix, record);
 
@@ -323,6 +331,13 @@ export const makeModel = <Rules extends z.ZodObject>(
   // updatedAt aren't in the user-defined schema shape but exist on every record.
   const selectableFieldSet = new Set([
     ...filterableFieldSet,
+    ...RECORD_META_FIELDS,
+  ]);
+
+  // id/createdAt/updatedAt are always present on every record but aren't part of the
+  // user-defined schema shape (they're injected in create()/update()) — allow sorting by them too.
+  const sortableFields = new Set([
+    ...Object.keys(config.schema.shape),
     ...RECORD_META_FIELDS,
   ]);
 
@@ -340,31 +355,7 @@ export const makeModel = <Rules extends z.ZodObject>(
   }: Omit<ReadOptions, "select"> & { select?: S } = {}) => {
     const pageLimit = toPositiveInt(limit, 20);
     page = toPositiveInt(page, 1);
-    const whereParts: string[] = [];
-    const params: Record<string, unknown> = {};
-
-    // Uses SurrealDB's full-text SEARCH index (see SEARCH_ANALYZER in ../../modules/surreal),
-    // not string::similarity::jaro_winkler — jaro_winkler compares two strings as a whole, so
-    // a short search term against a long field (e.g. "next.js" inside a full title) scores far
-    // below any usable threshold even though the term is clearly present. The @N@ match
-    // operator + ngram analyzer gives real substring/partial-word matching, BM25 relevance
-    // ranking, and still tolerates minor typos via shared n-grams.
-    //
-    // A nested entry (searchPlan `kind: "nested"`, e.g. "author.name") becomes an IN/CONTAINSANY
-    // subquery against the target table instead — the local relation field holds a record link,
-    // not text, so it can't carry its own full-text index. All entries (flat and nested alike)
-    // share one running @N@ counter in declaration order, since SurrealDB's match-ref scoping
-    // across a WHERE-clause subquery on a different table isn't something to assume either way.
-    if (search && searchPlan.length) {
-      params.search = search.trim();
-      const clauses = searchPlan.map((entry, i) => {
-        const n = i + 1;
-        if (entry.kind === "flat") return `${entry.field} @${n}@ $search`;
-        const op = entry.multi ? "CONTAINSANY" : "IN";
-        return `${entry.local} ${op} (SELECT VALUE id FROM ${entry.targetPrefix} WHERE ${entry.targetField} @${n}@ $search)`;
-      });
-      whereParts.push(`(${clauses.join(" OR ")})`);
-    }
+    const where: Condition[] = [];
 
     if (filters) {
       for (const [key, value] of Object.entries(filters)) {
@@ -381,98 +372,30 @@ export const makeModel = <Rules extends z.ZodObject>(
           // Shorthand: filters[field]=value → equality
           const coerced = coerceFilterValue(renderAs, value);
           if (coerced === undefined) continue;
-          params[`f_${key}`] = coerced;
-          whereParts.push(`${key} = $f_${key}`);
+          where.push({ field: key, op: "$eq", value: coerced });
         } else {
           // Operator form: filters[field][$op]=value
           for (const [op, opValue] of Object.entries(value) as [
             FilterOperator,
             FilterScalar | undefined | null,
           ][]) {
-            const builder = OPERATORS[op]; // strict whitelist — unknown ops get undefined
-            if (!builder || opValue === undefined || opValue === null) continue;
+            // strict whitelist — unknown ops are dropped
+            if (!OPERATORS.has(op) || opValue === undefined || opValue === null)
+              continue;
 
-            const pk = `f_${key}_${op.slice(1)}`; // e.g. f_title_contains
             if (op === "$contains" || op === "$startsWith") {
-              params[pk] = String(opValue).toLowerCase(); // match the lowercased field
+              where.push({ field: key, op, value: String(opValue) });
             } else if (op === "$in") {
-              params[pk] = opValue;
+              where.push({ field: key, op, value: opValue });
             } else {
               const coerced = coerceFilterValue(renderAs, opValue);
               if (coerced === undefined) continue;
-              params[pk] = coerced;
+              where.push({ field: key, op, value: coerced });
             }
-            whereParts.push(builder(key, pk));
           }
         }
       }
     }
-
-    const where = whereParts.length ? `WHERE ${whereParts.join(" AND ")}` : "";
-    // id/createdAt/updatedAt are always present on every record but aren't part of the
-    // user-defined schema shape (they're injected in create()/update()) — allow sorting by them too.
-    const sortableFields = new Set([
-      ...Object.keys(config.schema.shape),
-      "id",
-      "createdAt",
-      "updatedAt",
-    ]);
-    const hasExplicitSort = Boolean(sort && sortableFields.has(sort));
-    // An explicit sort always wins; otherwise, when searching, rank by relevance instead of
-    // leaving result order unspecified. `ORDER BY` only accepts a bare identifier here, not a
-    // function call — so relevance is projected as an aliased field below (SELECT ... AS
-    // __relevance) and stripped back out of each returned record afterwards, since it isn't
-    // part of the model's schema.
-    //
-    // Every field — flat or nested — contributes raw BM25 (search::score(N)) plus a containment
-    // boost. search::score(N) only works against a FULLTEXT index on the table actually being
-    // queried, and a nested match happened on a different table entirely — so its score is
-    // pulled back via a correlated subquery using SurrealDB's $parent (the current outer row),
-    // re-running the same `targetField @N@ $search` match scoped to just that one linked record
-    // (`id = $parent.<local>`, or `id IN $parent.<local>` for a multi relation) and summing the
-    // result with math::sum (0 rows -> 0, exactly what an unmatched/absent relation should
-    // contribute). Nested entries used to be excluded from __relevance altogether, which meant a
-    // row matched *only* through its relation (e.g. brand.name === "Red Wing", normally the most
-    // precise signal available) scored exactly 0 — tied with "didn't match" and ranked below any
-    // row that merely shared a few ngrams with the query on a flat field.
-    //
-    // The containment check itself: the ngram analyzer (see SEARCH_ANALYZER_DEFINITION in
-    // ../../modules/surreal) matches on shared n-grams, which means a document can match without
-    // ever containing the search string as a whole — two unrelated titles can share enough short
-    // n-grams to both "match", and short/generic field values are disproportionately likely to
-    // do so. A field that truly contains the (lowercased) search string is a much stronger
-    // signal than raw BM25 alone, so it's boosted well above the normal BM25 range (empirically
-    // small, well under 10) to consistently outrank n-gram-only matches, without removing those
-    // matches from the result set (fuzzy/typo recall from ngram is unaffected — this only changes
-    // ordering). Both sides also have their spaces stripped before comparing, since real product
-    // data routinely writes a multi-word term as one run-together token (e.g. "REDWING 2415..."
-    // for "Red Wing") — a plain substring check against "red wing" (with the space) would miss
-    // that despite it being a stronger match than most ngram overlaps.
-    const useRelevance =
-      !hasExplicitSort && Boolean(search && searchPlan.length);
-    const orderBy = hasExplicitSort
-      ? `ORDER BY ${sort} ${order === "desc" ? "DESC" : "ASC"}`
-      : useRelevance
-        ? "ORDER BY __relevance DESC"
-        : "";
-    const containmentCheck = (field: string) =>
-      `string::contains(string::replace(string::lowercase(${field}), " ", ""), string::replace(string::lowercase($search), " ", ""))`;
-    const relevanceSelect = useRelevance
-      ? `, (${searchPlan
-          .map((e, i) => {
-            const n = i + 1;
-            const boost = (field: string) =>
-              `(IF ${containmentCheck(field)} THEN ${CONTAINMENT_BOOST} ELSE 0 END)`;
-            if (e.kind === "flat") {
-              return `(search::score(${n}) + ${boost(e.field)})`;
-            }
-            const idFilter = e.multi
-              ? `id IN $parent.${e.local}`
-              : `id = $parent.${e.local}`;
-            return `math::sum((SELECT VALUE (search::score(${n}) + ${boost(e.targetField)}) FROM ${e.targetPrefix} WHERE ${idFilter} AND ${e.targetField} @${n}@ $search))`;
-          })
-          .join(" + ")}) AS __relevance`
-      : "";
 
     // Validate select against the schema — prevents arbitrary field injection. Anything that
     // isn't a known field (or isn't a plain identifier) is dropped, and an empty result means
@@ -480,9 +403,8 @@ export const makeModel = <Rules extends z.ZodObject>(
     //
     // "relation.field" picks fields of the linked record instead of the whole thing; both halves
     // are checked (the relation against this schema, the field against the target model's
-    // registered schema) and it projects through SurrealDB's `relation.{id, field} AS relation`,
-    // which follows the link itself — no FETCH — and maps over multi relations. A relation that
-    // has any "relation.field" entry uses that projection even when it is also selected whole.
+    // registered schema). A relation that has any "relation.field" entry uses that projection
+    // even when it is also selected whole.
     const flatSelected = new Set<string>();
     const nestedSelected = new Map<string, Set<string>>();
     if (Array.isArray(select)) {
@@ -520,52 +442,47 @@ export const makeModel = <Rules extends z.ZodObject>(
     }
     for (const local of nestedSelected.keys()) flatSelected.delete(local);
 
-    const projection =
-      flatSelected.size || nestedSelected.size
-        ? [
-            "id",
-            ...[...flatSelected].filter((f) => f !== "id"),
-            ...[...nestedSelected].map(
-              ([local, fields]) =>
-                `${local}.{${["id", ...[...fields].filter((f) => f !== "id")].join(", ")}} AS ${local}`,
-            ),
-          ].join(", ")
-        : "*";
+    const hasSelect = flatSelected.size > 0 || nestedSelected.size > 0;
 
-    // Validate populate against known relation fields — prevents FETCH injection. With a
-    // select, only relations that are returned whole are worth fetching.
-    const fetchFields = (
+    // Validate populate against known relation fields. With a select, only relations that
+    // are returned whole are worth fetching.
+    const populateFields = (
       populate === "none"
         ? []
         : populate
           ? populate.filter((f) => relationFieldSet.has(f))
           : relationFields
     ).filter(
-      (f) =>
-        !nestedSelected.has(f) &&
-        (!(flatSelected.size || nestedSelected.size) || flatSelected.has(f)),
-    );
-    const fetch = fetchFields.length ? `FETCH ${fetchFields.join(", ")}` : "";
-    const start = (page - 1) * pageLimit;
-
-    const [rows, [countRow]] = await surreal().query<
-      [(Returning & { __relevance?: number })[], { count: number }[]]
-    >(
-      `SELECT ${projection}${relevanceSelect} FROM ${prefix} ${where} ${orderBy} LIMIT ${pageLimit} START ${start} ${fetch};
-       SELECT count() as count FROM ${prefix} ${where} GROUP ALL`,
-      params,
+      (f) => !nestedSelected.has(f) && (!hasSelect || flatSelected.has(f)),
     );
 
-    const data = (rows ?? []).map((row) => {
-      if (!useRelevance) return row;
-      const { __relevance, ...rest } = row;
-      return rest as Returning;
-    }) as unknown as Selected<Returning, S>[];
+    const query: ListQuery = {
+      where,
+      search: search && searchTargets.length ? search : undefined,
+      sort:
+        sort && sortableFields.has(sort)
+          ? { field: sort, order: order === "desc" ? "desc" : "asc" }
+          : undefined,
+      page,
+      limit: pageLimit,
+      select: hasSelect
+        ? {
+            fields: [...flatSelected],
+            nested: Object.fromEntries(
+              [...nestedSelected].map(([local, fields]) => [
+                local,
+                [...fields],
+              ]),
+            ),
+          }
+        : undefined,
+      populate: populateFields,
+    };
 
-    const total = countRow?.count ?? 0;
+    const { rows, total } = await db().list(def, query);
 
     return {
-      data,
+      data: rows as unknown as Selected<Returning, S>[],
       meta: {
         total,
         page,
@@ -575,11 +492,9 @@ export const makeModel = <Rules extends z.ZodObject>(
     };
   };
 
-  const show = (id: string) => {
-    let q = surreal().select<Data>(new RecordId(table, id));
-    if (relationFields.length)
-      q = q.fetch(...(relationFields as [string, ...string[]])) as typeof q;
-    return q as unknown as Promise<Returning>;
+  const show = async (id: string) => {
+    const record = await db().find(def, id, { populate: relationFields });
+    return (record ?? undefined) as unknown as Returning;
   };
 
   const update = async (id: string, data: Values<Partial<Data>>) => {
@@ -594,12 +509,10 @@ export const makeModel = <Rules extends z.ZodObject>(
 
     await assertUnique(merged, id);
 
-    const record = (await (surreal()
-      .update<Data>(new RecordId(table, id))
-      .merge({
-        ...merged,
-        updatedAt: moment().toISOString(),
-      }) as unknown as Promise<Returning>)) as Returning;
+    const record = (await db().update(def, id, {
+      ...merged,
+      updatedAt: moment().toISOString(),
+    })) as unknown as Returning;
 
     await runAfterHooks("afterUpdate", prefix, record);
 
@@ -609,27 +522,43 @@ export const makeModel = <Rules extends z.ZodObject>(
   const destroy = async (id: string) => {
     await runBeforeDestroyHooks(prefix, id);
 
-    const record = (await (surreal().delete<Data>(
-      new RecordId(table, id),
-    ) as unknown as Promise<Returning>)) as Returning;
+    const record = (await db().remove(def, id)) as unknown as Returning;
 
     await runAfterHooks("afterDestroy", prefix, record);
 
     return record;
   };
 
-  return {
+  // Declared with method syntax so create()/update() stay bivariant in their data argument: a
+  // model with a narrow schema must remain assignable to the generic
+  // `ReturnType<typeof makeModel>` that relation()/file() and the registry take.
+  type Model = {
+    name: string;
+    prefix: string;
+    create(data: Values<Data>): Promise<Returning>;
+    update(id: string, data: Values<Partial<Data>>): Promise<Returning>;
+    def: TableDef;
+    destroy: typeof destroy;
+    read: typeof read;
+    searchFields: string[];
+    show: typeof show;
+    validation: Rules;
+  };
+
+  const model: Model = {
     name: config.name,
     prefix,
     create,
+    def,
     destroy,
     read,
     searchFields: config.searchFields,
     show,
-    table,
     update,
     validation: config.schema,
   };
+
+  return model;
 };
 
 export * from "../event";

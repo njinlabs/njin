@@ -1,13 +1,15 @@
 import bearer from "@elysia/bearer";
 import Elysia, { status } from "elysia";
 import moment from "moment";
-import { RecordId, Table, Uuid } from "surrealdb";
 import z from "zod";
+import { tokenTable } from "../core/db/internal";
 import { makeModule } from "../core/module";
+import db from "./db";
 import elysia from "./elysia";
-import surreal from "./surreal";
 
-const table = new Table("token");
+// Session tokens look like "token:<id>:<secret>" — the prefix is part of the credential's
+// format, not a table reference.
+const TOKEN_PREFIX = "token";
 
 const auth = makeModule(() => {
   const fn = async () => {
@@ -35,11 +37,13 @@ const auth = makeModule(() => {
               throw new Error("Unauthorized");
             }
 
-            const token = await surreal()
-              .select<Token>(new RecordId(table, tokenId))
-              .fetch("user");
+            const token = (await db().find(tokenTable, tokenId, {
+              populate: ["user"],
+            })) as (Token & { id: string }) | null;
 
-            if (!token) {
+            // A token whose user was deleted is just a bad credential (the link is left as a
+            // bare id then, not a record).
+            if (!token || typeof token.user !== "object") {
               throw new Error("Unauthorized");
             }
 
@@ -103,7 +107,7 @@ const auth = makeModule(() => {
       .delete(
         "/logout",
         async ({ user: { tokenId, ...user } }) => {
-          await surreal().delete(tokenId);
+          await db().remove(tokenTable, tokenId);
 
           return { data: user };
         },
@@ -128,20 +132,16 @@ const auth = makeModule(() => {
               throw new Error("Unauthorized");
             }
 
-            const plainToken = Uuid.v7().toString();
+            const plainToken = Bun.randomUUIDv7();
 
-            const [token] = await surreal()
-              .create<Token>(table)
-              .content({
-                hash: new Bun.CryptoHasher("sha256")
-                  .update(plainToken)
-                  .digest("utf8"),
-                user: data.id as unknown as Token["user"],
-                createdAt: moment().toISOString(),
-                updatedAt: moment().toISOString(),
-              });
-
-            await surreal().relate(token!.id, new Table("user_token"), data.id);
+            const token = await db().insert(tokenTable, {
+              hash: new Bun.CryptoHasher("sha256")
+                .update(plainToken)
+                .digest("utf8"),
+              user: data.id,
+              createdAt: moment().toISOString(),
+              updatedAt: moment().toISOString(),
+            });
 
             const { password: _, ...safeData } = data as typeof data & {
               password: string;
@@ -150,7 +150,7 @@ const auth = makeModule(() => {
             return {
               data: {
                 ...safeData,
-                token: `${table.toString()}:${token?.id.id}:${plainToken}`,
+                token: `${TOKEN_PREFIX}:${token.id}:${plainToken}`,
               },
             };
           } catch (e) {

@@ -1,4 +1,3 @@
-import { RecordId } from "surrealdb";
 import z from "zod";
 import type { FormMeta, makeModel, RelationType } from "..";
 
@@ -34,10 +33,6 @@ export function relationMany(
           return { id: value, _write: true };
         }
 
-        if (value instanceof RecordId) {
-          return { id: value.toString().split(":")[1], _write: true };
-        }
-
         return value;
       },
       model.validation
@@ -49,7 +44,7 @@ export function relationMany(
         })
         .partial()
         .transform((value) => {
-          if (value._write) return new RecordId(model.table, value.id);
+          if (value._write) return String(value.id);
 
           return value;
         }),

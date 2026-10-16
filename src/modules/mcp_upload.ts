@@ -1,20 +1,18 @@
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import Elysia from "elysia";
 import moment from "moment";
-import { RecordId, Table } from "surrealdb";
+import { mcpUploadTable } from "../core/db/internal";
 import { escapeHtml, noStore, page } from "../core/html_page";
 import { makeModule } from "../core/module";
+import db from "./db";
 import elysia from "./elysia";
 import fileModule from "./file";
-import surreal from "./surreal";
 
 // How an agent gets a file *into* the site. MCP is JSON-RPC, and a file the user dropped into
 // the chat can't be passed through a tool argument (base64 floods the context and models mangle
 // it), so the tool only hands out a short-lived upload URL: the agent `curl`s the file to it from
 // its sandbox, or — when it has no shell/network — gives the URL to the user to open and drop
 // the file on. The bytes never pass through the model either way.
-
-const table = new Table("mcp_upload");
 
 export const UPLOAD_TTL_MINUTES = 10;
 export const MAX_FILES_PER_TICKET = 10;
@@ -55,7 +53,7 @@ export const ALLOWED_TYPES: Record<string, string> = {
 };
 
 type McpUpload = {
-  id: RecordId;
+  id: string;
   hash: string;
   createdBy: string | null;
   tokenId: string;
@@ -65,7 +63,7 @@ type McpUpload = {
 };
 
 type FileRecord = {
-  id: RecordId;
+  id: string;
   name: string;
   url: string;
   type: string;
@@ -85,7 +83,7 @@ const safeEqual = (a: string, b: string) => {
 const isPast = (iso: string) => moment().isAfter(iso);
 
 const publicFile = ({ id, name, url, type, size }: FileRecord) => ({
-  id: id.id.toString(),
+  id,
   name,
   url,
   type,
@@ -100,25 +98,27 @@ export const createUploadTicket = async (input: {
 }) => {
   // Tickets are short-lived; anything an hour past expiry is only clutter (the grace period
   // lets check_upload still answer shortly after a ticket lapses).
-  await surreal().query("DELETE mcp_upload WHERE expiresAt < $cutoff;", {
-    cutoff: moment().subtract(1, "hour").toISOString(),
-  });
+  await db().removeWhere(mcpUploadTable, [
+    {
+      field: "expiresAt",
+      op: "$lt",
+      value: moment().subtract(1, "hour").toISOString(),
+    },
+  ]);
 
   const secret = randomBytes(24).toString("base64url");
   const expiresAt = moment().add(UPLOAD_TTL_MINUTES, "minutes").toISOString();
 
-  const [created] = await surreal()
-    .create<McpUpload>(table)
-    .content({
-      hash: hashSecret(secret),
-      createdBy: input.userId,
-      tokenId: input.tokenId,
-      expiresAt,
-      remaining: MAX_FILES_PER_TICKET,
-      files: [],
-    });
+  const created = await db().insert(mcpUploadTable, {
+    hash: hashSecret(secret),
+    createdBy: input.userId,
+    tokenId: input.tokenId,
+    expiresAt,
+    remaining: MAX_FILES_PER_TICKET,
+    files: [],
+  });
 
-  const id = created!.id.id.toString();
+  const id = created.id;
 
   return {
     upload_id: id,
@@ -132,9 +132,10 @@ export const createUploadTicket = async (input: {
 
 // Called by the check_upload tool: what has landed on a ticket so far.
 export const getUploadStatus = async (uploadId: string) => {
-  const ticket = await surreal().select<McpUpload>(
-    new RecordId(table, uploadId),
-  );
+  const ticket = (await db().find(
+    mcpUploadTable,
+    uploadId,
+  )) as McpUpload | null;
   if (!ticket) return null;
 
   const files = (
@@ -180,7 +181,7 @@ const mcpUpload = makeModule(() => {
 
       const ticket =
         dot > 0 && secret
-          ? await surreal().select<McpUpload>(new RecordId(table, id))
+          ? ((await db().find(mcpUploadTable, id)) as McpUpload | null)
           : null;
 
       if (!ticket || !safeEqual(ticket.hash, hashSecret(secret))) return null;
@@ -273,15 +274,10 @@ const mcpUpload = makeModule(() => {
             created.push(record!);
           }
 
-          await surreal()
-            .update(new RecordId(table, ticket.id.id))
-            .merge({
-              remaining: ticket.remaining - created.length,
-              files: [
-                ...ticket.files,
-                ...created.map((f) => f.id.id.toString()),
-              ],
-            });
+          await db().update(mcpUploadTable, ticket.id, {
+            remaining: ticket.remaining - created.length,
+            files: [...ticket.files, ...created.map((f) => f.id)],
+          });
 
           if (wantsHtml(request)) {
             return page(

@@ -1,52 +1,10 @@
 import { describe, expect, it, mock } from "bun:test";
-import { RecordId, type Table } from "surrealdb";
-import realUserModel from "../../src/models/user";
+import { tokenTable } from "../../src/core/db/internal";
 import * as realElysiaModule from "../../src/modules/elysia";
-import * as realSurrealModule from "../../src/modules/surreal";
 import { makeFakeElysia } from "../helpers/fake_elysia";
+import { useTestDb } from "../helpers/test_db";
 
-// setup.ts's create-first-admin route needs the real user model's `.create`/`.prefix` —
-// re-asserted explicitly (rather than relying on nothing else having mocked this
-// specifier yet) since, without --isolate, mock.module() replaces the module in a
-// registry shared across the whole test run, and other files (surreal.test.ts,
-// users.test.ts) mock this same specifier.
-mock.module("../../src/models/user", () => ({ default: realUserModel }));
-
-let userCount = 0;
-const relateCalls: unknown[][] = [];
-const createdTokens: Record<string, unknown>[] = [];
-
-const fakeDb = {
-  query: async (_sql: string, _params?: Record<string, unknown>) => {
-    return [[{ count: userCount }]];
-  },
-  create: (table: Table) => ({
-    content: (data: Record<string, unknown>) => {
-      const id = new RecordId(table.name, `tok${createdTokens.length + 1}`);
-      const record = { ...data, id };
-      createdTokens.push(record);
-      return {
-        // token creation (setup.ts) awaits .content(...) directly; user.create()
-        // (via core/model/index.ts) chains .output("after").then(...) on top of it.
-        // biome-ignore lint/suspicious/noThenProperty: intentional thenable mock of a SurrealDB query
-        then: (resolve: (value: [Record<string, unknown>]) => unknown) =>
-          resolve([record]),
-        output: (_mode: string) => Promise.resolve([record]),
-      };
-    },
-  }),
-  relate: async (...args: unknown[]) => {
-    relateCalls.push(args);
-  },
-};
-
-// Spreading real exports below — without --isolate, mock.module() replaces the module
-// in a registry shared across the whole test run, so a partial mock would otherwise
-// break other files that import isRemotePath/injectBracketQuery from these specifiers.
-mock.module("../../src/modules/surreal", () => ({
-  ...realSurrealModule,
-  default: () => fakeDb,
-}));
+const db = await useTestDb();
 
 const fakeElysia = makeFakeElysia();
 mock.module("../../src/modules/elysia", () => ({
@@ -54,71 +12,73 @@ mock.module("../../src/modules/elysia", () => ({
   default: fakeElysia.fn,
 }));
 
+const { default: userModel } = await import("../../src/models/user");
 const { default: setup } = await import("../../src/modules/setup");
 
+await db.sync([userModel.def]);
 await setup.init();
 const app = fakeElysia.buildApp();
 
-describe("GET /api/setup/status", () => {
-  it("reports needsSetup: true when there are no users", async () => {
-    userCount = 0;
-    const res = await app.handle(
-      new Request("http://localhost/api/setup/status"),
-    );
-    expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ needsSetup: true });
-  });
-
-  it("reports needsSetup: false when a user already exists", async () => {
-    userCount = 1;
-    const res = await app.handle(
-      new Request("http://localhost/api/setup/status"),
-    );
-    expect(await res.json()).toEqual({ needsSetup: false });
-  });
-});
-
-describe("POST /api/setup", () => {
-  it("refuses to create an admin once setup is already completed", async () => {
-    userCount = 1;
-    const res = await app.handle(
-      new Request("http://localhost/api/setup", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          name: "Admin",
-          email: "admin@example.com",
-          password: "password123",
-        }),
+const createAdmin = () =>
+  app.handle(
+    new Request("http://localhost/api/setup", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "Admin",
+        email: "admin@example.com",
+        password: "password123",
       }),
-    );
-    expect(res.status).toBe(403);
+    }),
+  );
+
+const status = async () =>
+  (await (
+    await app.handle(new Request("http://localhost/api/setup/status"))
+  ).json()) as { needsSetup: boolean };
+
+// The two states are order-dependent (no users, then one), so they live in one describe block
+// and run top to bottom.
+describe("setup", () => {
+  it("reports needsSetup: true when there are no users", async () => {
+    expect(await status()).toEqual({ needsSetup: true });
   });
 
   it("creates the first admin user, hashing the password and issuing a token", async () => {
-    userCount = 0;
-    relateCalls.length = 0;
-    createdTokens.length = 0;
-
-    const res = await app.handle(
-      new Request("http://localhost/api/setup", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          name: "Admin",
-          email: "admin@example.com",
-          password: "password123",
-        }),
-      }),
-    );
+    const res = await createAdmin();
 
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
       data: { token: string; user: Record<string, unknown> };
     };
-    expect(body.data.token).toMatch(/^token:tok\d+:.+$/);
+    expect(body.data.token).toMatch(/^token:[^:]+:.+$/);
     expect(body.data.user.password).toBeUndefined();
     expect(body.data.user.email).toBe("admin@example.com");
-    expect(relateCalls).toHaveLength(1);
+
+    // The password is stored hashed, and the token points at the new user by plain id.
+    const [stored] = (
+      await db.adapter.list(userModel.def, {
+        page: 1,
+        limit: 10,
+        populate: [],
+      })
+    ).rows;
+    expect(stored?.password).not.toBe("password123");
+    expect(
+      Bun.password.verifySync("password123", stored?.password as string),
+    ).toBe(true);
+
+    const tokenId = body.data.token.split(":")[1] as string;
+    const token = await db.adapter.find(tokenTable, tokenId);
+    expect(token?.user).toBe(stored?.id as string);
+  });
+
+  it("reports needsSetup: false once a user exists", async () => {
+    expect(await status()).toEqual({ needsSetup: false });
+  });
+
+  it("refuses to create another admin once setup is already completed", async () => {
+    const res = await createAdmin();
+    expect(res.status).toBe(403);
   });
 });

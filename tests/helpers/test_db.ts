@@ -1,0 +1,73 @@
+import { afterAll, mock } from "bun:test";
+import { resolve } from "node:path";
+import { surrealAdapter } from "../../src/core/adapters/surreal";
+import type { DbAdapter, TableDef } from "../../src/core/db/contract";
+import { internalTables } from "../../src/core/db/internal";
+
+// A real in-memory database standing in for the db module, so a test exercises the same code
+// path production does instead of a hand-rolled fake. Call it at the top of the test file,
+// before the modules under test are imported:
+//
+//   const db = await useTestDb();
+//   const { default: userModel } = await import("../../src/models/user");
+//   await db.sync([userModel.def]);
+//
+// Every njin-internal table is defined up front; pass the models a test touches to sync().
+export const useTestDb = async (tables: readonly TableDef[] = []) => {
+  const real: DbAdapter = surrealAdapter({
+    path: "mem://",
+    namespace: "test",
+    database: "test",
+  });
+  await real.connect();
+  await real.sync([...internalTables, ...tables]);
+
+  // Every adapter method call is recorded, so a test can assert on what the code under test
+  // asked the database for (e.g. the ListQuery a model built) as well as on what came back.
+  const calls: { method: string; args: unknown[] }[] = [];
+  // One-shot failures queued by failNext(): the next call to that method rejects instead.
+  const failures = new Map<string, Error>();
+  const adapter = new Proxy(real, {
+    get(target, prop, receiver) {
+      const value = Reflect.get(target, prop, receiver);
+      if (typeof value !== "function") return value;
+      return (...args: unknown[]) => {
+        const method = String(prop);
+        calls.push({ method, args });
+
+        const failure = failures.get(method);
+        if (failure) {
+          failures.delete(method);
+          return Promise.reject(failure);
+        }
+
+        return value.apply(target, args);
+      };
+    },
+  });
+
+  // An embedded engine left open at exit crashed Bun with a segfault on Linux CI (after all
+  // tests had passed) — close it explicitly once the file's tests are done.
+  afterAll(async () => {
+    await real.close();
+  });
+
+  mock.module(resolve(import.meta.dir, "../../src/modules/db"), () => ({
+    default: () => adapter,
+  }));
+
+  return {
+    adapter,
+    calls,
+    // Makes the next call to `method` reject with `error` (simulates the database going away).
+    failNext: (method: keyof DbAdapter, error = new Error("db down")) => {
+      failures.set(method, error);
+    },
+    // The arguments of every recorded call to `method`.
+    callsTo: (method: string) =>
+      calls.filter((c) => c.method === method).map((c) => c.args),
+    // Re-sync with extra tables (the internal ones are always included).
+    sync: (extra: readonly TableDef[]) =>
+      real.sync([...internalTables, ...extra]),
+  };
+};

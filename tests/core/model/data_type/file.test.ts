@@ -1,5 +1,4 @@
 import { beforeAll, describe, expect, it } from "bun:test";
-import { RecordId } from "surrealdb";
 import { loadConfig } from "../../../../src/core/config";
 import { file } from "../../../../src/core/model/data_type/file";
 import elysia from "../../../../src/modules/elysia";
@@ -7,7 +6,7 @@ import fileModule from "../../../../src/modules/file";
 
 // file() reads the file module's internal model lazily, so the module must be
 // initialized first — registering routes here has no network/DB side effects
-// (no .listen(), no surreal connection). models/file.ts reads the configured
+// (no .listen(), no db connection). models/file.ts reads the configured
 // adapter via getConfig(), so config must be loaded first too.
 beforeAll(async () => {
   await loadConfig();
@@ -16,10 +15,8 @@ beforeAll(async () => {
 });
 
 describe("file", () => {
-  it("transforms a plain string id into a RecordId", () => {
-    expect(file({ label: "Thumbnail" }).parse("abc123")).toBeInstanceOf(
-      RecordId,
-    );
+  it("keeps a plain string id as the plain string id", () => {
+    expect(file({ label: "Thumbnail" }).parse("abc123")).toBe("abc123");
   });
 
   it("rejects missing value by default (required)", () => {

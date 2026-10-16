@@ -1,18 +1,7 @@
-import { describe, expect, it, mock } from "bun:test";
-import * as realSurrealModule from "../../src/modules/surreal";
+import { describe, expect, it } from "bun:test";
+import { useTestDb } from "../helpers/test_db";
 
-const queries: { sql: string; vars: Record<string, unknown> }[] = [];
-let rows: unknown[] = [];
-
-mock.module("../../src/modules/surreal", () => ({
-  ...realSurrealModule,
-  default: () => ({
-    query: async (sql: string, vars: Record<string, unknown>) => {
-      queries.push({ sql, vars });
-      return [rows];
-    },
-  }),
-}));
+const db = await useTestDb();
 
 const {
   default: user,
@@ -20,26 +9,42 @@ const {
   findUserByEmail,
 } = await import("../../src/models/user");
 
+await db.sync([user.def]);
+
 describe("findUserByEmail", () => {
-  it("compares lowercased on both sides and trims the input", async () => {
-    rows = [{ email: "Admin@Example.com" }];
+  it("matches case-insensitively and trims the input", async () => {
+    const created = await user.create({
+      name: "Admin",
+      email: "Admin@Example.com",
+      password: "x",
+    });
 
-    const found = await findUserByEmail("  ADMIN@example.COM ");
+    const found = await findUserByEmail<{ id: string; email: string }>(
+      "  ADMIN@example.COM ",
+    );
 
-    expect(found).toEqual({ email: "Admin@Example.com" });
-    expect(queries.at(-1)?.sql).toContain("string::lowercase(email) = $email");
-    expect(queries.at(-1)?.vars).toEqual({ email: "admin@example.com" });
+    expect(found?.id).toBe(created.id);
+    expect(found?.email).toBe("Admin@Example.com");
+  });
+
+  it("asks the adapter for a case-insensitive equality, not a LIKE or a raw query", async () => {
+    await findUserByEmail("someone@example.com");
+
+    const [, query] = db.callsTo("list").at(-1) as [
+      unknown,
+      { where: unknown },
+    ];
+    expect(query.where).toEqual([
+      { field: "email", op: "$ieq", value: "someone@example.com" },
+    ]);
   });
 
   it("returns undefined when nothing matches", async () => {
-    rows = [];
     expect(await findUserByEmail("nobody@example.com")).toBeUndefined();
   });
 
-  it("binds the email as a parameter, never into the query text", async () => {
-    rows = [];
-    await findUserByEmail("x' OR true --");
-    expect(queries.at(-1)?.sql).not.toContain("OR true");
+  it("treats query syntax in the email as plain text", async () => {
+    expect(await findUserByEmail("x' OR true --")).toBeUndefined();
   });
 });
 

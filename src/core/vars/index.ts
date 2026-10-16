@@ -1,13 +1,12 @@
 import moment from "moment";
-import { RecordId, Table, type Values } from "surrealdb";
 import type { z } from "zod";
-import surreal from "../../modules/surreal";
+import db from "../../modules/db";
+import { varsTable } from "../db/internal";
 import { runAfterHooks, runBeforeHooks } from "../model/hooks";
 
 // One shared physical table for every VARS group — rows are keyed by each
-// group's own prefix as the record id (vars:general, vars:seo, ...), not one
-// table per group. See surreal.ts's ensureTables() for the DEFINE TABLE call.
-const table = new Table("vars");
+// group's own prefix as the record id, not one table per group (see varsTable).
+type Values<T> = T;
 
 export const makeVars = <Rules extends z.ZodObject>(
   prefix: string,
@@ -19,16 +18,12 @@ export const makeVars = <Rules extends z.ZodObject>(
   type Data = z.infer<Rules>;
   type Returning = Data & { updatedAt: string | null };
 
-  const recordId = new RecordId(table, prefix);
-
   // schema.parse() fills in every field's .default() for anything missing —
   // including the row never having been saved at all — so get() always
   // returns a complete, valid object. Every VARS field is expected to
   // declare a .default(...) for this reason.
   const get = async (): Promise<Returning> => {
-    const record = await surreal().select<Data & { updatedAt?: string }>(
-      recordId,
-    );
+    const record = await db().find(varsTable, prefix);
     const { updatedAt, ...rest } = (record ?? {}) as Record<string, unknown> & {
       updatedAt?: string;
     };
@@ -47,12 +42,10 @@ export const makeVars = <Rules extends z.ZodObject>(
       {},
     )) as Values<Partial<Data>>;
 
-    const record = (await surreal()
-      .upsert<Data & { updatedAt: string }>(recordId)
-      .merge({ ...merged, updatedAt: moment().toISOString() } as Values<
-        Data & { updatedAt: string }
-      >)
-      .output("after")) as (Data & { updatedAt: string }) | undefined;
+    const record = await db().upsert(varsTable, prefix, {
+      ...merged,
+      updatedAt: moment().toISOString(),
+    });
 
     const { updatedAt, ...rest } = (record ?? {}) as Record<string, unknown> & {
       updatedAt?: string;
@@ -70,7 +63,6 @@ export const makeVars = <Rules extends z.ZodObject>(
   return {
     name: config.name,
     prefix,
-    table,
     validation: config.schema,
     get,
     update,
