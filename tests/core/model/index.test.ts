@@ -77,8 +77,12 @@ describe("makeModel hook wiring", () => {
     const result = await post.create({ title: "Hello" });
 
     expect(typeof result.id).toBe("string");
-    expect(result.createdAt).toBeString();
-    expect(result.updatedAt).toBe(result.createdAt);
+    // Two separate clock reads, so they can differ by a millisecond.
+    expect(Number.isNaN(Date.parse(result.createdAt))).toBe(false);
+    expect(Number.isNaN(Date.parse(result.updatedAt))).toBe(false);
+    expect(
+      Date.parse(result.updatedAt) - Date.parse(result.createdAt),
+    ).toBeLessThan(50);
   });
 
   it("runs beforeUpdate/afterUpdate around update()", async () => {

@@ -4,6 +4,7 @@ import moment from "moment";
 import z from "zod";
 import { tokenTable } from "../core/db/internal";
 import { makeModule } from "../core/module";
+import { hashToken, tokenMatches } from "../core/token_hash";
 import db from "./db";
 import elysia from "./elysia";
 
@@ -47,11 +48,7 @@ const auth = makeModule(() => {
               throw new Error("Unauthorized");
             }
 
-            const hash = new Bun.CryptoHasher("sha256")
-              .update(plainToken)
-              .digest("utf8");
-
-            if (hash !== token.hash) {
+            if (!tokenMatches(token.hash, plainToken)) {
               throw new Error("Unauthorized");
             }
 
@@ -135,9 +132,7 @@ const auth = makeModule(() => {
             const plainToken = Bun.randomUUIDv7();
 
             const token = await db().insert(tokenTable, {
-              hash: new Bun.CryptoHasher("sha256")
-                .update(plainToken)
-                .digest("utf8"),
+              hash: hashToken(plainToken),
               user: data.id,
               createdAt: moment().toISOString(),
               updatedAt: moment().toISOString(),

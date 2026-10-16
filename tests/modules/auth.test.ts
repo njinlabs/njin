@@ -28,8 +28,11 @@ const alice = await userModel.create({
   password: Bun.password.hashSync(plainPassword),
 });
 
-const hashOf = (plain: string) =>
+// What versions before the hex change stored; still accepted.
+const legacyHashOf = (plain: string) =>
   new Bun.CryptoHasher("sha256").update(plain).digest("utf8");
+const hashOf = (plain: string) =>
+  new Bun.CryptoHasher("sha256").update(plain).digest("hex");
 
 // Stores a token for alice and returns the bearer string for it.
 const setValidToken = async (id = "tok-valid") => {
@@ -101,6 +104,21 @@ describe("auth macro (via /check-token)", () => {
     expect(body.data.tokenId).toBeUndefined();
   });
 
+  it("still accepts a token stored in the legacy utf8 form, so existing sessions survive an upgrade", async () => {
+    await db.adapter.insert(
+      tokenTable,
+      { hash: legacyHashOf("old-secret"), user: alice.id },
+      { id: "tok-legacy" },
+    );
+
+    const res = await controller.handle(
+      new Request("http://localhost/api/auth/check-token", {
+        headers: { Authorization: "Bearer token:tok-legacy:old-secret" },
+      }),
+    );
+    expect(res.status).toBe(200);
+  });
+
   it("returns 401 for a token whose user has since been deleted", async () => {
     const orphan = await userModel.create({
       name: "Gone",
@@ -163,6 +181,22 @@ describe("bearer auth", () => {
 });
 
 describe("POST /login", () => {
+  it("stores the token hash as plain hex text, whatever the secret hashes to", async () => {
+    for (let n = 0; n < 40; n++) {
+      const res = await post("/login", {
+        email: "alice@example.com",
+        password: plainPassword,
+      });
+      expect(res.status).toBe(200);
+
+      const body = (await res.json()) as { data: { token: string } };
+      const [, id, secret] = body.data.token.split(":");
+      const stored = await db.adapter.find(tokenTable, id as string);
+      expect(stored?.hash).toBe(hashOf(secret as string));
+      expect(stored?.hash).toMatch(/^[0-9a-f]{64}$/);
+    }
+  });
+
   it("still verifies a password when the email is unknown (no timing shortcut)", async () => {
     const verify = spyOn(Bun.password, "verify");
     try {
