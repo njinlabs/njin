@@ -237,6 +237,18 @@ describe("surrealAdapter — remote path", () => {
   });
 });
 
+describe("surrealAdapter().describe()", () => {
+  it("summarises the connection for the banner, never showing credentials", () => {
+    expect(surrealAdapter(remote).describe!()).toBe(
+      "ws://localhost:8000 (ns/db)",
+    );
+    expect(
+      surrealAdapter({ ...remote, path: "wss://root:secret@db.example.com" })
+        .describe!(),
+    ).toBe("wss://db.example.com (ns/db)");
+  });
+});
+
 describe("surrealAdapter — embedded path", () => {
   it("connects with createNodeEngines for a rocksdb:// path", async () => {
     createNodeEnginesCalls = 0;

@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { getConfig } from "./config";
+import type { DbAdapter } from "./db/contract";
 
 const c = {
   reset: "\x1b[0m",
@@ -29,6 +30,9 @@ export type BootSummary = {
   mode: "development" | "production";
 };
 
+const describeDatabase = (adapter: DbAdapter) =>
+  adapter.describe?.() ?? adapter.name;
+
 // Printed once boot finishes — plain console.log (not pino) on purpose: this is a
 // human-facing startup summary, not a structured log line.
 export const printBanner = ({ mode }: BootSummary): void => {
@@ -39,10 +43,7 @@ export const printBanner = ({ mode }: BootSummary): void => {
 
   const rows: [string, string][] = [
     ["Local", `http://localhost:${port}`],
-    [
-      "Database",
-      `${config.db.path} ${c.dim}(${config.db.namespace}/${config.db.database})${c.reset}`,
-    ],
+    ["Database", describeDatabase(config.adapters.db)],
     ["Models", `${config.models.length} registered`],
     hasAdmin
       ? ["Admin", `http://localhost:${port}/_admin`]

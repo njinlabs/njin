@@ -14,7 +14,18 @@ import { useTestDb } from "../helpers/test_db";
 // Each mock below spreads the real module's other exports — without --isolate,
 // mock.module() replaces the module in a registry shared across the whole test run, so
 // a partial mock would otherwise break other files importing the un-mocked exports.
-const fileDef: TableDef = { name: "file", fields: [], search: [] };
+// The columns models/file.ts declares.
+const fileDef: TableDef = {
+  name: "file",
+  fields: [
+    { kind: "scalar", name: "name", type: "string" },
+    { kind: "scalar", name: "size", type: "number" },
+    { kind: "scalar", name: "type", type: "string" },
+    { kind: "scalar", name: "url", type: "string" },
+    { kind: "scalar", name: "meta", type: "json" },
+  ],
+  search: [],
+};
 await useTestDb([fileDef]);
 
 mock.module("../../src/models/file", () => ({

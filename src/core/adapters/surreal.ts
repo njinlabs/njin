@@ -59,6 +59,9 @@ const ident = (name: string) => {
 const int = (value: number, fallback: number) =>
   Number.isSafeInteger(value) && value > 0 ? value : fallback;
 
+// A connection URL without its credentials, safe to print.
+const redact = (value: string) => value.replace(/\/\/[^/@]*@/, "//");
+
 export type SurrealAdapterConfig = {
   // rocksdb:// | surrealkv:// | mem:// (embedded) or ws:// | wss:// | http:// | https:// (remote)
   path?: string;
@@ -319,6 +322,8 @@ export const surrealAdapter = (
   return {
     name: "surreal",
     capabilities,
+
+    describe: () => `${redact(path)} (${namespace}/${database})`,
 
     async connect() {
       let engines: Engines;

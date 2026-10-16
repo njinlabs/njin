@@ -6,7 +6,9 @@ import * as realConfig from "../../src/core/config";
 
 const fakeConfig = {
   port: 4321,
-  db: { path: "rocksdb://data", namespace: "ns", database: "db" },
+  adapters: {
+    db: { name: "fake", describe: () => "rocksdb://data (ns/db)" },
+  },
   models: [async () => ({ default: {} }), async () => ({ default: {} })],
 };
 
@@ -61,6 +63,24 @@ describe("printBanner", () => {
       expect(output).toContain("http://localhost:4321/_admin");
       expect(output).toContain("production");
     } finally {
+      logSpy.mockRestore();
+      process.chdir(cwd);
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("falls back to the adapter's name when it has nothing to describe", () => {
+    const dir = mkdtempSync(join(tmpdir(), "njin-banner-"));
+    const cwd = process.cwd();
+    const logSpy = spyOn(console, "log").mockImplementation(() => {});
+    const original = fakeConfig.adapters.db;
+    fakeConfig.adapters.db = { name: "bare" } as never;
+    try {
+      process.chdir(dir);
+      printBanner({ mode: "production" });
+      expect(logSpy.mock.calls[0]![0] as string).toContain("bare");
+    } finally {
+      fakeConfig.adapters.db = original;
       logSpy.mockRestore();
       process.chdir(cwd);
       rmSync(dir, { recursive: true, force: true });

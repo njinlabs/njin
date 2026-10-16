@@ -13,12 +13,36 @@ import { internalTables } from "../../src/core/db/internal";
 //   await db.sync([userModel.def]);
 //
 // Every njin-internal table is defined up front; pass the models a test touches to sync().
-export const useTestDb = async (tables: readonly TableDef[] = []) => {
-  const real: DbAdapter = surrealAdapter({
+// The adapter behind the test database. SurrealDB (in memory) by default; set
+// NJIN_TEST_ADAPTER=postgres to run the same tests on Postgres (an in-process PGlite), which
+// is how the whole suite is checked against the Postgres adapter.
+const makeAdapter = async (): Promise<DbAdapter> => {
+  if (process.env.NJIN_TEST_ADAPTER === "postgres") {
+    const { PGlite } = await import("@electric-sql/pglite");
+    const { pg_trgm } = await import("@electric-sql/pglite/contrib/pg_trgm");
+    const { drizzle } = await import("drizzle-orm/pglite");
+    const { postgresAdapter } = await import(
+      "../../src/core/adapters/postgres"
+    );
+
+    const client = new PGlite({ extensions: { pg_trgm } });
+    return postgresAdapter({
+      connect: () => ({
+        db: drizzle(client) as never,
+        close: () => client.close(),
+      }),
+    });
+  }
+
+  return surrealAdapter({
     path: "mem://",
     namespace: "test",
     database: "test",
   });
+};
+
+export const useTestDb = async (tables: readonly TableDef[] = []) => {
+  const real = await makeAdapter();
   await real.connect();
   await real.sync([...internalTables, ...tables]);
 
