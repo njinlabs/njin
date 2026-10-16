@@ -14,21 +14,38 @@ import { internalTables } from "../../src/core/db/internal";
 //
 // Every njin-internal table is defined up front; pass the models a test touches to sync().
 // The adapter behind the test database. SurrealDB (in memory) by default; set
-// NJIN_TEST_ADAPTER=postgres to run the same tests on Postgres (an in-process PGlite), which
-// is how the whole suite is checked against the Postgres adapter.
+// NJIN_TEST_ADAPTER=postgres to run the same tests on Postgres: an in-process PGlite, or — when
+// NJIN_TEST_POSTGRES_URL is also set — a real server through Bun's SQL client (each test file
+// gets a schema of its own, dropped afterwards).
 const makeAdapter = async (): Promise<DbAdapter> => {
   if (process.env.NJIN_TEST_ADAPTER === "postgres") {
-    const { PGlite } = await import("@electric-sql/pglite");
-    const { pg_trgm } = await import("@electric-sql/pglite/contrib/pg_trgm");
-    const { drizzle } = await import("drizzle-orm/pglite");
     const { postgresAdapter } = await import(
       "../../src/core/adapters/postgres"
     );
 
+    const url = process.env.NJIN_TEST_POSTGRES_URL;
+    if (url) {
+      const { bunSqlClient } = await import(
+        "../../src/core/adapters/sql/bun_client"
+      );
+      const schema = `njin_app_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+      const admin = bunSqlClient(url, { max: 1 });
+      await admin.client.query(`create schema "${schema}"`, []);
+      afterAll(async () => {
+        await admin.client.query(`drop schema "${schema}" cascade`, []);
+        await admin.close();
+      });
+      return postgresAdapter({ url, schema, max: 2 });
+    }
+
+    const { PGlite } = await import("@electric-sql/pglite");
+    const { pg_trgm } = await import("@electric-sql/pglite/contrib/pg_trgm");
+    const { pgliteClient } = await import("./pglite_client");
+
     const client = new PGlite({ extensions: { pg_trgm } });
     return postgresAdapter({
       connect: () => ({
-        db: drizzle(client) as never,
+        client: pgliteClient(client),
         close: () => client.close(),
       }),
     });

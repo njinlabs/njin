@@ -524,19 +524,15 @@ An adapter implements the `DbAdapter` interface in [`src/core/db/contract.ts`](s
 
 #### PostgreSQL
 
-```bash
-bun add drizzle-orm
-```
-
 ```ts
 import postgresAdapter from "@njinlabs/njin/adapters/postgres";
 
 adapters: {
-  db: postgresAdapter({ url: process.env.DATABASE_URL! }),
+  db: postgresAdapter({ url: process.env.DATABASE_URL!, tls: true }),
 },
 ```
 
-It runs on [Drizzle](https://orm.drizzle.team), so instead of `url` you can hand it any Drizzle PG database (node-postgres, postgres-js, pglite, ...) through `connect: () => ({ db, close })`. `schema: "tenant_1"` puts every table in that schema (it must already exist).
+No extra dependency: it talks to Postgres through Bun's built-in SQL client. Every value travels to the database as a bound parameter, separate from the statement text, and the adapter has no way to put user text into SQL (names are quoted, numbers validated, column types come from a fixed list). Use `tls` for anything but a local database. `schema: "tenant_1"` puts every table in that schema (it must already exist), and `connect: () => ({ client, close })` lets you supply your own driver wrapped as an `SqlClient` (`src/core/adapters/sql/builder.ts`).
 
 Tables are created and migrated automatically on boot, and the data is stored as real, queryable columns — not JSON:
 
@@ -556,7 +552,7 @@ Tables are created and migrated automatically on boot, and the data is stored as
 - Filters, sorting and search work on top-level fields; an element of an `array()` or `relationMany()` can be matched with `$in`.
 - An `object()` whose every field is empty reads back as `null` — it is stored as columns, so it can't be told apart from an absent one.
 
-The adapter is checked against the same contract suite as SurrealDB (`bun test tests/core/db`, on an in-process Postgres), and the whole test suite can be run on it with `NJIN_TEST_ADAPTER=postgres bun test --isolate`. To run the contract suite against a real server: `NJIN_TEST_POSTGRES_URL=postgres://user:pass@host/db bun test tests/core/db/postgres_server.test.ts` (it only creates and drops schemas of its own).
+The adapter is checked against the same contract suite as SurrealDB (`bun test tests/core/db`, on an in-process Postgres — PGlite), and the whole test suite can be run on it with `NJIN_TEST_ADAPTER=postgres bun test --isolate`. To run the contract suite against a real server: `NJIN_TEST_POSTGRES_URL=postgres://user:pass@host/db bun test tests/core/db/postgres_server.test.ts` (it only creates and drops schemas of its own).
 
 To store uploads in S3 (or an S3-compatible service like R2/Spaces/MinIO) instead:
 

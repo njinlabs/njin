@@ -1,5 +1,4 @@
 import { createHash } from "node:crypto";
-import { type SQL, sql } from "drizzle-orm";
 import type {
   AdapterCapabilities,
   Condition,
@@ -12,6 +11,8 @@ import type {
   ScalarType,
   TableDef,
 } from "../db/contract";
+import { run, type SQL, type SqlClient, sql } from "./sql/builder";
+import { bunSqlClient } from "./sql/bun_client";
 import {
   type ArrayPlan,
   type Column,
@@ -26,28 +27,20 @@ import {
   type TablePlan,
 } from "./sql/plan";
 
-// A PostgreSQL adapter that runs on any Drizzle PG driver (pglite, bun-sql, node-postgres,
-// postgres-js). Drizzle supplies the driver layer and the parameterised `sql` composer; the
-// physical layout comes from ./sql/plan.ts and the migrations are generated here — additive
-// only, never dropping or rewriting anything — rather than through drizzle-kit, whose push is
-// destructive by default and far heavier than this needs.
+// A PostgreSQL adapter on Bun's built-in SQL client (or any driver that can be wrapped as an
+// SqlClient). The physical layout comes from ./sql/plan.ts and statements are composed with
+// ./sql/builder.ts, whose only way to put text into SQL is a quoted identifier, a validated
+// integer or an allow-listed keyword — every value is a bound parameter. Migrations are
+// generated here and are additive only: nothing is ever dropped or retyped.
 //
 // Layout (see plan.ts): scalars are columns, an object() is flattened into columns, a relation
 // is a text column holding the target id, a relationMany() is a pivot table and an array() is
 // a child table. Datetimes are timestamptz columns that go in and out as ISO-8601 strings.
 
-type Executor = { execute(query: SQL): PromiseLike<unknown> };
-
-// A database or a transaction: both can run statements and open a (nested) transaction, which
-// is a savepoint inside one.
-export type PgDb = Executor & {
-  transaction<T>(fn: (tx: PgDb) => Promise<T>): Promise<T>;
-};
-
-// What a failed statement surfaces as. Drizzle's own error carries the whole query and every
-// bound parameter (password hashes, emails, ...) in its message and properties, and errors end
-// up in logs and error trackers — so the driver's error is replaced by one with just its
-// message, SQLSTATE code and constraint name.
+// What a failed statement surfaces as. A driver's error can carry details of the row that
+// failed (a duplicate-key error quotes the value), and errors end up in logs and error
+// trackers — so a driver error is replaced by one holding only its message, SQLSTATE code and
+// constraint name.
 export class DbError extends Error {
   constructor(
     message: string,
@@ -59,51 +52,64 @@ export class DbError extends Error {
   }
 }
 
-const isDriverError = (error: unknown): error is Error & { cause?: unknown } =>
-  error instanceof Error &&
-  (error.message.startsWith("Failed query:") ||
-    "query" in error ||
-    "params" in error);
-
-const sanitize = (error: unknown): unknown => {
-  if (!isDriverError(error)) return error;
-
-  const cause = (error.cause ?? error) as {
-    message?: string;
-    code?: string;
-    constraint?: string;
-  };
-  const message =
-    cause !== error && typeof cause.message === "string"
-      ? cause.message
-      : "database error";
-  return new DbError(message, cause.code, cause.constraint);
+type DriverError = Error & {
+  errno?: unknown;
+  code?: unknown;
+  constraint?: unknown;
+  severity?: unknown;
 };
 
-const guard = (target: PgDb): PgDb => ({
-  execute: (query) =>
-    Promise.resolve(target.execute(query)).catch((error) => {
+const isDriverError = (error: unknown): error is DriverError =>
+  error instanceof Error &&
+  !(error instanceof DbError) &&
+  (typeof (error as DriverError).severity === "string" ||
+    /^(Postgres|MySQL|SQLite)Error$/.test(error.name) ||
+    error.constructor?.name === "DatabaseError");
+
+const sqlState = (error: DriverError) => {
+  for (const candidate of [error.errno, error.code]) {
+    if (typeof candidate === "string" && /^[0-9A-Z]{5}$/.test(candidate)) {
+      return candidate;
+    }
+  }
+  return undefined;
+};
+
+const sanitize = (error: unknown): unknown =>
+  isDriverError(error)
+    ? new DbError(
+        error.message,
+        sqlState(error),
+        typeof error.constraint === "string" ? error.constraint : undefined,
+      )
+    : error;
+
+const guarded = (target: SqlClient): SqlClient => ({
+  query: (text, params) =>
+    target.query(text, params).catch((error) => {
       throw sanitize(error);
     }),
   transaction: (fn) =>
     target
-      .transaction((tx) => fn(guard(tx)))
+      .transaction((tx) => fn(guarded(tx)))
       .catch((error) => {
         throw sanitize(error);
       }),
 });
 
 type Connection = {
-  db: PgDb;
+  client: SqlClient;
   close?: () => Promise<void> | void;
 };
 
 export type PostgresAdapterConfig = {
-  // A connection string; connects through Bun's built-in Postgres client.
+  // A connection string; connects through Bun's built-in SQL client.
   url?: string;
   // Connection pool size for `url`.
   max?: number;
-  // Bring your own Drizzle database (pglite, node-postgres, ...) instead of `url`.
+  // TLS for `url`: true, or Bun's TLS options. Use it for anything but a local database.
+  tls?: boolean | Record<string, unknown>;
+  // Bring your own driver, wrapped as an SqlClient, instead of `url`.
   connect?: () => Promise<Connection> | Connection;
   // Put every table in this schema instead of the connection's default one. It must exist.
   schema?: string;
@@ -147,8 +153,6 @@ const standardColumns: Column[] = STANDARD_DATETIMES.map((name) => ({
   path: [name],
 }));
 
-const quote = (name: string) => `"${name.replaceAll('"', '""')}"`;
-
 const newId = () => Bun.randomUUIDv7();
 
 const idList = (ids: readonly string[]) =>
@@ -180,10 +184,12 @@ const encode = (type: ScalarType, value: unknown): SQL => {
       if (Number.isNaN(date.getTime())) {
         throw new Error(`Not a valid datetime: ${String(value)}`);
       }
-      return sql`${date.toISOString()}::timestamptz`;
+      return sql`${date.toISOString()}::text::timestamptz`;
     }
     case "json":
-      return sql`${JSON.stringify(value)}::jsonb`;
+      // Sent as plain text and converted by the server: a parameter the server types as jsonb is
+      // serialised again by some drivers (Bun's), turning the JSON into a quoted string.
+      return sql`${JSON.stringify(value)}::text::jsonb`;
   }
 };
 
@@ -211,7 +217,7 @@ const hostAndDatabase = (url: string) => {
 export const postgresAdapter = (
   config: PostgresAdapterConfig = {},
 ): DbAdapter => {
-  let db: PgDb;
+  let db: SqlClient;
   let closer: Connection["close"];
   const plans = new Map<string, TablePlan>();
   let trigrams = false;
@@ -224,11 +230,8 @@ export const postgresAdapter = (
     sql`${tableRef(table)}.${sql.identifier(column)}`;
   const alias = (name: string) => sql.identifier(name);
 
-  const rowsOf = async (x: Executor, query: SQL): Promise<Record_[]> => {
-    const result = (await x.execute(query)) as unknown;
-    if (Array.isArray(result)) return result as Record_[];
-    return ((result as { rows?: Record_[] })?.rows ?? []) as Record_[];
-  };
+  const rowsOf = (x: SqlClient, query: SQL): Promise<Record_[]> =>
+    run(x, query);
 
   const planOf = (table: TableDef) => plans.get(table.name) ?? planTable(table);
 
@@ -245,7 +248,7 @@ export const postgresAdapter = (
   // Reading
   // ------------------------------------------------------------------------------------
 
-  const loadPivot = async (x: Executor, pivot: Pivot, owners: string[]) => {
+  const loadPivot = async (x: SqlClient, pivot: Pivot, owners: string[]) => {
     const rows = await rowsOf(
       x,
       sql`select ${col(pivot.table, "_parent")} as "_parent", ${col(pivot.table, "target")} as "target" from ${tableRef(pivot.table)} where ${col(pivot.table, "_owner")} in (${idList(owners)}) order by ${col(pivot.table, "_pos")}`,
@@ -263,7 +266,7 @@ export const postgresAdapter = (
 
   // Every element of `array`, grouped by the id of the row that owns it, in order.
   const loadArray = async (
-    x: Executor,
+    x: SqlClient,
     array: ArrayPlan,
     owners: string[],
   ): Promise<Map<string, unknown[]>> => {
@@ -325,7 +328,7 @@ export const postgresAdapter = (
   // `want` limits which top-level fields are loaded (children are separate queries, so
   // skipping them is a real saving); undefined loads everything.
   const loadRows = async (
-    x: Executor,
+    x: SqlClient,
     plan: TablePlan,
     ids: string[],
     want?: ReadonlySet<string>,
@@ -391,7 +394,7 @@ export const postgresAdapter = (
   // Replaces link fields with the rows they point at. A link whose target is gone stays as its
   // bare id, which is how callers tell a resolved link from a dangling one.
   const populate = async (
-    x: Executor,
+    x: SqlClient,
     plan: TablePlan,
     rows: Record_[],
     fields: readonly string[],
@@ -448,14 +451,15 @@ export const postgresAdapter = (
   // ------------------------------------------------------------------------------------
 
   const insertRows = async (
-    x: Executor,
+    x: SqlClient,
     table: string,
     names: string[],
     rows: SQL[][],
   ) => {
     for (let i = 0; i < rows.length; i += INSERT_CHUNK) {
       const chunk = rows.slice(i, i + INSERT_CHUNK);
-      await x.execute(
+      await run(
+        x,
         sql`insert into ${tableRef(table)} (${sql.join(
           names.map((n) => sql.identifier(n)),
           sql`, `,
@@ -485,7 +489,7 @@ export const postgresAdapter = (
   };
 
   const insertPivot = async (
-    x: Executor,
+    x: SqlClient,
     pivot: Pivot,
     owner: string,
     parent: string,
@@ -506,7 +510,7 @@ export const postgresAdapter = (
   };
 
   const insertElements = async (
-    x: Executor,
+    x: SqlClient,
     array: ArrayPlan,
     owner: string,
     parent: string,
@@ -575,7 +579,7 @@ export const postgresAdapter = (
 
   // Removes everything below one array (its table and every table nested in it) for a root row.
   const deleteArraySubtree = async (
-    x: Executor,
+    x: SqlClient,
     array: ArrayPlan,
     owner: string,
   ) => {
@@ -584,7 +588,8 @@ export const postgresAdapter = (
       ...descendantArrays(array).map((a) => a.table),
       ...descendantPivots(array).map((p) => p.table),
     ]) {
-      await x.execute(
+      await run(
+        x,
         sql`delete from ${tableRef(table)} where ${col(table, "_owner")} = ${owner}`,
       );
     }
@@ -593,7 +598,7 @@ export const postgresAdapter = (
   // Writes the arrays and relation lists of a root row that the caller supplied. On an update,
   // a supplied array replaces the stored one as a whole.
   const writeChildren = async (
-    x: Executor,
+    x: SqlClient,
     plan: TablePlan,
     id: string,
     data: Record_,
@@ -609,7 +614,8 @@ export const postgresAdapter = (
       const { found, value } = lookup(data, pivot.path);
       if (!found) continue;
       if (replacing) {
-        await x.execute(
+        await run(
+          x,
           sql`delete from ${tableRef(pivot.table)} where ${col(pivot.table, "_owner")} = ${id}`,
         );
       }
@@ -628,7 +634,7 @@ export const postgresAdapter = (
   };
 
   const insertRoot = async (
-    x: Executor,
+    x: SqlClient,
     plan: TablePlan,
     id: string,
     data: Record_,
@@ -655,7 +661,7 @@ export const postgresAdapter = (
   };
 
   const updateRoot = async (
-    x: Executor,
+    x: SqlClient,
     plan: TablePlan,
     id: string,
     data: Record_,
@@ -687,14 +693,15 @@ export const postgresAdapter = (
     }
 
     if (sets.length) {
-      await x.execute(
+      await run(
+        x,
         sql`update ${tableRef(plan.name)} set ${sql.join(sets, sql`, `)} where ${col(plan.name, "id")} = ${id}`,
       );
     }
     if (!plan.document) await writeChildren(x, plan, id, data, true);
   };
 
-  const exists = async (x: Executor, plan: TablePlan, id: string) =>
+  const exists = async (x: SqlClient, plan: TablePlan, id: string) =>
     (
       await rowsOf(
         x,
@@ -702,12 +709,13 @@ export const postgresAdapter = (
       )
     ).length > 0;
 
-  const deleteSubtrees = async (x: Executor, plan: TablePlan, owners: SQL) => {
+  const deleteSubtrees = async (x: SqlClient, plan: TablePlan, owners: SQL) => {
     for (const table of [
       ...descendantArrays(plan).map((a) => a.table),
       ...descendantPivots(plan).map((p) => p.table),
     ]) {
-      await x.execute(
+      await run(
+        x,
         sql`delete from ${tableRef(table)} where ${col(table, "_owner")} in (${owners})`,
       );
     }
@@ -869,15 +877,17 @@ export const postgresAdapter = (
   // Schema
   // ------------------------------------------------------------------------------------
 
-  const qualified = (name: string) =>
-    config.schema ? `${quote(config.schema)}.${quote(name)}` : quote(name);
+  // For messages only (never executed).
+  const qualifiedText = (name: string) =>
+    config.schema ? `"${config.schema}"."${name}"` : `"${name}"`;
 
-  const ddl = async (x: Executor, statement: string) => {
-    await x.execute(sql.raw(statement));
-  };
+  const ddl = (x: SqlClient, statement: SQL) => run(x, statement);
 
+  const TYPE_WORDS = new Set(Object.values(SQL_TYPE));
+  const typeWord = (type: ScalarType) =>
+    sql.keyword(SQL_TYPE[type], TYPE_WORDS);
   const columnDef = (c: { name: string; type: ScalarType }) =>
-    `${quote(c.name)} ${SQL_TYPE[c.type]}`;
+    sql`${sql.identifier(c.name)} ${typeWord(c.type)}`;
 
   // One physical table of a plan, described independently of how it is created or checked, so
   // the migration and the post-migration type check can't drift apart.
@@ -944,37 +954,50 @@ export const postgresAdapter = (
 
   // A statement that is allowed to fail without failing the migration. Inside a transaction a
   // failed statement poisons everything after it, so it runs in a savepoint.
-  const attempt = async (x: Executor, run: (x: Executor) => Promise<void>) => {
+  const attempt = async (
+    x: SqlClient,
+    body: (x: SqlClient) => Promise<unknown>,
+  ) => {
     try {
-      await (x as PgDb).transaction(run);
+      await x.transaction(body);
       return undefined;
     } catch (error) {
       return error instanceof Error ? error.message : String(error);
     }
   };
 
-  const ensureTable = async (x: Executor, table: PhysicalTable) => {
+  const ensureTable = async (x: SqlClient, table: PhysicalTable) => {
+    const table_ = tableRef(table.name);
+
     await ddl(
       x,
-      `create table if not exists ${qualified(table.name)} (${[
-        ...table.columns
-          .filter((c) => c.name === table.primary)
-          .map((c) => `${columnDef(c)} primary key`),
-        ...table.columns.filter((c) => c.name !== table.primary).map(columnDef),
-      ].join(", ")})`,
+      sql`create table if not exists ${table_} (${sql.join(
+        [
+          ...table.columns
+            .filter((c) => c.name === table.primary)
+            .map((c) => sql`${columnDef(c)} primary key`),
+          ...table.columns
+            .filter((c) => c.name !== table.primary)
+            .map(columnDef),
+        ],
+        sql`, `,
+      )})`,
     );
     // Additive migration: any column the table doesn't have yet is added; nothing is dropped
     // or retyped (a column whose type no longer matches is reported by checkColumnTypes()).
     for (const c of table.columns) {
       await ddl(
         x,
-        `alter table ${qualified(table.name)} add column if not exists ${columnDef(c)}`,
+        sql`alter table ${table_} add column if not exists ${columnDef(c)}`,
       );
     }
     for (const index of table.indexes) {
       await ddl(
         x,
-        `create index if not exists ${quote(physicalName(`idx_${table.name}_${index.join("_")}`))} on ${qualified(table.name)} (${index.map(quote).join(", ")})`,
+        sql`create index if not exists ${sql.identifier(physicalName(`idx_${table.name}_${index.join("_")}`))} on ${table_} (${sql.join(
+          index.map((name) => sql.identifier(name)),
+          sql`, `,
+        )})`,
       );
     }
     for (const c of table.columns) {
@@ -982,7 +1005,7 @@ export const postgresAdapter = (
       const failure = await attempt(x, (sp) =>
         ddl(
           sp,
-          `create unique index if not exists ${quote(physicalName(`uq_${table.name}_${c.name}`))} on ${qualified(table.name)} (${quote(c.name)})`,
+          sql`create unique index if not exists ${sql.identifier(physicalName(`uq_${table.name}_${c.name}`))} on ${table_} (${sql.identifier(c.name)})`,
         ),
       );
       if (failure) {
@@ -993,13 +1016,13 @@ export const postgresAdapter = (
     }
   };
 
-  const ensurePlan = async (x: Executor, plan: TablePlan) => {
+  const ensurePlan = async (x: SqlClient, plan: TablePlan) => {
     for (const table of physicalTables(plan)) await ensureTable(x, table);
 
     if (plan.document) {
       await ddl(
         x,
-        `alter table ${qualified(plan.name)} alter column ${quote("data")} set default '{}'::jsonb`,
+        sql`alter table ${tableRef(plan.name)} alter column ${sql.identifier("data")} set default '{}'::jsonb`,
       );
     }
 
@@ -1012,7 +1035,7 @@ export const postgresAdapter = (
         if (!column) continue;
         await ddl(
           x,
-          `create index if not exists ${quote(physicalName(`trgm_${plan.name}_${column.name}`))} on ${qualified(plan.name)} using gin (${quote(column.name)} gin_trgm_ops)`,
+          sql`create index if not exists ${sql.identifier(physicalName(`trgm_${plan.name}_${column.name}`))} on ${tableRef(plan.name)} using gin (${sql.identifier(column.name)} gin_trgm_ops)`,
         );
       }
     }
@@ -1047,7 +1070,7 @@ export const postgresAdapter = (
           console.warn(
             `[njin] ${key} is "${found}" in the database but the model now says "${wanted}". ` +
               "Migrations never retype a column, so it was left alone; convert it yourself, e.g. " +
-              `ALTER TABLE ${qualified(table.name)} ALTER COLUMN ${quote(c.name)} TYPE ${SQL_TYPE[c.type]} USING ${quote(c.name)}::${SQL_TYPE[c.type]};`,
+              `ALTER TABLE ${qualifiedText(table.name)} ALTER COLUMN "${c.name}" TYPE ${SQL_TYPE[c.type]} USING "${c.name}"::${SQL_TYPE[c.type]};`,
           );
         }
       }
@@ -1075,19 +1098,20 @@ export const postgresAdapter = (
     async connect() {
       if (config.connect) {
         const connection = await config.connect();
-        db = guard(connection.db);
+        db = guarded(connection.client);
         closer = connection.close;
       } else if (config.url) {
-        const { SQL } = await import("bun");
-        const { drizzle } = await import("drizzle-orm/bun-sql");
-        const client = new SQL(config.url, { max: config.max });
-        db = guard(drizzle({ client }) as unknown as PgDb);
-        closer = () => client.close();
+        const connection = bunSqlClient(config.url, {
+          max: config.max,
+          tls: config.tls,
+        });
+        db = guarded(connection.client);
+        closer = connection.close;
       } else {
         throw new Error("postgresAdapter() needs either `url` or `connect`");
       }
 
-      await db.execute(sql`select 1`);
+      await run(db, sql`select 1`);
     },
 
     async close() {
@@ -1102,7 +1126,8 @@ export const postgresAdapter = (
       // booting against the same database take turns (and the later ones find the schema
       // already recorded and skip), and a failure halfway leaves nothing half-built.
       await db.transaction(async (tx) => {
-        await tx.execute(
+        await run(
+          tx,
           sql`select pg_advisory_xact_lock(hashtext(${SCHEMA_LOCK}))`,
         );
 
@@ -1110,7 +1135,7 @@ export const postgresAdapter = (
         // extensions) search still works, just as plain substring matching.
         trigrams =
           (await attempt(tx, (sp) =>
-            ddl(sp, "create extension if not exists pg_trgm"),
+            ddl(sp, sql`create extension if not exists pg_trgm`),
           )) === undefined;
 
         const hash = createHash("sha256")
@@ -1133,7 +1158,7 @@ export const postgresAdapter = (
 
         await ddl(
           tx,
-          `create table if not exists ${qualified(SCHEMA_META_TABLE)} ("key" text primary key, "hash" text not null)`,
+          sql`create table if not exists ${tableRef(SCHEMA_META_TABLE)} ("key" text primary key, "hash" text not null)`,
         );
         const [recorded] = await rowsOf(
           tx,
@@ -1143,7 +1168,8 @@ export const postgresAdapter = (
 
         for (const plan of plans.values()) await ensurePlan(tx, plan);
 
-        await tx.execute(
+        await run(
+          tx,
           sql`insert into ${tableRef(SCHEMA_META_TABLE)} ("key", "hash") values ('current', ${hash}) on conflict ("key") do update set "hash" = excluded."hash"`,
         );
       });
@@ -1200,7 +1226,8 @@ export const postgresAdapter = (
 
       await db.transaction(async (tx) => {
         await deleteSubtrees(tx, plan, sql`${id}`);
-        await tx.execute(
+        await run(
+          tx,
           sql`delete from ${tableRef(plan.name)} where ${col(plan.name, "id")} = ${id}`,
         );
       });
@@ -1235,7 +1262,7 @@ export const postgresAdapter = (
 
       const page_ = await rowsOf(
         db,
-        sql`select ${col(plan.name, "id")} as "id"${ranking} from ${tableRef(plan.name)} ${where} ${order} limit ${sql.raw(String(limit))} offset ${sql.raw(String(offset))}`,
+        sql`select ${col(plan.name, "id")} as "id"${ranking} from ${tableRef(plan.name)} ${where} ${order} limit ${sql.int(limit)} offset ${sql.int(offset)}`,
       );
       const [counted] = await rowsOf(
         db,
@@ -1313,7 +1340,7 @@ export const postgresAdapter = (
           target.type === "datetime"
             ? iso(target.ref)
             : sql`${target.ref}::text`;
-        key = sql`left(${text}, ${sql.raw(String(length))})`;
+        key = sql`left(${text}, ${sql.int(length)})`;
       } else {
         key = target.type === "string" ? target.ref : sql`${target.ref}::text`;
       }
