@@ -150,6 +150,15 @@ export type NjinConfig = {
   // file until purged with purgeStatic() (from "@njinlabs/njin/static") or, with `revalidate`,
   // until it is that many seconds old. `njin dev` ignores this and always renders live.
   static?: StaticRoute[];
+  // A shared cache (Varnish…) in front of njin. purgeStatic() sends each URL here as an HTTP
+  // `BAN` request, so the cache drops its copy together with njin's own. Omit it when nothing
+  // caches in front of njin.
+  edgeCache?: {
+    // Base URL(s) of the cache to notify, e.g. "http://127.0.0.1:6081".
+    ban: string | string[];
+    // Extra headers on every BAN request (e.g. an auth token the VCL checks).
+    headers?: Record<string, string>;
+  };
 };
 
 export type ResolvedConfig = {
@@ -174,6 +183,7 @@ export type ResolvedConfig = {
   vars: VarsFactory[];
   helpers: HelperFactory[];
   static: ResolvedStaticRoute[];
+  edgeCache?: { ban: string[]; headers: Record<string, string> };
   // Everything else a Plugin contributes (models/vars/hooks/events/routes) is already
   // flattened into the arrays above — init() is the only part that can't be merged away,
   // so it's the only piece of each Plugin that survives resolution on its own.
@@ -289,6 +299,10 @@ export const loadConfig = async (preloaded?: NjinConfig): Promise<void> => {
           .map((r) => [r.route, r] as const),
       ).values(),
     ],
+    edgeCache: userConfig.edgeCache && {
+      ban: [userConfig.edgeCache.ban].flat().map((u) => u.replace(/\/$/, "")),
+      headers: userConfig.edgeCache.headers ?? {},
+    },
     pluginInits: plugins
       .map((p) => p.init)
       .filter(

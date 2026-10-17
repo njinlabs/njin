@@ -118,11 +118,19 @@ const securityHeaders = (request: Request): Record<string, string> => {
   return headers;
 };
 
+// A static route without `revalidate` only changes through purgeStatic() (which also BANs the
+// shared cache), so the cache may keep it for a long while; this is just the safety net for a
+// cache that missed the BAN.
+const STATIC_SHARED_MAX_AGE = 86400;
+const STATIC_DEFAULT_SWR = 60;
+
 export const htmlResponse = (
   request: Request,
   html: string,
   status = 200,
   extraHeaders: Record<string, string> = {},
+  // Set for a page served from the static cache: shared caches (Varnish, CDN) may store it.
+  shared?: { revalidate?: number },
 ) => {
   const headers = { ...securityHeaders(request), ...extraHeaders };
 
@@ -133,7 +141,10 @@ export const htmlResponse = (
   }
 
   const etag = `W/"${Bun.hash(html).toString(36)}"`;
-  headers["Cache-Control"] = "no-cache";
+  // max-age=0 keeps browsers revalidating through the ETag; s-maxage is for shared caches.
+  headers["Cache-Control"] = shared
+    ? `public, max-age=0, s-maxage=${shared.revalidate ?? STATIC_SHARED_MAX_AGE}, stale-while-revalidate=${shared.revalidate ?? STATIC_DEFAULT_SWR}`
+    : "no-cache";
   headers.ETag = etag;
 
   const ifNoneMatch = request.headers.get("if-none-match");
@@ -289,6 +300,7 @@ const view = makeModule(() => {
 
             let html: string;
             let cacheHeaders: Record<string, string> = {};
+            let shared: { revalidate?: number } | undefined;
             if (staticRoute && key !== null) {
               // Same HTML for every visitor: no query, and a url built from publicUrl when set.
               const base = configuredBase ?? new URL(request.url).origin;
@@ -304,6 +316,7 @@ const view = makeModule(() => {
               );
               html = result.html;
               cacheHeaders = { "X-Njin-Cache": result.state };
+              shared = { revalidate: staticRoute.revalidate };
             } else {
               html = await renderPage(edge, template, {
                 params,
@@ -315,7 +328,7 @@ const view = makeModule(() => {
 
             trackVisit(path, request, server);
 
-            return htmlResponse(request, html, 200, cacheHeaders);
+            return htmlResponse(request, html, 200, cacheHeaders, shared);
           } catch (err) {
             if (err instanceof HttpError) {
               return htmlResponse(
