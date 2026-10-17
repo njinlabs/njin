@@ -1,4 +1,5 @@
 import { mkdir, rename, rm, stat } from "node:fs/promises";
+import { request as httpRequest } from "node:http";
 import { dirname, join } from "node:path";
 import logger from "../modules/logger";
 import { getConfig } from "./config";
@@ -168,6 +169,74 @@ export const warmStatic = async (keys?: string[]): Promise<void> => {
   }
 };
 
+// Regex (matched against the request URL, query string included) for the URLs a purge covers.
+// Case-insensitive because clients disagree on the case of %-escapes.
+const escapeRegex = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const banRegex = (key: string | null, subtree: boolean) => {
+  if (key === null) return "^/";
+  const path =
+    key === "/"
+      ? ""
+      : key
+          .slice(1)
+          .split("/")
+          .map((s) => `/${escapeRegex(encodeURIComponent(s))}`)
+          .join("");
+  if (subtree) return `(?i)^${path}([/?].*)?$`;
+  return `(?i)^${path}/?(\\?.*)?$`;
+};
+
+// Tells the shared cache in front of njin (config `edgeCache`) to drop what it holds. Best-effort:
+// a cache that is down just keeps its copy until s-maxage runs out.
+const banEdge = async (key: string | null, subtree: boolean) => {
+  const { edgeCache: edge, publicUrl } = getConfig();
+  if (!edge) return;
+  const regex = banRegex(key, subtree);
+  const host = publicUrl ? new URL(publicUrl).host : null;
+  await Promise.all(
+    edge.ban.map(
+      (base) =>
+        // node:http, not fetch — Bun's fetch rewrites unknown methods like BAN to GET.
+        new Promise<void>((resolve) => {
+          const done = (err?: unknown) => {
+            if (err)
+              logger().error(err, `[static] failed to BAN ${regex} on ${base}`);
+            resolve();
+          };
+          try {
+            const req = httpRequest(
+              `${base}${key === null ? "/" : key}`,
+              {
+                method: "BAN",
+                timeout: 3000,
+                headers: {
+                  ...(host ? { Host: host } : {}),
+                  ...edge.headers,
+                  "X-Ban-Url": regex,
+                },
+              },
+              (res) => {
+                res.resume();
+                res.on("end", () =>
+                  done(
+                    (res.statusCode ?? 0) >= 400
+                      ? new Error(`HTTP ${res.statusCode}`)
+                      : undefined,
+                  ),
+                );
+              },
+            );
+            req.on("timeout", () => req.destroy(new Error("timeout")));
+            req.on("error", done);
+            req.end();
+          } catch (err) {
+            done(err);
+          }
+        }),
+    ),
+  );
+};
+
 // Drops cached HTML so the next request renders it again. Call it AFTER the content changed —
 // from a hook, event, route or anywhere else in the app:
 //
@@ -187,11 +256,13 @@ export const purgeStatic = async (
   if (path === undefined || path === "/*") {
     cancelInflight(() => true);
     await rm(cacheDir(), { recursive: true, force: true });
+    await banEdge(null, true);
   } else if (path.endsWith("/*")) {
     const prefix = cacheKey(path.slice(0, -2) || "/");
     if (prefix === null) throw new Error(`Invalid purge path "${path}"`);
     cancelInflight((k) => k === prefix || k.startsWith(`${prefix}/`));
     await rm(keyDir(prefix), { recursive: true, force: true });
+    await banEdge(prefix, true);
     affected = [...warmable.keys()].filter(
       (k) => k === prefix || k.startsWith(`${prefix}/`),
     );
@@ -200,6 +271,7 @@ export const purgeStatic = async (
     if (key === null) throw new Error(`Invalid purge path "${path}"`);
     cancelInflight((k) => k === key);
     await rm(keyFile(key), { force: true });
+    await banEdge(key, false);
     affected = [key];
   }
 

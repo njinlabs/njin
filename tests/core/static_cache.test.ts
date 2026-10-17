@@ -1,4 +1,5 @@
 import { afterAll, describe, expect, it, mock } from "bun:test";
+import { createServer } from "node:net";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -7,18 +8,19 @@ import * as realLoggerModule from "../../src/modules/logger";
 
 const dir = mkdtempSync(join(tmpdir(), "njin-static-cache-"));
 
+let edgeCache: { ban: string[]; headers: Record<string, string> } | undefined;
+
 mock.module("../../src/core/config", () => ({
   ...realConfig,
-  getConfig: () => ({ rootDir: dir }),
+  getConfig: () => ({ rootDir: dir, edgeCache }),
 }));
 mock.module("../../src/modules/logger", () => ({
   ...realLoggerModule,
   default: () => ({ error: () => {} }),
 }));
 
-const { cacheKey, getOrRenderStatic, readStatic, purgeStatic } = await import(
-  "../../src/core/static_cache"
-);
+const { cacheKey, getOrRenderStatic, readStatic, purgeStatic } =
+  await import("../../src/core/static_cache");
 
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
@@ -136,5 +138,48 @@ describe("getOrRenderStatic", () => {
       html: "s",
       state: "HIT",
     });
+  });
+});
+
+describe("purgeStatic edge cache", () => {
+  it("sends a BAN per purge and survives an unreachable cache", async () => {
+    const seen: { method: string; path: string; ban: string | null }[] = [];
+    // Raw TCP: Bun's own HTTP servers reject the BAN method.
+    const server = createServer((socket) => {
+      socket.once("data", (chunk) => {
+        const text = chunk.toString();
+        const [method = "", path = ""] = text.split(" ");
+        seen.push({
+          method,
+          path,
+          ban: /^x-ban-url: ([^\s]+)/im.exec(text)?.[1] ?? null,
+        });
+        socket.end(
+          "HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+        );
+      });
+    });
+    await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+    const { port } = server.address() as { port: number };
+    edgeCache = {
+      ban: [`http://127.0.0.1:${port}`, "http://127.0.0.1:1"],
+      headers: {},
+    };
+    try {
+      await purgeStatic("/blog/hello", { warm: false });
+      await purgeStatic("/blog/*", { warm: false });
+      await purgeStatic(undefined, { warm: false });
+    } finally {
+      edgeCache = undefined;
+      server.close();
+    }
+
+    expect(seen.map((s) => s.method)).toEqual(["BAN", "BAN", "BAN"]);
+    expect(seen[0]).toMatchObject({
+      path: "/blog/hello",
+      ban: String.raw`(?i)^/blog/hello/?(\?.*)?$`,
+    });
+    expect(seen[1]?.ban).toBe("(?i)^/blog([/?].*)?$");
+    expect(seen[2]?.ban).toBe("^/");
   });
 });

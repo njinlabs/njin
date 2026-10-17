@@ -71,6 +71,18 @@ describe("htmlResponse()", () => {
     expect(await res.text()).toBe("<p>hi</p>");
   });
 
+  it("lets shared caches store a static page, revalidating in browsers", () => {
+    const plain = htmlResponse(req(), "a", 200, {}, {});
+    expect(plain.headers.get("cache-control")).toBe(
+      "public, max-age=0, s-maxage=86400, stale-while-revalidate=60",
+    );
+    const timed = htmlResponse(req(), "a", 200, {}, { revalidate: 30 });
+    expect(timed.headers.get("cache-control")).toBe(
+      "public, max-age=0, s-maxage=30, stale-while-revalidate=30",
+    );
+    expect(timed.headers.get("etag")).toMatch(/^W\/".+"$/);
+  });
+
   it("gives the same body the same ETag and different bodies different ones", () => {
     const a = htmlResponse(req(), "a").headers.get("etag");
     expect(htmlResponse(req(), "a").headers.get("etag")).toBe(a);

@@ -303,6 +303,34 @@ await purgeStatic("/about", { warm: false }); // don't re-render it right away
 - A static page is the same for everyone: `query` is empty, and `request.url` is built from `publicUrl` (the request's origin if unset). Don't put per-user or per-query content in it.
 - `njin dev` ignores `static` and always renders live.
 
+### Behind Varnish / a CDN
+
+Static pages are sent with `Cache-Control: public, max-age=0, s-maxage=<n>, stale-while-revalidate=<m>`: browsers still revalidate through the ETag (`max-age=0`), while a shared cache may keep the page. `s-maxage` is the route's `revalidate` (with `stale-while-revalidate` of the same length); a route without `revalidate` gets `s-maxage=86400` and relies on `purgeStatic()`. Live pages, `BYPASS` responses and errors are never marked `public`.
+
+Because a route with `revalidate` can be served stale by njin and then cached again by the proxy, a page may be up to about twice `revalidate` old.
+
+To have `purgeStatic()` clear the cache in front as well, point `edgeCache` at it:
+
+```ts
+export default defineConfig({
+  edgeCache: { ban: "http://127.0.0.1:6081", headers: { "X-Purge-Token": "…" } },
+});
+```
+
+Each purge (including the full purge at server start) sends an HTTP `BAN` request per URL, with the regex of the affected URLs in `X-Ban-Url` and `Host` taken from `publicUrl`. A failing cache is logged and skipped. Varnish needs a VCL that accepts it, e.g.:
+
+```vcl
+sub vcl_recv {
+  if (req.method == "BAN") {
+    if (req.http.X-Purge-Token != "…") { return (synth(403)); }
+    ban("obj.http.X-Ban-Path ~ " + req.http.X-Ban-Url);
+    return (synth(200, "Banned"));
+  }
+}
+sub vcl_backend_response { set beresp.http.X-Ban-Path = bereq.url; }
+sub vcl_deliver { unset resp.http.X-Ban-Path; }
+```
+
 ## Template example
 
 Models are available as global async functions in every template:
