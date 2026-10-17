@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, it, mock } from "bun:test";
-import { createServer } from "node:net";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as realConfig from "../../src/core/config";
@@ -19,8 +19,9 @@ mock.module("../../src/modules/logger", () => ({
   default: () => ({ error: () => {} }),
 }));
 
-const { cacheKey, getOrRenderStatic, readStatic, purgeStatic } =
-  await import("../../src/core/static_cache");
+const { cacheKey, getOrRenderStatic, readStatic, purgeStatic } = await import(
+  "../../src/core/static_cache"
+);
 
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
