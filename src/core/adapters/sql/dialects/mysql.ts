@@ -80,7 +80,15 @@ export const mysqlDialect = (mariadb: boolean): Dialect => {
     deleteReturning: mariadb,
     rowLock: sql`for update`,
     indexIfNotExists: false,
-    foreignKeys: "alter",
+    foreignKeys: "both",
+    uncheckedCreate: {
+      begin: async (tx) => {
+        await run(tx, sql`set foreign_key_checks = 0`);
+      },
+      end: async (tx) => {
+        await run(tx, sql`set foreign_key_checks = 1`);
+      },
+    },
 
     // A named lock held by this connection; the migration's transaction keeps its connection
     // for the whole migration (DDL commits the transaction but not the connection).

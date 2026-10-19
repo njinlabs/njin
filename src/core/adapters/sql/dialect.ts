@@ -69,7 +69,17 @@ export type Dialect = {
   // (Postgres, MySQL — a table must exist before it can be referenced). "inline": inside
   // CREATE TABLE (SQLite cannot add a constraint to a table that already exists, so a table
   // created before foreign keys existed stays without them).
-  readonly foreignKeys: "alter" | "inline";
+  // "both": a new table is created with its foreign keys inline (see `uncheckedCreate`), and
+  // a table that already exists gets the ones it is missing with ADD CONSTRAINT.
+  readonly foreignKeys: "alter" | "inline" | "both";
+  // Lets a table be created with a foreign key to a table that does not exist yet, by switching
+  // the check off while the tables are created (MySQL: foreign_key_checks). It saves an ALTER
+  // TABLE per foreign key, which matters where every DDL statement is slow and commits on its
+  // own. `end` runs even when the migration fails.
+  readonly uncheckedCreate?: {
+    begin(tx: SqlClient): Promise<void>;
+    end(tx: SqlClient): Promise<void>;
+  };
   // Every foreign key constraint, as "table.constraint". Needed for "alter" so a migration
   // can be repeated.
   foreignKeyNames?(x: SqlClient, schema?: string): Promise<Set<string>>;

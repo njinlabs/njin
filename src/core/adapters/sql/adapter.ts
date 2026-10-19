@@ -1152,7 +1152,7 @@ export const sqlAdapter = (config: SqlAdapterSpec): DbAdapter => {
             .filter((c) => c.name !== table.primary)
             .map((c) => columnDef(table, c)),
           // SQLite can only declare a link when the table is created.
-          ...(dialect.foreignKeys === "inline"
+          ...(dialect.foreignKeys !== "alter"
             ? enforced(table).map(
                 (fk) =>
                   sql`constraint ${sql.identifier(fk.name)} ${foreignKeyDef(fk)}`,
@@ -1608,10 +1608,18 @@ export const sqlAdapter = (config: SqlAdapterSpec): DbAdapter => {
           if (recorded?.hash === hash) return;
 
           const before = await existing(tx);
-          for (const plan of plans.values()) {
-            await ensurePlan(tx, plan, before);
+          const unchecked = dialect.uncheckedCreate;
+          await unchecked?.begin(tx);
+          try {
+            for (const plan of plans.values()) {
+              await ensurePlan(tx, plan, before);
+            }
+          } finally {
+            await unchecked?.end(tx);
           }
-          if (dialect.foreignKeys === "alter") await ensureForeignKeys(tx);
+          // With the check back on, so an existing table whose rows link to records that are
+          // gone is noticed (see ensureForeignKeys).
+          if (dialect.foreignKeys !== "inline") await ensureForeignKeys(tx);
 
           await run(tx, sql`delete from ${meta} where "key" = 'current'`);
           await run(
