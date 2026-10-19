@@ -1,4 +1,4 @@
-import { afterAll, describe, it } from "bun:test";
+import { afterAll, describe, it, setDefaultTimeout } from "bun:test";
 import { mysqlAdapter } from "../../../src/core/adapters/mysql";
 import { bunSqlClient } from "../../../src/core/adapters/sql/bun_client";
 import { describeAdapter } from "./contract_suite";
@@ -11,6 +11,10 @@ import { describeAdapter } from "./contract_suite";
 //
 // Every test works in a database of its own that is dropped afterwards; nothing else is touched.
 const url = process.env.NJIN_TEST_MYSQL_URL;
+
+// Creating the tables of a test's database is dozens of DDL statements, each committing on its
+// own; the default 5 seconds a hook gets is not enough on a slow disk.
+setDefaultTimeout(60_000);
 
 if (!url) {
   describe("DbAdapter contract: mysql (server)", () => {

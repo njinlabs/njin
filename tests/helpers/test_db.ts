@@ -1,4 +1,4 @@
-import { afterAll, mock } from "bun:test";
+import { afterAll, mock, setDefaultTimeout } from "bun:test";
 import { resolve } from "node:path";
 import { surrealAdapter } from "../../src/core/adapters/surreal";
 import type { DbAdapter, TableDef } from "../../src/core/db/contract";
@@ -19,6 +19,15 @@ import { internalTables } from "../../src/core/db/internal";
 // gets a schema of its own, dropped afterwards). NJIN_TEST_ADAPTER=sqlite runs them on an
 // in-memory SQLite; NJIN_TEST_ADAPTER=mysql (also covers MariaDB) needs NJIN_TEST_MYSQL_URL and
 // gives each test file a database of its own.
+// A migration on a real server is dozens of DDL statements that each commit on their own, so
+// the default 5 seconds a hook gets is not enough on a slow disk or a busy machine.
+if (
+  process.env.NJIN_TEST_ADAPTER === "mysql" ||
+  process.env.NJIN_TEST_POSTGRES_URL
+) {
+  setDefaultTimeout(60_000);
+}
+
 const makeAdapter = async (): Promise<DbAdapter> => {
   if (process.env.NJIN_TEST_ADAPTER === "postgres") {
     const { postgresAdapter } = await import(
