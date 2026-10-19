@@ -72,7 +72,17 @@ export type FieldDef =
 
 // A full-text search target. `via` is set for a single-hop nested entry ("author.name"
 // -> { field: "name", via: "author" }), in which case `field` lives on the linked table.
-export type SearchTarget = { table: string; field: string; via?: string };
+//
+// `perLanguage` is for a link into a table with one row per record and language: `table` is
+// that table, the linked record's id is in its `key` column and the language in its `locale`
+// column, so the text is matched on the rows whose `key` is what the link points at — all of
+// them, or only those of `ListQuery.searchLocale` when it is given.
+export type SearchTarget = {
+  table: string;
+  field: string;
+  via?: string;
+  perLanguage?: { key: string; locale: string };
+};
 
 export type TableDef = {
   // Physical table name == model prefix.
@@ -141,6 +151,9 @@ export type ListQuery = {
   // `capabilities.search`); the only guarantees are: it only matches against the table's
   // `search` targets, and when no explicit `sort` is given, results are ordered best-first.
   search?: string;
+  // Matches a `perLanguage` search target on this language only. Without it every language
+  // counts.
+  searchLocale?: string;
   sort?: { field: string; order: "asc" | "desc" };
   page: number; // 1-based
   limit: number;
@@ -184,7 +197,21 @@ export type AdapterCapabilities = {
   // "basic": tokenised / substring match.
   // "fuzzy": substring + typo tolerance + relevance ranking.
   search: "none" | "basic" | "fuzzy";
+  // True when the database enforces links (foreign keys): writing a link to a row that does
+  // not exist throws LinkTargetMissingError, deleting a row clears the one() links pointing at
+  // it (null) and drops it from many() lists, and deleting a row deletes its array / many rows.
+  // Without it a link to a missing row is stored as given and comes back as its raw id.
+  referentialIntegrity?: boolean;
 };
+
+// Thrown by an adapter with `referentialIntegrity` when a write links to a row that does not
+// exist. Carries no values — only the constraint name, when the database reports one.
+export class LinkTargetMissingError extends Error {
+  constructor(public readonly constraint?: string) {
+    super("A linked record does not exist");
+    this.name = "LinkTargetMissingError";
+  }
+}
 
 // What an adapter tells `njin build` / `njin build:worker` it needs, so the build commands never
 // have to know which database is in use.
@@ -207,30 +234,20 @@ export type AdapterBuild = {
   notes?: readonly string[];
 };
 
-export interface DbAdapter {
-  readonly name: string;
-  readonly capabilities: AdapterCapabilities;
-
-  // A one-line, human-readable summary for the startup banner ("localhost:5432/app (public)").
-  // Must not contain credentials. Falls back to `name` when an adapter has nothing to add.
-  describe?(): string;
-
-  // Connect. Called once from the db module's init(), before anything else.
-  connect(): Promise<void>;
-  close(): Promise<void>;
-
-  // Build-time needs: native bindings to copy, packages to keep external, bundler patches.
-  // Optional — an adapter on a pure-JS driver has nothing to say. Called by the build commands
-  // with the project's config already loaded, so the adapter can look at its own settings
-  // (e.g. embedded vs remote).
-  build?(
-    ctx: AdapterBuildContext,
-  ): Promise<AdapterBuild | void> | AdapterBuild | void;
-
-  // Create / update structures so every table in `tables` exists with matching columns,
-  // pivots, indexes. Idempotent and cheap when nothing changed. Must be additive by
-  // default (never drop data); destructive changes are opt-in on the adapter's own config.
-  sync(tables: readonly TableDef[]): Promise<void>;
+// Reading and writing rows. Everything a transaction() callback gets, and what DbAdapter adds
+// the connection lifecycle to.
+export interface DbOperations {
+  // Runs `fn` as one unit: every write it makes through the `tx` it is handed is kept if
+  // `fn` resolves and undone if it throws (the error is rethrown). Reads through `tx` see the
+  // transaction's own writes; nobody else sees them before it commits.
+  //
+  // Use only `tx` inside `fn` — a call on the adapter itself is outside the transaction (and on
+  // SQLite waits for it to finish). Calling `tx.transaction()` nests inside the same
+  // transaction; if the inner function throws and the outer one carries on, the inner writes
+  // may or may not be kept (a SQL adapter rolls them back to a savepoint, SurrealDB does not).
+  //
+  // Keep it short: it holds locks. Don't do slow work (HTTP calls, file uploads) inside.
+  transaction<T>(fn: (tx: DbOperations) => Promise<T>): Promise<T>;
 
   // --- single rows (id is always a plain string) ------------------------------------
   find(
@@ -275,4 +292,30 @@ export interface DbAdapter {
   count(table: TableDef, where?: readonly Condition[]): Promise<number>;
   removeWhere(table: TableDef, where: readonly Condition[]): Promise<number>;
   countBy(query: CountBy): Promise<{ key: string | null; count: number }[]>;
+}
+
+export interface DbAdapter extends DbOperations {
+  readonly name: string;
+  readonly capabilities: AdapterCapabilities;
+
+  // A one-line, human-readable summary for the startup banner ("localhost:5432/app (public)").
+  // Must not contain credentials. Falls back to `name` when an adapter has nothing to add.
+  describe?(): string;
+
+  // Connect. Called once from the db module's init(), before anything else.
+  connect(): Promise<void>;
+  close(): Promise<void>;
+
+  // Build-time needs: native bindings to copy, packages to keep external, bundler patches.
+  // Optional — an adapter on a pure-JS driver has nothing to say. Called by the build commands
+  // with the project's config already loaded, so the adapter can look at its own settings
+  // (e.g. embedded vs remote).
+  build?(
+    ctx: AdapterBuildContext,
+  ): Promise<AdapterBuild | void> | AdapterBuild | void;
+
+  // Create / update structures so every table in `tables` exists with matching columns,
+  // pivots, indexes. Idempotent and cheap when nothing changed. Must be additive by
+  // default (never drop data); destructive changes are opt-in on the adapter's own config.
+  sync(tables: readonly TableDef[]): Promise<void>;
 }

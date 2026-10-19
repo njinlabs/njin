@@ -5,6 +5,10 @@ export type HookEvent =
   | "afterUpdate"
   | "beforeDestroy"
   | "afterDestroy"
+  | "afterPublish"
+  | "afterUnpublish"
+  | "afterVarsPublish"
+  | "afterVarsUnpublish"
   | "beforeVarsUpdate"
   | "afterVarsUpdate";
 
@@ -99,6 +103,18 @@ export const afterDestroy = <M extends AnyModel>(
   fn: (record: RecordOf<M>) => void | Promise<void>,
 ): void => register("afterDestroy", model.prefix, fn);
 
+// Only fired for models made with `draftable: true`. `record` is the working copy as it is
+// after the change (status "published" after a publish, "draft" after an unpublish).
+export const afterPublish = <M extends AnyModel>(
+  model: M,
+  fn: (record: RecordOf<M>) => void | Promise<void>,
+): void => register("afterPublish", model.prefix, fn);
+
+export const afterUnpublish = <M extends AnyModel>(
+  model: M,
+  fn: (record: RecordOf<M>) => void | Promise<void>,
+): void => register("afterUnpublish", model.prefix, fn);
+
 export const beforeVarsUpdate = <V extends AnyVars>(
   vars: V,
   fn: (
@@ -108,6 +124,17 @@ export const beforeVarsUpdate = <V extends AnyVars>(
     | Partial<VarsUpdateDataOf<V>>
     | Promise<void | Partial<VarsUpdateDataOf<V>>>,
 ): void => register("beforeVarsUpdate", vars.prefix, fn);
+
+// Only fired for settings groups made with `draftable: true`.
+export const afterVarsPublish = <V extends AnyVars>(
+  vars: V,
+  fn: (record: VarsRecordOf<V>) => void | Promise<void>,
+): void => register("afterVarsPublish", vars.prefix, fn);
+
+export const afterVarsUnpublish = <V extends AnyVars>(
+  vars: V,
+  fn: (record: VarsRecordOf<V>) => void | Promise<void>,
+): void => register("afterVarsUnpublish", vars.prefix, fn);
 
 export const afterVarsUpdate = <V extends AnyVars>(
   vars: V,
@@ -141,7 +168,15 @@ export const runBeforeHooks = async <T extends Record<string, unknown>>(
 };
 
 export const runAfterHooks = async <T>(
-  event: "afterCreate" | "afterUpdate" | "afterDestroy" | "afterVarsUpdate",
+  event:
+    | "afterCreate"
+    | "afterUpdate"
+    | "afterDestroy"
+    | "afterPublish"
+    | "afterUnpublish"
+    | "afterVarsPublish"
+    | "afterVarsUnpublish"
+    | "afterVarsUpdate",
   prefix: string,
   record: T,
 ): Promise<void> => {

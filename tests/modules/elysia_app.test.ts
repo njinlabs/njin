@@ -24,6 +24,8 @@ mock.module("../../src/core/config", () => ({
 }));
 
 const { UniqueConstraintError } = await import("../../src/core/model");
+const { HttpError } = await import("../../src/core/http_error");
+const { LinkTargetMissingError } = await import("../../src/core/db/contract");
 const { default: elysia } = await import("../../src/modules/elysia");
 
 elysia.init();
@@ -33,6 +35,12 @@ const app = elysia()
   })
   .get("/boom-unique", () => {
     throw new UniqueConstraintError("email", "a@a.com");
+  })
+  .get("/boom-link", () => {
+    throw new LinkTargetMissingError("fk_post_author");
+  })
+  .get("/boom-http", () => {
+    throw new HttpError(409, "Not published");
   })
   .get("/boom-generic", () => {
     throw new Error("boom");
@@ -60,6 +68,23 @@ describe("elysia() error handling", () => {
     expect(res.status).toBe(409);
     const body = (await res.json()) as { field: string };
     expect(body.field).toBe("email");
+  });
+
+  it("maps a link to a missing record to 422 without leaking the constraint", async () => {
+    const res = await app.handle(new Request("http://localhost/boom-link"));
+    expect(res.status).toBe(422);
+    const text = await res.text();
+    expect(text).toContain("linked record does not exist");
+    expect(text).not.toContain("fk_post_author");
+  });
+
+  it("maps an HttpError to its own status and message", async () => {
+    const res = await app.handle(new Request("http://localhost/boom-http"));
+    expect(res.status).toBe(409);
+    expect(((await res.json()) as { message: string }).message).toBe(
+      "Not published",
+    );
+    expect(loggerErrorCalls).toHaveLength(0);
   });
 
   it("maps any other error to 500 and logs it", async () => {

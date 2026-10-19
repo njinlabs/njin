@@ -96,6 +96,15 @@ export const varsTable: TableDef = {
   document: true,
 };
 
+// The live copy of each settings group made with `draftable: true` (core/vars): one document
+// per group, keyed by the group's prefix like the working copy in `vars`.
+export const varsPublishedTable: TableDef = {
+  name: "vars_published",
+  fields: [],
+  search: [],
+  document: true,
+};
+
 export const internalTables: readonly TableDef[] = [
   tokenTable,
   mcpTokenTable,
@@ -104,4 +113,5 @@ export const internalTables: readonly TableDef[] = [
   mcpUploadTable,
   pageviewTable,
   varsTable,
+  varsPublishedTable,
 ];

@@ -6,6 +6,7 @@ import type {
   Condition,
   CountBy,
   DbAdapter,
+  DbOperations,
   ElementDef,
   FieldDef,
   ListQuery,
@@ -148,6 +149,7 @@ const buildWhere = (
   conditions: readonly Condition[] | undefined,
   params: Params,
   searchClause?: string,
+  def?: TableDef,
 ) => {
   const parts: string[] = [];
   if (searchClause) parts.push(searchClause);
@@ -156,11 +158,17 @@ const buildWhere = (
     const field = ident(cond.field);
     const p = `c${i}`;
 
-    // `id` is a record link on the Surreal side, not the bare string the contract speaks.
+    // `id` and the relation fields are record links on the Surreal side, not the bare
+    // strings the contract speaks (a many link is matched with $in, one id at a time).
+    const link = def?.fields.find((f) => f.name === cond.field);
     const value =
-      field === "id" && typeof cond.value === "string"
-        ? new RecordId(table, cond.value)
-        : cond.value;
+      typeof cond.value !== "string"
+        ? cond.value
+        : field === "id"
+          ? new RecordId(table, cond.value)
+          : link && (link.kind === "one" || link.kind === "many")
+            ? new RecordId(link.target, cond.value)
+            : cond.value;
 
     switch (cond.op) {
       case "$eq":
@@ -216,7 +224,17 @@ const containmentCheck = (field: string) =>
 
 // A search target is "flat" (a field on the table itself) or "via" a relation field (the text
 // lives on the linked table, whose own index serves the match).
-const searchClauses = (table: TableDef, targets: readonly SearchTarget[]) => {
+// Narrows a search through a table of languages to the language being read, if there is one.
+const languageFilter = (target: SearchTarget, searchLocale?: string) =>
+  target.perLanguage && searchLocale !== undefined
+    ? ` AND ${ident(target.perLanguage.locale)} = $searchLocale`
+    : "";
+
+const searchClauses = (
+  table: TableDef,
+  targets: readonly SearchTarget[],
+  searchLocale?: string,
+) => {
   const multi = new Set(
     table.fields.filter((f) => f.kind === "many").map((f) => f.name),
   );
@@ -228,7 +246,10 @@ const searchClauses = (table: TableDef, targets: readonly SearchTarget[]) => {
 
     const local = ident(t.via);
     const op = multi.has(local) ? "CONTAINSANY" : "IN";
-    return `${local} ${op} (SELECT VALUE id FROM ${ident(t.table)} WHERE ${field} @${n}@ $search)`;
+    // A link into a table of languages: the rows hold the linked record's id (and a language).
+    const key = t.perLanguage ? ident(t.perLanguage.key) : "id";
+    const language = languageFilter(t, searchLocale);
+    return `${local} ${op} (SELECT VALUE ${key} FROM ${ident(t.table)} WHERE ${field} @${n}@ $search${language})`;
   });
 
   // BM25 + containment boost per target. search::score(N) only works against a FULLTEXT index
@@ -242,10 +263,12 @@ const searchClauses = (table: TableDef, targets: readonly SearchTarget[]) => {
       if (!t.via) return `(search::score(${n}) + ${boost})`;
 
       const local = ident(t.via);
+      const key = t.perLanguage ? ident(t.perLanguage.key) : "id";
       const idFilter = multi.has(local)
-        ? `id IN $parent.${local}`
-        : `id = $parent.${local}`;
-      return `math::sum((SELECT VALUE (search::score(${n}) + ${boost}) FROM ${ident(t.table)} WHERE ${idFilter} AND ${field} @${n}@ $search))`;
+        ? `${key} IN $parent.${local}`
+        : `${key} = $parent.${local}`;
+      const language = languageFilter(t, searchLocale);
+      return `math::sum((SELECT VALUE (search::score(${n}) + ${boost}) FROM ${ident(t.table)} WHERE ${idFilter}${language} AND ${field} @${n}@ $search))`;
     })
     .join(" + ");
 
@@ -311,13 +334,232 @@ export const surrealAdapter = (
   const query = <T extends unknown[]>(sql: string, params?: Params) =>
     db.query<T>(sql, params);
 
-  const byIds = async (target: string, ids: RecordId[]) => {
-    const [rows] = await query<[unknown[]]>(
-      `SELECT * FROM ${ident(target)} WHERE id IN $ids`,
-      { ids },
-    );
-    return rows ?? [];
+  // What the data operations need from the connection — the Surreal client itself or a
+  // transaction opened on it.
+  type Queryable = Pick<
+    Surreal,
+    "select" | "create" | "update" | "upsert" | "delete" | "query"
+  >;
+
+  // The data operations on a given connection. Inside, `db` is that connection (it shadows the
+  // client's), so the same code serves both.
+  const operationsOn = (db: Queryable): Omit<DbOperations, "transaction"> => {
+    const query = <T extends unknown[]>(sql: string, params?: Params) =>
+      db.query<T>(sql, params);
+
+    const byIds = async (target: string, ids: RecordId[]) => {
+      const [rows] = await query<[unknown[]]>(
+        `SELECT * FROM ${ident(target)} WHERE id IN $ids`,
+        { ids },
+      );
+      return rows ?? [];
+    };
+
+    return {
+      async find(table, id, opts) {
+        const record = await db.select<Record<string, unknown>>(
+          new RecordId(table.name, id),
+        );
+        if (!record) return null;
+
+        const [row] = await populateRows(
+          table,
+          [toRow(record)],
+          opts?.populate,
+          byIds,
+        );
+        return row ?? null;
+      },
+
+      async insert(table, data, opts) {
+        const target = opts?.id
+          ? new RecordId(table.name, opts.id)
+          : new Table(table.name);
+
+        const created = await db
+          .create<Record<string, unknown>>(target as RecordId)
+          .content(toDb(table, data))
+          .output("after");
+
+        // create() on a Table returns an array, on a RecordId a single record.
+        const record = Array.isArray(created) ? created[0] : created;
+        return toRow(record);
+      },
+
+      async update(table, id, patch) {
+        // MERGE deep-merges objects and replaces everything else (arrays included) — exactly
+        // the contract's update() rules. On a missing record it returns undefined and does not
+        // create one.
+        const record = await db
+          .update<Record<string, unknown>>(new RecordId(table.name, id))
+          .merge(toDb(table, patch));
+
+        return record ? toRow(record) : null;
+      },
+
+      async upsert(table, id, data) {
+        const record = await db
+          .upsert<Record<string, unknown>>(new RecordId(table.name, id))
+          .merge(toDb(table, data))
+          .output("after");
+
+        return toRow(Array.isArray(record) ? record[0] : record);
+      },
+
+      async remove(table, id) {
+        const record = await db.delete<Record<string, unknown>>(
+          new RecordId(table.name, id),
+        );
+        return record ? toRow(record) : null;
+      },
+
+      async list(table, q: ListQuery): Promise<ListResult> {
+        const params: Params = {};
+        const name = ident(table.name);
+        const limit = int(q.limit, 20);
+        const page = int(q.page, 1);
+        const start = (page - 1) * limit;
+
+        const useSearch = Boolean(q.search?.trim()) && table.search.length > 0;
+        let searchWhere: string | undefined;
+        let relevance = "";
+        if (useSearch) {
+          params.search = q.search!.trim();
+          if (q.searchLocale !== undefined)
+            params.searchLocale = q.searchLocale;
+          const built = searchClauses(table, table.search, q.searchLocale);
+          searchWhere = built.where;
+          relevance = built.relevance;
+        }
+
+        const where = buildWhere(name, q.where, params, searchWhere, table);
+
+        // An explicit sort always wins; otherwise, when searching, rank by relevance. `ORDER BY`
+        // only accepts a bare identifier here, so relevance is projected as an aliased field and
+        // stripped back out of each row afterwards.
+        const orderBy = q.sort
+          ? `ORDER BY ${ident(q.sort.field)} ${q.sort.order === "desc" ? "DESC" : "ASC"}`
+          : useSearch
+            ? "ORDER BY __relevance DESC"
+            : "";
+        const relevanceSelect =
+          useSearch && !q.sort ? `, (${relevance}) AS __relevance` : "";
+
+        const flat = q.select?.fields ?? [];
+        const nested = Object.entries(q.select?.nested ?? {});
+        // SurrealDB rejects ORDER BY on a field that isn't in the selection, so a sort field the
+        // caller didn't ask for is selected anyway and dropped from each row afterwards.
+        const extra =
+          (flat.length || nested.length) &&
+          q.sort &&
+          q.sort.field !== "id" &&
+          !flat.includes(q.sort.field)
+            ? [ident(q.sort.field)]
+            : [];
+        const projection =
+          flat.length || nested.length
+            ? [
+                "id",
+                ...[...flat, ...extra].filter((f) => f !== "id").map(ident),
+                ...nested.map(
+                  ([local, fields]) =>
+                    `${ident(local)}.{${["id", ...fields.filter((f) => f !== "id")].map(ident).join(", ")}} AS ${ident(local)}`,
+                ),
+              ].join(", ")
+            : "*";
+
+        const nestedNames = new Set(nested.map(([local]) => local));
+
+        const [rows, [countRow]] = await query<
+          [Record<string, unknown>[], { count: number }[]]
+        >(
+          `SELECT ${projection}${relevanceSelect} FROM ${name} ${where} ${orderBy} LIMIT ${limit} START ${start};
+         SELECT count() AS count FROM ${name} ${where} GROUP ALL`,
+          params,
+        );
+
+        const out = (rows ?? []).map((row) => {
+          const { __relevance, ...rest } = row;
+          for (const key of extra) delete rest[key];
+          return toRow(rest);
+        });
+
+        // A relation returned through a nested projection is already shaped; populating would
+        // clobber it.
+        const populate = q.populate.filter((f) => !nestedNames.has(f));
+
+        return {
+          rows: await populateRows(table, out, populate, byIds),
+          total: countRow?.count ?? 0,
+        };
+      },
+
+      async count(table, where) {
+        const params: Params = {};
+        const name = ident(table.name);
+        const [rows] = await query<[{ count: number }[]]>(
+          `SELECT count() AS count FROM ${name} ${buildWhere(name, where, params, undefined, table)} GROUP ALL`,
+          params,
+        );
+        return rows?.[0]?.count ?? 0;
+      },
+
+      async removeWhere(table, where) {
+        const params: Params = {};
+        const name = ident(table.name);
+        const [removed] = await query<[unknown[]]>(
+          `DELETE ${name} ${buildWhere(name, where, params, undefined, table)} RETURN BEFORE`,
+          params,
+        );
+        return removed?.length ?? 0;
+      },
+
+      async countBy(q: CountBy) {
+        const params: Params = {};
+        const name = ident(q.table);
+        const field = ident(q.groupBy);
+        const where = buildWhere(name, q.where, params);
+
+        const key = q.prefix
+          ? `string::slice(${field}, 0, ${int(q.prefix, 1)})`
+          : field;
+        const order = q.prefix ? "ORDER BY key ASC" : "ORDER BY count DESC";
+
+        const [rows] = await query<[{ key?: string | null; count: number }[]]>(
+          `SELECT ${key} AS key, count() AS count FROM ${name} ${where} GROUP BY key ${order}`,
+          params,
+        );
+        return (rows ?? []).map((r) => ({
+          key: r.key ?? null,
+          count: r.count,
+        }));
+      },
+    };
   };
+
+  // A nested transaction() joins the one it runs in: SurrealDB has no savepoints.
+  const inTransaction = (tx: Queryable): DbOperations => {
+    const view: DbOperations = {
+      ...operationsOn(tx),
+      transaction: (fn) => fn(view),
+    };
+    return view;
+  };
+
+  const operations = (): DbOperations => ({
+    ...operationsOn(db),
+    transaction: async (fn) => {
+      const tx = await db.beginTransaction();
+      try {
+        const result = await fn(inTransaction(tx));
+        await tx.commit();
+        return result;
+      } catch (error) {
+        await tx.cancel();
+        throw error;
+      }
+    },
+  });
 
   return {
     name: "surreal",
@@ -426,182 +668,17 @@ export const surrealAdapter = (
       });
     },
 
-    async find(table, id, opts) {
-      const record = await db.select<Record<string, unknown>>(
-        new RecordId(table.name, id),
-      );
-      if (!record) return null;
-
-      const [row] = await populateRows(
-        table,
-        [toRow(record)],
-        opts?.populate,
-        byIds,
-      );
-      return row ?? null;
-    },
-
-    async insert(table, data, opts) {
-      const target = opts?.id
-        ? new RecordId(table.name, opts.id)
-        : new Table(table.name);
-
-      const created = await db
-        .create<Record<string, unknown>>(target as RecordId)
-        .content(toDb(table, data))
-        .output("after");
-
-      // create() on a Table returns an array, on a RecordId a single record.
-      const record = Array.isArray(created) ? created[0] : created;
-      return toRow(record);
-    },
-
-    async update(table, id, patch) {
-      // MERGE deep-merges objects and replaces everything else (arrays included) — exactly
-      // the contract's update() rules. On a missing record it returns undefined and does not
-      // create one.
-      const record = await db
-        .update<Record<string, unknown>>(new RecordId(table.name, id))
-        .merge(toDb(table, patch));
-
-      return record ? toRow(record) : null;
-    },
-
-    async upsert(table, id, data) {
-      const record = await db
-        .upsert<Record<string, unknown>>(new RecordId(table.name, id))
-        .merge(toDb(table, data))
-        .output("after");
-
-      return toRow(Array.isArray(record) ? record[0] : record);
-    },
-
-    async remove(table, id) {
-      const record = await db.delete<Record<string, unknown>>(
-        new RecordId(table.name, id),
-      );
-      return record ? toRow(record) : null;
-    },
-
-    async list(table, q: ListQuery): Promise<ListResult> {
-      const params: Params = {};
-      const name = ident(table.name);
-      const limit = int(q.limit, 20);
-      const page = int(q.page, 1);
-      const start = (page - 1) * limit;
-
-      const useSearch = Boolean(q.search?.trim()) && table.search.length > 0;
-      let searchWhere: string | undefined;
-      let relevance = "";
-      if (useSearch) {
-        params.search = q.search!.trim();
-        const built = searchClauses(table, table.search);
-        searchWhere = built.where;
-        relevance = built.relevance;
-      }
-
-      const where = buildWhere(name, q.where, params, searchWhere);
-
-      // An explicit sort always wins; otherwise, when searching, rank by relevance. `ORDER BY`
-      // only accepts a bare identifier here, so relevance is projected as an aliased field and
-      // stripped back out of each row afterwards.
-      const orderBy = q.sort
-        ? `ORDER BY ${ident(q.sort.field)} ${q.sort.order === "desc" ? "DESC" : "ASC"}`
-        : useSearch
-          ? "ORDER BY __relevance DESC"
-          : "";
-      const relevanceSelect =
-        useSearch && !q.sort ? `, (${relevance}) AS __relevance` : "";
-
-      const flat = q.select?.fields ?? [];
-      const nested = Object.entries(q.select?.nested ?? {});
-      // SurrealDB rejects ORDER BY on a field that isn't in the selection, so a sort field the
-      // caller didn't ask for is selected anyway and dropped from each row afterwards.
-      const extra =
-        (flat.length || nested.length) &&
-        q.sort &&
-        q.sort.field !== "id" &&
-        !flat.includes(q.sort.field)
-          ? [ident(q.sort.field)]
-          : [];
-      const projection =
-        flat.length || nested.length
-          ? [
-              "id",
-              ...[...flat, ...extra].filter((f) => f !== "id").map(ident),
-              ...nested.map(
-                ([local, fields]) =>
-                  `${ident(local)}.{${["id", ...fields.filter((f) => f !== "id")].map(ident).join(", ")}} AS ${ident(local)}`,
-              ),
-            ].join(", ")
-          : "*";
-
-      const nestedNames = new Set(nested.map(([local]) => local));
-
-      const [rows, [countRow]] = await query<
-        [Record<string, unknown>[], { count: number }[]]
-      >(
-        `SELECT ${projection}${relevanceSelect} FROM ${name} ${where} ${orderBy} LIMIT ${limit} START ${start};
-         SELECT count() AS count FROM ${name} ${where} GROUP ALL`,
-        params,
-      );
-
-      const out = (rows ?? []).map((row) => {
-        const { __relevance, ...rest } = row;
-        for (const key of extra) delete rest[key];
-        return toRow(rest);
-      });
-
-      // A relation returned through a nested projection is already shaped; populating would
-      // clobber it.
-      const populate = q.populate.filter((f) => !nestedNames.has(f));
-
-      return {
-        rows: await populateRows(table, out, populate, byIds),
-        total: countRow?.count ?? 0,
-      };
-    },
-
-    async count(table, where) {
-      const params: Params = {};
-      const name = ident(table.name);
-      const [rows] = await query<[{ count: number }[]]>(
-        `SELECT count() AS count FROM ${name} ${buildWhere(name, where, params)} GROUP ALL`,
-        params,
-      );
-      return rows?.[0]?.count ?? 0;
-    },
-
-    async removeWhere(table, where) {
-      const params: Params = {};
-      const name = ident(table.name);
-      const [removed] = await query<[unknown[]]>(
-        `DELETE ${name} ${buildWhere(name, where, params)} RETURN BEFORE`,
-        params,
-      );
-      return removed?.length ?? 0;
-    },
-
-    async countBy(q: CountBy) {
-      const params: Params = {};
-      const name = ident(q.table);
-      const field = ident(q.groupBy);
-      const where = buildWhere(name, q.where, params);
-
-      const key = q.prefix
-        ? `string::slice(${field}, 0, ${int(q.prefix, 1)})`
-        : field;
-      const order = q.prefix ? "ORDER BY key ASC" : "ORDER BY count DESC";
-
-      const [rows] = await query<[{ key?: string | null; count: number }[]]>(
-        `SELECT ${key} AS key, count() AS count FROM ${name} ${where} GROUP BY key ${order}`,
-        params,
-      );
-      return (rows ?? []).map((r) => ({
-        key: r.key ?? null,
-        count: r.count,
-      }));
-    },
+    // The client is created in connect(), so the connection is looked up per call.
+    find: (...args) => operations().find(...args),
+    insert: (...args) => operations().insert(...args),
+    update: (...args) => operations().update(...args),
+    upsert: (...args) => operations().upsert(...args),
+    remove: (...args) => operations().remove(...args),
+    list: (...args) => operations().list(...args),
+    count: (...args) => operations().count(...args),
+    removeWhere: (...args) => operations().removeWhere(...args),
+    countBy: (...args) => operations().countBy(...args),
+    transaction: (fn) => operations().transaction(fn),
   };
 };
 

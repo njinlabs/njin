@@ -68,6 +68,40 @@ const fakeModel = {
   },
 };
 
+// A draftable model: same fake storage, plus the publish actions the real makeModel adds.
+const draftCalls: string[] = [];
+const draftOptions: unknown[] = [];
+const fakeDraftModel = {
+  ...fakeModel,
+  name: "Article",
+  prefix: "article",
+  publishedDef: { name: "_published_article", fields: [], search: [] },
+  publish: async (id: string, options?: unknown) => {
+    draftCalls.push(`publish:${id}`);
+    draftOptions.push(options);
+    return { id };
+  },
+  unpublish: async (id: string) => {
+    draftCalls.push(`unpublish:${id}`);
+    return { id };
+  },
+  discard: async (id: string) => {
+    draftCalls.push(`discard:${id}`);
+    return { id };
+  },
+  backfillPublished: async () => 0,
+};
+
+// An i18n model: show() reports the options it got, removeLocale() the language it was given.
+const fakeI18nModel = {
+  ...fakeModel,
+  name: "Page",
+  prefix: "page",
+  i18nDef: { name: "page__i18n", fields: [], search: [] },
+  show: async (id: string, opts?: Record<string, unknown>) => ({ id, opts }),
+  removeLocale: async (id: string, locale: string) => ({ id, removed: locale }),
+};
+
 let seo = { title: "Default" };
 const fakeVars = {
   name: "SEO",
@@ -84,6 +118,40 @@ const fakeVars = {
     seo = { ...seo, ...data } as typeof seo;
     return seo;
   },
+};
+
+// A settings group with languages and drafts.
+const varsCalls: [string, unknown][] = [];
+const fakePageVars = {
+  name: "Page",
+  prefix: "page",
+  i18n: true,
+  draftable: true,
+  validation: z.object({ title: z.record(z.string(), z.string()) }),
+  get: async (options?: unknown) => {
+    varsCalls.push(["get", options]);
+    return { title: "working" };
+  },
+  update: async (data: unknown) => data,
+  published: {
+    get: async (options?: unknown) => {
+      varsCalls.push(["published.get", options]);
+      return { title: "live" };
+    },
+  },
+  publish: async (options?: unknown) => {
+    varsCalls.push(["publish", options]);
+    return { status: "published" };
+  },
+  unpublish: async (options?: unknown) => {
+    varsCalls.push(["unpublish", options]);
+    return { status: "draft" };
+  },
+  discard: async (options?: unknown) => {
+    varsCalls.push(["discard", options]);
+    return { status: "published" };
+  },
+  backfillPublished: async () => 0,
 };
 
 const publishCalls: unknown[] = [];
@@ -133,8 +201,15 @@ const mcpConfig = {
 mock.module("../../src/core/config", () => ({
   ...realConfig,
   getConfig: () => ({
-    models: [async () => ({ default: fakeModel })],
-    vars: [async () => ({ default: fakeVars })],
+    models: [
+      async () => ({ default: fakeModel }),
+      async () => ({ default: fakeDraftModel }),
+      async () => ({ default: fakeI18nModel }),
+    ],
+    vars: [
+      async () => ({ default: fakeVars }),
+      async () => ({ default: fakePageVars }),
+    ],
     mcp: mcpConfig,
   }),
 }));
@@ -276,18 +351,184 @@ describe("tools/list", () => {
       "create_upload_url",
       "delete_file",
       "delete_record",
+      "discard_changes",
+      "discard_vars",
       "get_file",
       "get_record",
       "get_vars",
       "list_files",
       "list_models",
+      "publish_record",
+      "publish_vars",
       "read_records",
+      "remove_locale",
+      "unpublish_record",
+      "unpublish_vars",
       "update_record",
       "update_vars",
     ]);
     expect(tools.get("delete_file")!.annotations?.destructiveHint).toBe(true);
     expect(tools.get("delete_record")!.annotations?.destructiveHint).toBe(true);
     expect(tools.get("read_records")!.annotations?.readOnlyHint).toBe(true);
+  });
+});
+
+describe("draft tools", () => {
+  it("publishes, unpublishes and discards on a draftable model", async () => {
+    draftCalls.length = 0;
+
+    for (const tool of [
+      "publish_record",
+      "unpublish_record",
+      "discard_changes",
+    ]) {
+      const { isError } = await callTool(tool, { model: "article", id: "p1" });
+      expect(isError).toBe(false);
+    }
+
+    expect(draftCalls).toEqual(["publish:p1", "unpublish:p1", "discard:p1"]);
+  });
+
+  it("hands the language(s) to publish_record", async () => {
+    draftOptions.length = 0;
+
+    await callTool("publish_record", { model: "article", id: "p1" });
+    await callTool("publish_record", {
+      model: "article",
+      id: "p1",
+      locale: "en",
+    });
+    await callTool("publish_record", {
+      model: "article",
+      id: "p1",
+      locale: ["en", "id"],
+    });
+
+    expect(draftOptions).toEqual([
+      { locale: undefined },
+      { locale: "en" },
+      { locale: ["en", "id"] },
+    ]);
+  });
+
+  it("tells the agent when the model is not draftable", async () => {
+    const { isError, text } = await callTool("publish_record", {
+      model: "post",
+      id: "p1",
+    });
+
+    expect(isError).toBe(true);
+    expect(text).toContain("not draftable");
+  });
+
+  it("flags draftable models in list_models", async () => {
+    const { json } = await callTool("list_models");
+    const byPrefix = new Map(
+      json().models.map((m: { prefix: string; draftable: boolean }) => [
+        m.prefix,
+        m.draftable,
+      ]),
+    );
+
+    expect(byPrefix.get("post")).toBe(false);
+    expect(byPrefix.get("article")).toBe(true);
+  });
+});
+
+describe("settings groups with languages and drafts", () => {
+  it("get_vars reads one language, or what is live", async () => {
+    varsCalls.length = 0;
+
+    await callTool("get_vars", { group: "page", locale: "en" });
+    const live = await callTool("get_vars", {
+      group: "page",
+      locale: "en",
+      published: true,
+    });
+
+    expect(varsCalls).toEqual([
+      ["get", { locale: "en" }],
+      ["published.get", { locale: "en" }],
+    ]);
+    expect(live.json()).toEqual({ title: "live" });
+  });
+
+  it("publish_vars, unpublish_vars and discard_vars hand the language(s) over", async () => {
+    varsCalls.length = 0;
+
+    await callTool("publish_vars", { group: "page" });
+    await callTool("unpublish_vars", { group: "page", locale: "en" });
+    await callTool("discard_vars", { group: "page", locale: ["en", "id"] });
+
+    expect(varsCalls).toEqual([
+      ["publish", { locale: undefined }],
+      ["unpublish", { locale: "en" }],
+      ["discard", { locale: ["en", "id"] }],
+    ]);
+  });
+
+  it("tells the agent when a group is not draftable", async () => {
+    const { isError, text } = await callTool("publish_vars", { group: "seo" });
+
+    expect(isError).toBe(true);
+    expect(text).toContain("not draftable");
+  });
+
+  it("flags the groups in list_models", async () => {
+    const { json } = await callTool("list_models");
+    const byPrefix = new Map(
+      json().vars.map(
+        (v: { prefix: string; draftable: boolean; i18n: boolean }) => [
+          v.prefix,
+          [v.draftable, v.i18n],
+        ],
+      ),
+    );
+
+    expect(byPrefix.get("seo")).toEqual([false, false]);
+    expect(byPrefix.get("page")).toEqual([true, true]);
+  });
+});
+
+describe("i18n tools", () => {
+  it("get_record passes the language to an i18n model", async () => {
+    const { json } = await callTool("get_record", {
+      model: "page",
+      id: "p1",
+      locale: "en",
+    });
+
+    expect(json()).toEqual({ id: "p1", opts: { locale: "en" } });
+  });
+
+  it("remove_locale removes one language, and refuses a model without i18n", async () => {
+    const ok = await callTool("remove_locale", {
+      model: "page",
+      id: "p1",
+      locale: "en",
+    });
+    expect(ok.json()).toEqual({ id: "p1", removed: "en" });
+
+    const refused = await callTool("remove_locale", {
+      model: "post",
+      id: "p1",
+      locale: "en",
+    });
+    expect(refused.isError).toBe(true);
+    expect(refused.text).toContain('not marked "i18n"');
+  });
+
+  it("flags i18n models in list_models", async () => {
+    const { json } = await callTool("list_models");
+    const byPrefix = new Map(
+      json().models.map((m: { prefix: string; i18n: boolean }) => [
+        m.prefix,
+        m.i18n,
+      ]),
+    );
+
+    expect(byPrefix.get("post")).toBe(false);
+    expect(byPrefix.get("page")).toBe(true);
   });
 });
 

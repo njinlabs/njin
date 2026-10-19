@@ -134,6 +134,38 @@ export default defineConfig({
 
 > Registering a model auto-generates: `GET/POST /api/{prefix}`, `GET/PUT/DELETE /api/{prefix}/:id`, and its schema in `GET /api/schema`.
 
+### Draft & publish (optional, per model)
+
+Add `draftable: true` to `makeModel`. Records then carry `status` (`"draft"` | `"published"` | `"changed"`) and `publishedAt`. Editing a published record leaves the live copy alone — edits only change the working copy, and the status becomes `"changed"` until you publish.
+
+- `model.read()` / `model.show(id)` → working copies (everything; this is what the admin panel edits).
+- `model.published.read()` / `model.published.show(id)` → the live copies. **Use these in public templates and routes** — nothing filters drafts out for you.
+- `await model.publish(id)`, `unpublish(id)` (keeps the working copy as a draft), `discard(id)` (drops unpublished edits).
+- A draft list: `model.read({ filters: { status: "draft" } })`.
+- Hooks: `afterPublish(model, fn)`, `afterUnpublish(model, fn)`.
+- Do not name a schema field `status` or `publishedAt` on a draftable model. Live copies live in the `_published_{prefix}` table, created automatically.
+
+```edge
+@let(result = await post.published.read({ sort: publishedAt, order: desc }))
+```
+
+### Languages (i18n, optional, per model)
+
+Needs `i18n: { locales: ["id", "en"], defaultLocale: "id" }` in `config.ts`. **Set it up when the model is created** — converting a model or vars group that already has data to i18n (or marking an existing field `localized`) is not supported: there is no migration, and the old records would not appear in `read({ locale })`. On a model: `i18n: true`, and `localized: true` in the meta of each field that differs per language — any field type, arrays and objects included; without it a field is the same in every language (a `relation()` / `relationMany()` is never localized itself — it follows the language of the model it points at; a `file()` / `multiFile()` can be localized).
+
+- Write a localized field as an object keyed by language: `title: { id: "Tentang", en: "About" }` (a localized array: `faq: { id: [...], en: [...] }`, a localized object: `meta: { en: { title: "..." } }`, merged key by key within that language; a shared `object()` is merged key by key in every language). Shared fields are written as usual. On update a language you leave out is untouched.
+- `model.read({ locale: "en", filters, sort, search })` and `model.show(id, { locale: "en" })` return flat records of one language (`id` is the record's id, `locale` is set). Only records that have that language are listed; missing localized values fall back to the default locale (`fallback: false` disables it). **Use this in public templates.**
+- `model.read()` / `model.show(id)` with no locale return every language: a localized field is `{ id: "...", en: "..." }`. This is what the admin panel edits.
+- `model.removeLocale(id, "en")` deletes one language (never the last).
+- A localized `unique: true` field is unique within a language.
+- **Links follow the target.** A relation to a model without `i18n` is the same in every language. A relation to a model with `i18n` comes back as that record in the language being read: `article.read({ locale: "en" })` → `category` is the English category (its default-language row when it has no English one; `fallback: false` keeps only the shared row), and with no locale it is the default language. Any model reads it this way, i18n or not: `post.read({ locale })`, `post.show(id, { locale })`. `select: ["category.name"]` picks that field of the related record in the language being read; `searchFields: ["category.name"]` matches the text of that language, or of every language when no `locale` is given.
+- A file per language: `cover: file({ label: "Cover", localized: true })`, written `cover: { id: fileA, en: fileB }`.
+- With `draftable: true` too, each language is drafted and published on its own: `model.publish(id, { locale: "en" })` (also `unpublish`, `discard`; no locale = every language the record has). Each language has its own `status`, so `model.show(id).status` is `{ id: "draft", en: "published" }`. Read what is live with `model.published.read({ locale: "en", ... })` / `model.published.show(id, { locale })` — a locale is required, and nothing is filtered for you. Over the API: `POST /api/{prefix}/:id/publish?locale=en`.
+
+```edge
+@let(result = await article.read({ locale: 'en', filters: { slug: params.slug } }))
+```
+
 ### Complete working example — copy and adapt
 
 ```ts
@@ -201,11 +233,26 @@ export default defineConfig({
 
 > Registering a vars group auto-generates `GET/PUT /api/vars/{name}` and its schema under `vars` in `GET /api/schema`.
 
-Available in templates as global async functions — only `get()`/`update()`, not the full model method set:
+Available in templates as global async functions — only `get()`/`update()` (and the draft/language methods below), not the full model method set:
 
 ```edge
 @let(settings = await general.get())
 <title>{{ settings.siteName }}</title>
+```
+
+### Languages and drafts (optional, per group)
+
+`makeVars(..., { i18n: true, draftable: true })`. `i18n: true` needs `i18n` in `config.ts` and at least one field with `localized: true` (not a relation/file); `draftable: true` gives a live copy apart from the working one.
+
+- `group.update({ tagline: { en: "Welcome" } })` — a localized field is an object keyed by language; a language you leave out is untouched, `null` clears one.
+- `group.get()` — working copy, every language (`tagline: { id, en }`); `group.get({ locale: "en" })` — one language, flat, falling back to the default language.
+- `group.published.get({ locale: "en" })` — what is live. **Use this in public templates.** Nothing is live until `publish()`, so it reads as the `.default()`s.
+- `group.publish({ locale })`, `unpublish({ locale })`, `discard({ locale })` — `locale` is one code, a list, or omitted for every language. `group.get().status` is `{ id: "draft", en: "published" }` (a plain string without i18n).
+- Do not name a field `status` or `publishedAt` on a draftable group.
+- API: `GET /api/vars/{name}?locale=en`, `GET /api/vars/{name}/published`, `POST /api/vars/{name}/publish|unpublish|discard?locale=en`.
+
+```edge
+@let(site = await general.published.get({ locale }))
 ```
 
 ---
@@ -595,8 +642,12 @@ GET    /api/schema                → full schema for admin panel
 GET    /api/{prefix}              → { data: [...], meta: { total, page, limit, pageCount } }
 POST   /api/{prefix}              → { data: {...} }
 GET    /api/{prefix}/:id          → { data: {...} }   (relations auto-fetched)
+                                     i18n models: ?locale=en for one language (flat), ?fallback=false; GET /api/{prefix}?locale=en likewise
+DELETE /api/{prefix}/:id/locale/:locale → { data: {...} }   i18n models only; 409 for the last language
 PUT    /api/{prefix}/:id          → { data: {...} }
 DELETE /api/{prefix}/:id          → { data: {...} }
+POST   /api/{prefix}/:id/publish   → { data: {...} }   draftable models only; also /unpublish and /discard
+                                     (404 if the record is missing, 409 on /discard when it was never published)
                                      422 on validation error, 409 if a `unique: true` field collides
 
 GET    /api/file                  → { data: [...], meta: {...} }   (search/page/limit/sort/order — no filters)

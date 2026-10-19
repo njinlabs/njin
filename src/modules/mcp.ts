@@ -5,8 +5,10 @@ import z from "zod";
 import { toAdminSchema } from "../core/admin_schema";
 import { getConfig, type ModelFactory, type VarsFactory } from "../core/config";
 import type { McpTool } from "../core/mcp_tool";
+import { isDraftable, isI18n } from "../core/model";
 import { makeModule } from "../core/module";
 import { publicBase } from "../core/public_url";
+import { isDraftableVars, isI18nVars } from "../core/vars";
 import elysia from "./elysia";
 import fileModule from "./file";
 import logger from "./logger";
@@ -27,6 +29,16 @@ Field conventions:
 - Validation errors name the offending field — fix it and retry instead of guessing.
 
 Files: you cannot send file bytes through a tool call. To add a file the user gave you, call create_upload_url, then either upload it yourself (curl -F file=@PATH URL, from your sandbox) or — if you cannot reach the URL or have no shell — give the URL to the user so they can open it and drop the file. Then call check_upload to get the file id, and put that id in the model's file field.
+
+Drafts: a model marked "draftable" in list_models keeps a live (published) copy apart from the working copy that create_record, update_record and read_records use. Each record has a "status": "draft" (never published), "published", or "changed" (published, with edits that are not live yet). Editing never changes what is live — call publish_record to put the working copy live, unpublish_record to take it offline (it stays as a draft), or discard_changes to drop unpublished edits.
+
+Publishing on an "i18n" model is per language: publish_record, unpublish_record and discard_changes take a locale (a code or a list; leave it out for every language the record has), and list_models says which models are both. A record's status is then { code: "draft" | "published" | "changed" } per language, and publishing one language leaves the others as they were.
+
+Settings (vars) groups work the same way: list_models marks the groups that are "draftable" and/or "i18n". On an i18n group a localized field is an object keyed by language code in update_vars, and get_vars returns every language unless you pass locale. A draftable group has a working copy (get_vars, update_vars) and a live copy (get_vars with published: true); publish_vars, unpublish_vars and discard_vars move between them, per language (locale) on an i18n group.
+
+A relation field follows the language of the model it points at: where that model is marked "i18n", the related record you read is its record in the language you asked for (locale), or in the default language when you gave none — whichever model you are reading. Only file fields and lists of files can differ per language on a model, never a relation.
+
+Languages: a model marked "i18n" in list_models keeps its localized fields once per language (the "i18n" key of list_models has the language codes). In create_record and update_record such a field is an object keyed by language code, e.g. title: { "en": "About", "id": "Tentang" }; a field you leave out of an update keeps its value, and a language you leave out is untouched. read_records and get_record return every language as { code: value }; pass locale (a code) to get one language as flat fields. A new language needs every required localized field. remove_locale deletes one language of a record.
 
 delete_record and delete_file are permanent.`;
 
@@ -197,8 +209,15 @@ const BUILT_IN_TOOLS = new Set([
   "create_record",
   "update_record",
   "delete_record",
+  "remove_locale",
+  "publish_record",
+  "unpublish_record",
+  "discard_changes",
   "get_vars",
   "update_vars",
+  "publish_vars",
+  "unpublish_vars",
+  "discard_vars",
   "create_upload_url",
   "check_upload",
   "list_files",
@@ -266,11 +285,15 @@ const mcp = makeModule(() => {
       models: [...models.values()].map((model) => ({
         name: model.name,
         prefix: model.prefix,
+        draftable: isDraftable(model),
+        i18n: isI18n(model),
         schema: toAdminSchema(model.validation, { forAgent: true }),
       })),
       vars: [...groups.values()].map((group) => ({
         name: group.name,
         prefix: group.prefix,
+        draftable: isDraftableVars(group),
+        i18n: isI18nVars(group),
         schema: toAdminSchema(group.validation, { forAgent: true }),
       })),
     };
@@ -356,6 +379,12 @@ const mcp = makeModule(() => {
               )
               .optional()
               .describe("Field -> value, or field -> { operator: value }"),
+            locale: z
+              .string()
+              .optional()
+              .describe(
+                'A language code: models marked "i18n" return that language as flat fields (omit for every language), and related records of other i18n models come in that language (the default language when omitted).',
+              ),
           },
           annotations: { readOnlyHint: true },
         },
@@ -389,16 +418,25 @@ const mcp = makeModule(() => {
         {
           title: "Get record",
           description: "Get one record by id, with its relations expanded.",
-          inputSchema: { model: z.string(), id: z.string() },
+          inputSchema: {
+            model: z.string(),
+            id: z.string(),
+            locale: z
+              .string()
+              .optional()
+              .describe(
+                'A language code: models marked "i18n" return that language as flat fields, and related records of other i18n models come in that language (the default language when omitted).',
+              ),
+          },
           annotations: { readOnlyHint: true },
         },
-        async ({ model, id }) =>
+        async ({ model, id, locale }) =>
           run(async () => {
             audit("get_record", model, id);
             const target = getModel(model);
-            const record = (await target.show(bareId(model, id))) as
-              | Record<string, unknown>
-              | undefined;
+            const record = (await target.show(bareId(model, id), {
+              locale,
+            })) as Record<string, unknown> | undefined;
             if (!record) throw new Error(`No ${model} record with id "${id}"`);
 
             const stubs = stubFieldsOf(target, record);
@@ -478,20 +516,158 @@ const mcp = makeModule(() => {
           }),
       );
 
+      const getDraftable = (prefix: string) => {
+        const target = getModel(prefix);
+        if (!isDraftable(target)) {
+          throw new Error(`Model "${prefix}" is not draftable.`);
+        }
+        return target;
+      };
+
+      server.registerTool(
+        "publish_record",
+        {
+          title: "Publish record",
+          description:
+            "Put a draftable record's current working copy live. Only models marked draftable in list_models support it.",
+          inputSchema: {
+            model: z.string(),
+            id: z.string(),
+            locale: z
+              .union([z.string(), z.array(z.string())])
+              .optional()
+              .describe(
+                'Models marked "i18n": the language code(s) to act on. Omit for every language the record has.',
+              ),
+          },
+          annotations: { idempotentHint: true },
+        },
+        async ({ model, id, locale }) =>
+          run(async () => {
+            audit("publish_record", model, id);
+            const target = getDraftable(model);
+            await target.publish(bareId(model, id), { locale });
+            return readBack(
+              target,
+              (await target.show(bareId(model, id))) as never,
+            );
+          }),
+      );
+
+      server.registerTool(
+        "unpublish_record",
+        {
+          title: "Unpublish record",
+          description:
+            "Take a published record offline. Its working copy is kept as a draft and can be published again.",
+          inputSchema: {
+            model: z.string(),
+            id: z.string(),
+            locale: z
+              .union([z.string(), z.array(z.string())])
+              .optional()
+              .describe(
+                'Models marked "i18n": the language code(s) to act on. Omit for every language the record has.',
+              ),
+          },
+          annotations: { idempotentHint: true },
+        },
+        async ({ model, id, locale }) =>
+          run(async () => {
+            audit("unpublish_record", model, id);
+            const target = getDraftable(model);
+            await target.unpublish(bareId(model, id), { locale });
+            return readBack(
+              target,
+              (await target.show(bareId(model, id))) as never,
+            );
+          }),
+      );
+
+      server.registerTool(
+        "discard_changes",
+        {
+          title: "Discard unpublished changes",
+          description:
+            "Throw away a published record's unpublished edits: the working copy goes back to what is live. Fails if the record is not published.",
+          inputSchema: {
+            model: z.string(),
+            id: z.string(),
+            locale: z
+              .union([z.string(), z.array(z.string())])
+              .optional()
+              .describe(
+                'Models marked "i18n": the language code(s) to act on. Omit for every language the record has.',
+              ),
+          },
+          annotations: { destructiveHint: true },
+        },
+        async ({ model, id, locale }) =>
+          run(async () => {
+            audit("discard_changes", model, id);
+            const target = getDraftable(model);
+            await target.discard(bareId(model, id), { locale });
+            return readBack(
+              target,
+              (await target.show(bareId(model, id))) as never,
+            );
+          }),
+      );
+
+      server.registerTool(
+        "remove_locale",
+        {
+          title: "Remove a language of a record",
+          description:
+            'Delete one language of a record of a model marked "i18n". The last language cannot be removed; delete the record instead.',
+          inputSchema: {
+            model: z.string(),
+            id: z.string(),
+            locale: z.string().describe("Language code"),
+          },
+          annotations: { destructiveHint: true },
+        },
+        async ({ model, id, locale }) =>
+          run(async () => {
+            audit("remove_locale", model, id);
+            const target = getModel(model);
+            if (!isI18n(target)) {
+              throw new Error(`Model "${model}" is not marked "i18n".`);
+            }
+            return target.removeLocale(bareId(model, id), locale);
+          }),
+      );
+
       server.registerTool(
         "get_vars",
         {
           title: "Get settings",
           description:
             "Get the current values of a settings (vars) group, defaults filled in. Relation and file fields come back as ids (use get_record / get_file to look them up).",
-          inputSchema: { group: z.string().describe("Group prefix") },
+          inputSchema: {
+            group: z.string().describe("Group prefix"),
+            locale: z
+              .string()
+              .optional()
+              .describe(
+                'Groups marked "i18n": a language code to get that language as flat fields. Omit for every language.',
+              ),
+            published: z
+              .boolean()
+              .optional()
+              .describe(
+                'Groups marked "draftable": true reads the live copy instead of the working copy.',
+              ),
+          },
           annotations: { readOnlyHint: true },
         },
-        async ({ group }) =>
+        async ({ group, locale, published }) =>
           run(async () => {
             audit("get_vars", group);
             const target = getGroup(group);
-            const values = (await target.get()) as Record<string, unknown>;
+            const values = (await (published
+              ? getDraftableGroup(group).published.get({ locale })
+              : target.get({ locale }))) as Record<string, unknown>;
 
             const stubs = stubFieldsOf(target, values);
             return stubs.length
@@ -499,6 +675,61 @@ const mcp = makeModule(() => {
               : values;
           }),
       );
+
+      const getDraftableGroup = (prefix: string) => {
+        const target = getGroup(prefix);
+        if (!isDraftableVars(target)) {
+          throw new Error(`Settings group "${prefix}" is not draftable.`);
+        }
+        return target;
+      };
+
+      for (const [name, action, title, description] of [
+        [
+          "publish_vars",
+          "publish",
+          "Publish settings",
+          "Put a draftable settings group's working copy live (per language on an i18n group).",
+        ],
+        [
+          "unpublish_vars",
+          "unpublish",
+          "Unpublish settings",
+          "Take a draftable settings group offline; its working copy is kept.",
+        ],
+        [
+          "discard_vars",
+          "discard",
+          "Discard unpublished settings",
+          "Throw away a draftable settings group's unpublished edits: the working copy goes back to what is live.",
+        ],
+      ] as const) {
+        server.registerTool(
+          name,
+          {
+            title,
+            description,
+            inputSchema: {
+              group: z.string().describe("Group prefix"),
+              locale: z
+                .union([z.string(), z.array(z.string())])
+                .optional()
+                .describe(
+                  'Groups marked "i18n": the language code(s) to act on. Omit for every language.',
+                ),
+            },
+            annotations:
+              action === "discard"
+                ? { destructiveHint: true }
+                : { idempotentHint: true },
+          },
+          async ({ group, locale }) =>
+            run(async () => {
+              audit(name, group);
+              return getDraftableGroup(group)[action]({ locale });
+            }),
+        );
+      }
 
       server.registerTool(
         "update_vars",

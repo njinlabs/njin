@@ -159,6 +159,14 @@ export type NjinConfig = {
     // Extra headers on every BAN request (e.g. an auth token the VCL checks).
     headers?: Record<string, string>;
   };
+  // The languages the site is written in. Models made with `i18n: true` keep their `localized`
+  // fields once per locale listed here.
+  i18n?: {
+    // Locale codes such as "id", "en", "pt-BR".
+    locales: string[];
+    // The locale a missing translation falls back to. Defaults to the first of `locales`.
+    defaultLocale?: string;
+  };
 };
 
 export type ResolvedConfig = {
@@ -184,6 +192,7 @@ export type ResolvedConfig = {
   helpers: HelperFactory[];
   static: ResolvedStaticRoute[];
   edgeCache?: { ban: string[]; headers: Record<string, string> };
+  i18n?: { locales: readonly string[]; defaultLocale: string };
   // Everything else a Plugin contributes (models/vars/hooks/events/routes) is already
   // flattened into the arrays above — init() is the only part that can't be merged away,
   // so it's the only piece of each Plugin that survives resolution on its own.
@@ -303,12 +312,43 @@ export const loadConfig = async (preloaded?: NjinConfig): Promise<void> => {
       ban: [userConfig.edgeCache.ban].flat().map((u) => u.replace(/\/$/, "")),
       headers: userConfig.edgeCache.headers ?? {},
     },
+    i18n: resolveI18n(userConfig.i18n),
     pluginInits: plugins
       .map((p) => p.init)
       .filter(
         (fn): fn is () => Promise<void> | void => typeof fn === "function",
       ),
   };
+};
+
+const LOCALE_CODE = /^[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8})*$/;
+
+const resolveI18n = (input: NjinConfig["i18n"]): ResolvedConfig["i18n"] => {
+  if (!input) return undefined;
+
+  const locales = input.locales.map((l) => l.trim());
+  if (locales.length === 0) {
+    throw new Error("config.i18n.locales needs at least one locale.");
+  }
+  for (const locale of locales) {
+    if (!LOCALE_CODE.test(locale)) {
+      throw new Error(
+        `config.i18n.locales: "${locale}" is not a locale code (expected something like "en" or "pt-BR").`,
+      );
+    }
+  }
+  if (new Set(locales).size !== locales.length) {
+    throw new Error("config.i18n.locales lists a locale twice.");
+  }
+
+  const defaultLocale = input.defaultLocale ?? locales[0]!;
+  if (!locales.includes(defaultLocale)) {
+    throw new Error(
+      `config.i18n.defaultLocale "${defaultLocale}" is not in config.i18n.locales.`,
+    );
+  }
+
+  return { locales, defaultLocale };
 };
 
 export const getConfig = (): ResolvedConfig => {

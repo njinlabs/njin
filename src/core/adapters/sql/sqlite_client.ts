@@ -57,6 +57,8 @@ export const sqliteClient = (
 ) => {
   const db = new Database(path, { create: true, strict: true });
   db.run(`pragma busy_timeout = ${Math.trunc(options.busyTimeout ?? 5000)}`);
+  // Off by default in SQLite, and a per-connection setting: links are enforced only with it on.
+  db.run("pragma foreign_keys = on");
   // One writer at a time, but readers never block it (and vice versa). An in-memory database
   // has no journal to configure.
   if (path !== ":memory:" && path !== "") db.run("pragma journal_mode = wal");

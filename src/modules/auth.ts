@@ -42,9 +42,9 @@ const auth = makeModule(() => {
               populate: ["user"],
             })) as (Token & { id: string }) | null;
 
-            // A token whose user was deleted is just a bad credential (the link is left as a
-            // bare id then, not a record).
-            if (!token || typeof token.user !== "object") {
+            // A token whose user was deleted is just a bad credential (the link is then a bare
+            // id, or null where the database clears links to deleted rows — not a record).
+            if (!token?.user || typeof token.user !== "object") {
               throw new Error("Unauthorized");
             }
 

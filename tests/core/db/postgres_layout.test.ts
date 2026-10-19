@@ -3,10 +3,11 @@ import { PGlite } from "@electric-sql/pglite";
 import { pg_trgm } from "@electric-sql/pglite/contrib/pg_trgm";
 import { postgresAdapter } from "../../../src/core/adapters/postgres";
 import type { SqlClient } from "../../../src/core/adapters/sql/builder";
-import type {
-  DbAdapter,
-  FieldDef,
-  TableDef,
+import {
+  type DbAdapter,
+  type FieldDef,
+  LinkTargetMissingError,
+  type TableDef,
 } from "../../../src/core/db/contract";
 import { pgliteClient } from "../../helpers/pglite_client";
 
@@ -131,6 +132,11 @@ const category: TableDef = {
   search: [],
 };
 
+// Links are foreign keys, so a row can only point at a row that exists.
+const linkTargets = async (...ids: string[]) => {
+  for (const id of ids) await adapter.insert(category, { name: id }, { id });
+};
+
 describe("physical layout", () => {
   beforeEach(async () => {
     await adapter.sync([product, brand, category]);
@@ -218,6 +224,7 @@ describe("physical layout", () => {
   });
 
   it("replaces an array as a whole and leaves no orphaned child rows", async () => {
+    await linkTargets("c1", "c2", "c3");
     const row = await adapter.insert(product, {
       title: "Shoe",
       tags: ["a", "b", "c"],
@@ -240,6 +247,7 @@ describe("physical layout", () => {
   });
 
   it("deletes every child and pivot row with the row", async () => {
+    await linkTargets("c1");
     const row = await adapter.insert(product, {
       title: "Shoe",
       tags: ["a", "b"],
@@ -295,6 +303,7 @@ describe("physical layout", () => {
   });
 
   it("filters by an element of an array or a relation list", async () => {
+    await linkTargets("c1", "c2");
     await adapter.insert(product, {
       title: "A",
       tags: ["red"],
@@ -366,6 +375,111 @@ describe("physical layout", () => {
     await expect(
       adapter.insert(unique, { email: "a@example.com" }),
     ).rejects.toThrow();
+  });
+});
+
+// [table, constraint] -> "FOREIGN KEY (col) REFERENCES t(id) ON DELETE ..."
+const foreignKeysOf = async () =>
+  Object.fromEntries(
+    (
+      await client.query<{ t: string; c: string; def: string; valid: boolean }>(
+        `select conrelid::regclass::text as t, conname as c, pg_get_constraintdef(oid) as def, convalidated as valid from pg_constraint where contype = 'f' and connamespace = $1::regnamespace`,
+        [schema],
+      )
+    ).rows.map((r) => [
+      `${r.t.replace(`${schema}.`, "").replaceAll('"', "")}.${r.c}`,
+      r,
+    ]),
+  );
+
+describe("foreign keys", () => {
+  beforeEach(async () => {
+    await adapter.sync([product, brand, category]);
+  });
+
+  it("makes a one() link set null, and owners and pivot targets cascade", async () => {
+    const keys = await foreignKeysOf();
+
+    expect(keys["product.fk_product_brand"]?.def).toMatch(
+      /FOREIGN KEY \(brand\) REFERENCES .*brand\(id\) ON DELETE SET NULL/,
+    );
+    expect(keys["product__tags.fk_product__tags__owner"]?.def).toMatch(
+      /FOREIGN KEY \(_owner\) REFERENCES .*product\(id\) ON DELETE CASCADE/,
+    );
+    expect(
+      keys["product__categories.fk_product__categories_target"]?.def,
+    ).toMatch(
+      /FOREIGN KEY \(target\) REFERENCES .*category\(id\) ON DELETE CASCADE/,
+    );
+    expect(
+      keys["product__variants__prices.fk_product__variants__prices__owner"]
+        ?.def,
+    ).toMatch(/REFERENCES .*product\(id\) ON DELETE CASCADE/);
+  });
+
+  it("rejects a link to a row that does not exist", async () => {
+    await expect(
+      adapter.insert(product, { title: "A", brand: "nobody" }),
+    ).rejects.toBeInstanceOf(LinkTargetMissingError);
+    await expect(
+      adapter.insert(product, { title: "B", categories: ["nobody"] }),
+    ).rejects.toBeInstanceOf(LinkTargetMissingError);
+    expect(await countRows("product")).toBe(0);
+    expect(await countRows("product__categories")).toBe(0);
+  });
+
+  it("clears a one() link and removes a pivot entry when the target is deleted", async () => {
+    await adapter.insert(brand, { name: "Acme" }, { id: "b1" });
+    await linkTargets("c1", "c2");
+    const row = await adapter.insert(product, {
+      title: "A",
+      brand: "b1",
+      categories: ["c1", "c2"],
+    });
+
+    await adapter.remove(brand, "b1");
+    await adapter.remove(category, "c1");
+
+    const found = await adapter.find(product, row.id);
+    expect(found?.brand).toBeNull();
+    expect(found?.categories).toEqual(["c2"]);
+  });
+
+  it("adds the constraints once: migrating again keeps one of each", async () => {
+    const before = Object.keys(await foreignKeysOf()).sort();
+
+    await adapter.sync([product, brand, category]);
+    await client.exec(`delete from "${schema}"."njin_schema_meta"`);
+    await adapter.sync([product, brand, category]);
+
+    expect(Object.keys(await foreignKeysOf()).sort()).toEqual(before);
+  });
+
+  it("upgrades a database whose rows already link to missing records: enforced for new writes only", async () => {
+    const warn = spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      // The state before foreign keys existed: a dangling link and no constraint.
+      await client.exec(
+        `alter table "${schema}"."product" drop constraint "fk_product_brand"`,
+      );
+      await client.exec(`delete from "${schema}"."njin_schema_meta"`);
+      await client.query(
+        `insert into "${schema}"."product" ("id", "title", "brand") values ('old', 'Old', 'gone')`,
+      );
+
+      await adapter.sync([product, brand, category]);
+
+      const key = (await foreignKeysOf())["product.fk_product_brand"];
+      expect(key?.valid).toBe(false); // NOT VALID: existing rows are not checked
+      expect(warn.mock.calls.flat().join(" ")).not.toContain("Could not add");
+      await expect(
+        adapter.insert(product, { title: "New", brand: "nobody" }),
+      ).rejects.toBeInstanceOf(LinkTargetMissingError);
+      // The old row is untouched.
+      expect((await adapter.find(product, "old"))?.brand).toBe("gone");
+    } finally {
+      warn.mockRestore();
+    }
   });
 });
 

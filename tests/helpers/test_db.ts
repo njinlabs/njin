@@ -97,24 +97,33 @@ export const useTestDb = async (tables: readonly TableDef[] = []) => {
   const calls: { method: string; args: unknown[] }[] = [];
   // One-shot failures queued by failNext(): the next call to that method rejects instead.
   const failures = new Map<string, Error>();
-  const adapter = new Proxy(real, {
-    get(target, prop, receiver) {
-      const value = Reflect.get(target, prop, receiver);
-      if (typeof value !== "function") return value;
-      return (...args: unknown[]) => {
-        const method = String(prop);
-        calls.push({ method, args });
+  // The same recording and failure injection applies to the `tx` a transaction() callback is
+  // handed, so a test can make a write fail halfway through a transaction.
+  const instrument = <T extends object>(inner: T): T =>
+    new Proxy(inner, {
+      get(target, prop, receiver) {
+        const value = Reflect.get(target, prop, receiver);
+        if (typeof value !== "function") return value;
+        return (...args: unknown[]) => {
+          const method = String(prop);
+          calls.push({ method, args });
 
-        const failure = failures.get(method);
-        if (failure) {
-          failures.delete(method);
-          return Promise.reject(failure);
-        }
+          const failure = failures.get(method);
+          if (failure) {
+            failures.delete(method);
+            return Promise.reject(failure);
+          }
 
-        return value.apply(target, args);
-      };
-    },
-  });
+          if (method === "transaction") {
+            const [fn] = args as [(tx: object) => Promise<unknown>];
+            return value.call(target, (tx: object) => fn(instrument(tx)));
+          }
+
+          return value.apply(target, args);
+        };
+      },
+    });
+  const adapter = instrument(real);
 
   // An embedded engine left open at exit crashed Bun with a segfault on Linux CI (after all
   // tests had passed) — close it explicitly once the file's tests are done.

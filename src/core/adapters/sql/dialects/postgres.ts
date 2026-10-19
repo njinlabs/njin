@@ -58,6 +58,7 @@ export const postgresDialect: Dialect = {
   deleteReturning: true,
   rowLock: sql`for update`,
   indexIfNotExists: true,
+  foreignKeys: "alter",
 
   // Serialises schema changes across processes (njin runs several workers against one database).
   async lock(tx, name) {
@@ -76,6 +77,19 @@ export const postgresDialect: Dialect = {
         String(r.data_type),
       ]),
     );
+  },
+
+  async foreignKeyNames(x, schema) {
+    const rows = await run(
+      x,
+      sql`select table_name as "t", constraint_name as "c" from information_schema.table_constraints where constraint_type = 'FOREIGN KEY' and table_schema = ${schema ?? sql`current_schema()`}`,
+    );
+    return new Set(rows.map((r) => `${r.t}.${r.c}`));
+  },
+
+  // NOT VALID: enforced for new writes, existing rows are not checked.
+  async addUncheckedForeignKey(x, statement) {
+    await run(x, sql`${statement} not valid`);
   },
 
   async documentDefault(x, table, column) {
