@@ -77,7 +77,12 @@ const makeAdapter = async (): Promise<DbAdapter> => {
       "../../src/core/adapters/sql/bun_client"
     );
     const schema = `njin_app_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
-    const admin = bunSqlClient(url, { max: 1, mysql: true });
+    // A throwaway test server (see mysql_server.test.ts for why the key retrieval is allowed).
+    const admin = bunSqlClient(url, {
+      max: 1,
+      mysql: true,
+      allowPublicKeyRetrieval: true,
+    });
     await admin.client.query(
       `create database "${schema}" default charset utf8mb4`,
       [],
@@ -86,7 +91,12 @@ const makeAdapter = async (): Promise<DbAdapter> => {
       await admin.client.query(`drop database "${schema}"`, []);
       await admin.close();
     });
-    return mysqlAdapter({ url, schema, max: 2 });
+    return mysqlAdapter({
+      url,
+      schema,
+      max: 2,
+      allowPublicKeyRetrieval: true,
+    });
   }
 
   return surrealAdapter({

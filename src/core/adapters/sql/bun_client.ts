@@ -48,11 +48,19 @@ export type BunClientOptions = {
   tls?: boolean | Record<string, unknown>;
   // The statement text has to be rewritten for MySQL and MariaDB.
   mysql?: boolean;
+  // MySQL only. A MySQL 8 account that logs in with caching_sha2_password needs the server's RSA
+  // public key when the connection is not TLS; Bun refuses to fetch it unless told to, because a
+  // network attacker could substitute their own key and read the password. Prefer `tls`.
+  allowPublicKeyRetrieval?: boolean;
 };
 
 export const bunSqlClient = (url: string, options: BunClientOptions = {}) => {
   // Bun types the options as a union over the three databases; ours are the shared subset.
-  const client = new SQL(url, { max: options.max, tls: options.tls } as never);
+  const client = new SQL(url, {
+    max: options.max,
+    tls: options.tls,
+    allowPublicKeyRetrieval: options.allowPublicKeyRetrieval,
+  } as never);
 
   return {
     client: root(

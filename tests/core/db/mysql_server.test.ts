@@ -21,7 +21,13 @@ if (!url) {
     it.skip("set NJIN_TEST_MYSQL_URL to run against a real server", () => {});
   });
 } else {
-  const admin = bunSqlClient(url, { max: 1, mysql: true });
+  // A throwaway test server: MySQL 8 logs in with caching_sha2_password, which over a plain
+  // connection needs the server's RSA key (Bun refuses to fetch it unless told to).
+  const admin = bunSqlClient(url, {
+    max: 1,
+    mysql: true,
+    allowPublicKeyRetrieval: true,
+  });
   const run = `njin_test_${Date.now().toString(36)}`;
   const created: string[] = [];
   let counter = 0;
@@ -42,6 +48,11 @@ if (!url) {
     );
     created.push(schema);
 
-    return mysqlAdapter({ url, schema, max: 2 });
+    return mysqlAdapter({
+      url,
+      schema,
+      max: 2,
+      allowPublicKeyRetrieval: true,
+    });
   });
 }
