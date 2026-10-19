@@ -510,7 +510,7 @@ describe("identifier length", () => {
 });
 
 describe("without pg_trgm", () => {
-  it("still searches, as plain substring matching", async () => {
+  it("still searches, by counting shared trigrams in plain SQL", async () => {
     const bare = await open(plain);
     const post: TableDef = {
       name: "post",
@@ -519,7 +519,7 @@ describe("without pg_trgm", () => {
     };
     await bare.sync([post]);
 
-    expect(bare.capabilities.search).toBe("basic");
+    expect(bare.capabilities.search).toBe("fuzzy");
 
     await bare.insert(post, { title: "Getting started with Next.js" });
     await bare.insert(post, { title: "Cooking pasta" });

@@ -34,3 +34,50 @@ jobs:
 
       - name: Test with coverage
         run: bun run test:coverage
+
+      - name: Test on SQLite
+        run: bun test --isolate
+        env:
+          NJIN_TEST_ADAPTER: sqlite
+
+  mysql:
+    name: Test on ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: MySQL 8
+            image: mysql:8.0
+          - name: MariaDB 11
+            image: mariadb:11.4
+    services:
+      db:
+        image: ${{ matrix.image }}
+        env:
+          MYSQL_ROOT_PASSWORD: njin
+          MARIADB_ROOT_PASSWORD: njin
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd "healthcheck.sh --connect --innodb_initialized || mysqladmin ping -h 127.0.0.1 -pnjin"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Test
+        run: bun test --isolate
+        env:
+          NJIN_TEST_ADAPTER: mysql
+          NJIN_TEST_MYSQL_URL: mysql://root:njin@127.0.0.1:3306/mysql

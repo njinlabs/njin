@@ -8,6 +8,9 @@
     "elysia",
     "surrealdb",
     "postgres",
+    "sqlite",
+    "mysql",
+    "mariadb",
     "edgejs",
     "cms",
     "framework"

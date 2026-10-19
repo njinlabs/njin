@@ -1,5 +1,6 @@
 import { SQL } from "bun";
 import { assertSingleStatement, type SqlClient } from "./builder";
+import { toPositional } from "./text";
 
 // Bun's built-in SQL client as an SqlClient. Parameters travel to the database separately from
 // the statement text (a Bind message for PostgreSQL, a server-side prepared statement for
@@ -19,20 +20,25 @@ const rows = (result: unknown) =>
 
 // Bun runs a statement with no parameters as a "simple query", which accepts several commands
 // at once; every statement is checked to be exactly one before it is sent.
-const single = (text: string) => {
+// MySQL and MariaDB do not read njin's PostgreSQL-flavoured text ("quoted" names, $1 placeholders),
+// so for them it is rewritten (see ./text.ts) after the check.
+type Prepare = (text: string) => string;
+
+const checked = (text: string, prepare: Prepare) => {
   assertSingleStatement(text);
-  return text;
+  return prepare(text);
 };
 
-const inTransaction = (tx: BunTx): SqlClient => ({
-  query: async (text, params) => rows(await tx.unsafe(single(text), params)),
-  transaction: (fn) => tx.savepoint((sp) => fn(inTransaction(sp))),
+const inTransaction = (tx: BunTx, prepare: Prepare): SqlClient => ({
+  query: async (text, params) =>
+    rows(await tx.unsafe(checked(text, prepare), params)),
+  transaction: (fn) => tx.savepoint((sp) => fn(inTransaction(sp, prepare))),
 });
 
-const root = (client: BunRoot): SqlClient => ({
+const root = (client: BunRoot, prepare: Prepare): SqlClient => ({
   query: async (text, params) =>
-    rows(await client.unsafe(single(text), params)),
-  transaction: (fn) => client.begin((tx) => fn(inTransaction(tx))),
+    rows(await client.unsafe(checked(text, prepare), params)),
+  transaction: (fn) => client.begin((tx) => fn(inTransaction(tx, prepare))),
 });
 
 export type BunClientOptions = {
@@ -40,6 +46,8 @@ export type BunClientOptions = {
   max?: number;
   // TLS for the connection: true, or Bun's TLS options. Prefer it for anything but localhost.
   tls?: boolean | Record<string, unknown>;
+  // The statement text has to be rewritten for MySQL and MariaDB.
+  mysql?: boolean;
 };
 
 export const bunSqlClient = (url: string, options: BunClientOptions = {}) => {
@@ -47,7 +55,12 @@ export const bunSqlClient = (url: string, options: BunClientOptions = {}) => {
   const client = new SQL(url, { max: options.max, tls: options.tls } as never);
 
   return {
-    client: root(client as unknown as BunRoot),
+    client: root(
+      client as unknown as BunRoot,
+      options.mysql
+        ? (text) => toPositional(text, { backticks: true })
+        : (text) => text,
+    ),
     close: () => client.close(),
   };
 };

@@ -533,7 +533,7 @@ export default defineConfig({
 
 ### Database adapters
 
-The database sits behind an adapter (`adapters.db`), so njin is not tied to one engine. `db: { ... }` above is shorthand for the default adapter, SurrealDB. To construct it yourself, or to use another adapter:
+The database sits behind an adapter (`adapters.db`), so njin is not tied to one engine: SurrealDB (the default), PostgreSQL, SQLite, MySQL and MariaDB. `db: { ... }` above is shorthand for the default adapter, SurrealDB. To construct it yourself, or to use another adapter:
 
 ```ts
 import surrealAdapter from "@njinlabs/njin/adapters/surreal";
@@ -576,11 +576,51 @@ Tables are created and migrated automatically on boot, and the data is stored as
 
 - **Migrations only add.** A new field becomes a new column or table; nothing is ever dropped or retyped, so removing a field leaves its column (and data) in place. The applied layout is recorded in `njin_schema_meta`, so a warm boot skips all DDL.
 - **Ids** are UUIDv7 strings; datetimes are `timestamptz` and still come out as ISO-8601 strings.
-- **Search** uses the `pg_trgm` extension (substring match plus typo-tolerant ranking) when the database lets it be created, and falls back to plain substring matching otherwise.
+- **Search** uses the `pg_trgm` extension (substring match plus typo-tolerant ranking) when the database lets it be created, and falls back to the portable search described below otherwise.
 - Filters, sorting and search work on top-level fields; an element of an `array()` or `relationMany()` can be matched with `$in`.
 - An `object()` whose every field is empty reads back as `null` — it is stored as columns, so it can't be told apart from an absent one.
 
 The adapter is checked against the same contract suite as SurrealDB (`bun test tests/core/db`, on an in-process Postgres — PGlite), and the whole test suite can be run on it with `NJIN_TEST_ADAPTER=postgres bun test --isolate`. To run the contract suite against a real server: `NJIN_TEST_POSTGRES_URL=postgres://user:pass@host/db bun test tests/core/db/postgres_server.test.ts` (it only creates and drops schemas of its own).
+
+#### SQLite
+
+```ts
+import sqliteAdapter from "@njinlabs/njin/adapters/sqlite";
+
+adapters: {
+  db: sqliteAdapter({ path: "data/app.db" }),
+},
+```
+
+One file and no server — a good fit for a small site. It runs on `bun:sqlite` (built into Bun, so nothing to install and nothing to ship next to a compiled binary). `path: ":memory:"` gives a database that lives as long as the process. Several njin processes can share one file: writes take turns (`busyTimeout`, 5 s by default, is how long one waits for another), and the file is kept in WAL mode so readers never block the writer.
+
+The layout, ids, migrations and filter/sort behaviour are the same as on Postgres (everything above applies); only the column types differ: `text` / `real` / `integer` (booleans are 0/1), and datetimes and JSON are stored as text (datetimes as UTC ISO-8601, which sorts correctly). Search is the portable fuzzy search (below); SQLite folds case for ASCII letters only, so `É` and `é` count as different letters there.
+
+#### MySQL and MariaDB
+
+```ts
+import mysqlAdapter from "@njinlabs/njin/adapters/mysql";
+
+adapters: {
+  db: mysqlAdapter({ url: process.env.DATABASE_URL! /* mysql://user:pass@host:3306/app */, tls: true }),
+},
+```
+
+One adapter for both servers: it asks the server which one it is on connect. Like Postgres it uses Bun's built-in SQL client, takes `url`, `max`, `tls`, `schema` (here: a database that must already exist) and `connect`, and stores the same real columns. Differences worth knowing:
+
+- Tables are `utf8mb4` with the **binary collation**, so `=`, unique columns and ids compare exactly (case- and accent-sensitive) as they do everywhere else; MySQL's default collation would not.
+- A column that is indexed, unique or a primary key is `varchar(255)` — MySQL cannot index unbounded text — so a **unique string longer than 255 characters** is refused. Every other string is `longtext`.
+- MySQL commits DDL implicitly, so a migration is not atomic. Every step is idempotent and the next boot finishes what a crashed one started; processes booting together take turns through a named lock.
+- Search is the portable fuzzy search (below), not `FULLTEXT`: that is word-based, cannot find part of a word and has no typo tolerance.
+- Tested against MySQL 8.0 and MariaDB 11.4.
+
+Run the shared contract suite against a server with `NJIN_TEST_MYSQL_URL=mysql://user:pass@host/mysql bun test tests/core/db/mysql_server.test.ts` (it creates and drops databases of its own), and the whole test suite with `NJIN_TEST_ADAPTER=mysql NJIN_TEST_MYSQL_URL=... bun test --isolate`; `NJIN_TEST_ADAPTER=sqlite` needs nothing.
+
+#### Search on SQLite, MySQL and MariaDB
+
+These databases have no native typo-tolerant search (SQLite FTS5 and MySQL `FULLTEXT` match whole words or exact slices), so the adapter does it in plain SQL, identically on all three — and on Postgres when `pg_trgm` is unavailable. A field matches when it contains the search string (ignoring case and spaces, so `red wing` finds `REDWING`) **or** shares at least half of its trigrams (three-letter slices): `helo wrld` finds `Hello World`. Results rank by containment first, then by how many trigrams they share. A search string shorter than three letters matches by containment only.
+
+The cost is a scan: each search is evaluated per row, with no index behind it. That is instant for the thousands of rows a content site holds; for a table with hundreds of thousands, use Postgres (`pg_trgm` with a GIN index) or SurrealDB.
 
 To store uploads in S3 (or an S3-compatible service like R2/Spaces/MinIO) instead:
 

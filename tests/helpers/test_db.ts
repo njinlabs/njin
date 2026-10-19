@@ -16,7 +16,9 @@ import { internalTables } from "../../src/core/db/internal";
 // The adapter behind the test database. SurrealDB (in memory) by default; set
 // NJIN_TEST_ADAPTER=postgres to run the same tests on Postgres: an in-process PGlite, or — when
 // NJIN_TEST_POSTGRES_URL is also set — a real server through Bun's SQL client (each test file
-// gets a schema of its own, dropped afterwards).
+// gets a schema of its own, dropped afterwards). NJIN_TEST_ADAPTER=sqlite runs them on an
+// in-memory SQLite; NJIN_TEST_ADAPTER=mysql (also covers MariaDB) needs NJIN_TEST_MYSQL_URL and
+// gives each test file a database of its own.
 const makeAdapter = async (): Promise<DbAdapter> => {
   if (process.env.NJIN_TEST_ADAPTER === "postgres") {
     const { postgresAdapter } = await import(
@@ -49,6 +51,33 @@ const makeAdapter = async (): Promise<DbAdapter> => {
         close: () => client.close(),
       }),
     });
+  }
+
+  if (process.env.NJIN_TEST_ADAPTER === "sqlite") {
+    const { sqliteAdapter } = await import("../../src/core/adapters/sqlite");
+    return sqliteAdapter({ path: ":memory:" });
+  }
+
+  if (process.env.NJIN_TEST_ADAPTER === "mysql") {
+    const url = process.env.NJIN_TEST_MYSQL_URL;
+    if (!url)
+      throw new Error("NJIN_TEST_ADAPTER=mysql needs NJIN_TEST_MYSQL_URL");
+
+    const { mysqlAdapter } = await import("../../src/core/adapters/mysql");
+    const { bunSqlClient } = await import(
+      "../../src/core/adapters/sql/bun_client"
+    );
+    const schema = `njin_app_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+    const admin = bunSqlClient(url, { max: 1, mysql: true });
+    await admin.client.query(
+      `create database "${schema}" default charset utf8mb4`,
+      [],
+    );
+    afterAll(async () => {
+      await admin.client.query(`drop database "${schema}"`, []);
+      await admin.close();
+    });
+    return mysqlAdapter({ url, schema, max: 2 });
   }
 
   return surrealAdapter({
