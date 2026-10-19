@@ -24,7 +24,13 @@ const base: TableDef = {
 
 const mysqlUrl = process.env.NJIN_TEST_MYSQL_URL;
 const admin = mysqlUrl
-  ? bunSqlClient(mysqlUrl, { max: 1, mysql: true })
+  ? // A throwaway test server: MySQL 8's caching_sha2_password login needs the server's RSA key
+    // over a plain connection, which Bun refuses to fetch unless told to.
+    bunSqlClient(mysqlUrl, {
+      max: 1,
+      mysql: true,
+      allowPublicKeyRetrieval: true,
+    })
   : undefined;
 const created: string[] = [];
 let counter = 0;
@@ -51,7 +57,12 @@ if (mysqlUrl) {
         [],
       );
       created.push(schema);
-      return mysqlAdapter({ url: mysqlUrl, schema, max: 2 });
+      return mysqlAdapter({
+        url: mysqlUrl,
+        schema,
+        max: 2,
+        allowPublicKeyRetrieval: true,
+      });
     },
   ]);
 }
