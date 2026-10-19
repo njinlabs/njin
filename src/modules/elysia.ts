@@ -1,6 +1,8 @@
 import cors from "@elysia/cors";
 import Elysia, { type AnyElysia, status, ValidationError } from "elysia";
 import { getConfig } from "../core/config";
+import { LinkTargetMissingError } from "../core/db/contract";
+import { HttpError } from "../core/http_error";
 import { UniqueConstraintError } from "../core/model";
 import { makeModule } from "../core/module";
 import { serveWorker } from "../core/worker";
@@ -86,6 +88,16 @@ const elysia = makeModule(() => {
             message: error.message,
             field: error.field,
           });
+        }
+
+        // A relation / file field holding an id that matches no record (SQL adapters enforce it).
+        if (error instanceof LinkTargetMissingError) {
+          return status(422, { message: error.message });
+        }
+
+        // Thrown by the model layer (e.g. publishing a record that does not exist).
+        if (error instanceof HttpError) {
+          return status(error.statusCode as 404, { message: error.message });
         }
 
         // An unmatched route (bots probing /wp-login.php etc.) is a plain 404, not a server error.

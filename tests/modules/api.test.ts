@@ -47,6 +47,41 @@ const fakeModel = {
   },
 };
 
+// A draftable model: the plain CRUD of fakeModel plus the publish actions makeModel adds.
+const draftCalls: string[] = [];
+const draftOptions: unknown[] = [];
+const fakeDraftModel = {
+  ...fakeModel,
+  name: "Article",
+  prefix: "article",
+  publishedDef: { name: "_published_article", fields: [], search: [] },
+  publish: async (id: string, options?: unknown) => {
+    draftCalls.push(`publish:${id}`);
+    draftOptions.push(options);
+    return { id, status: "published" };
+  },
+  unpublish: async (id: string) => {
+    draftCalls.push(`unpublish:${id}`);
+    return { id, status: "draft" };
+  },
+  discard: async (id: string) => {
+    draftCalls.push(`discard:${id}`);
+    return { id, status: "published" };
+  },
+  backfillPublished: async () => 0,
+};
+
+// An i18n model: the plain CRUD of fakeModel, a show() that reports its options, and the
+// extras makeModel adds.
+const fakeI18nModel = {
+  ...fakeModel,
+  name: "Page",
+  prefix: "page",
+  i18nDef: { name: "page__i18n", fields: [], search: [] },
+  show: async (id: string, opts?: Record<string, unknown>) => ({ id, opts }),
+  removeLocale: async (id: string, locale: string) => ({ id, removed: locale }),
+};
+
 const fakeVarsGroup = {
   name: "SEO",
   prefix: "seo",
@@ -63,7 +98,12 @@ let customRouteMounted = false;
 mock.module("../../src/core/config", () => ({
   ...realConfig,
   getConfig: () => ({
-    models: [async () => ({ default: fakeModel })],
+    models: [
+      async () => ({ default: fakeModel }),
+      async () => ({ default: fakeDraftModel }),
+      async () => ({ default: fakeI18nModel }),
+    ],
+    i18n: { locales: ["id", "en"], defaultLocale: "id" },
     vars: [async () => ({ default: fakeVarsGroup })],
     hooks: [
       async () => {
@@ -123,12 +163,28 @@ describe("GET /api/schema", () => {
     );
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
-      data: { name: string; prefix: string; schema: Record<string, unknown> }[];
+      data: {
+        name: string;
+        prefix: string;
+        draftable: boolean;
+        i18n: boolean;
+        schema: Record<string, unknown>;
+      }[];
+      i18n: { locales: string[]; defaultLocale: string } | null;
       vars: { name: string; prefix: string; schema: Record<string, unknown> }[];
     };
 
-    expect(body.data).toHaveLength(1);
+    expect(body.data).toHaveLength(3);
     expect(body.data[0]!.prefix).toBe("post");
+    expect(body.data.map((m) => [m.prefix, m.draftable, m.i18n])).toEqual([
+      ["post", false, false],
+      ["article", true, false],
+      ["page", false, true],
+    ]);
+    expect(body.i18n).toEqual({
+      locales: ["id", "en"],
+      defaultLocale: "id",
+    });
     const props = (
       body.data[0]!.schema as {
         properties: Record<string, { type?: string; properties?: unknown }>;
@@ -145,6 +201,108 @@ describe("GET /api/schema", () => {
 
     expect(body.vars).toHaveLength(1);
     expect(body.vars[0]!.prefix).toBe("seo");
+    expect(body.vars[0]).toMatchObject({ draftable: false, i18n: false });
+  });
+});
+
+describe("i18n routes", () => {
+  const get = (path: string) =>
+    app.handle(
+      new Request(`http://localhost${path}`, {
+        headers: { Authorization: "Bearer x" },
+      }),
+    );
+
+  it("passes locale and fallback to read() and show() of an i18n model", async () => {
+    const list = (await (
+      await get("/api/page?locale=en&fallback=false")
+    ).json()) as {
+      opts: { locale?: string; fallback?: boolean };
+    };
+    expect(list.opts).toMatchObject({ locale: "en", fallback: false });
+
+    const shown = (await (await get("/api/page/p1?locale=id")).json()) as {
+      data: { opts: { locale?: string; fallback?: boolean } };
+    };
+    expect(shown.data.opts).toEqual({ locale: "id", fallback: true });
+  });
+
+  it("hands the locale to a model without i18n too: its related i18n records follow it", async () => {
+    const list = (await (await get("/api/post?locale=en")).json()) as {
+      opts: Record<string, unknown>;
+    };
+
+    expect(list.opts).toMatchObject({ locale: "en" });
+  });
+
+  it("DELETE /api/page/:id/locale/:locale removes one language", async () => {
+    const res = await app.handle(
+      new Request("http://localhost/api/page/p1/locale/en", {
+        method: "DELETE",
+        headers: { Authorization: "Bearer x" },
+      }),
+    );
+
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as { data: unknown }).data).toEqual({
+      id: "p1",
+      removed: "en",
+    });
+  });
+
+  it("is not mounted for a model without i18n", async () => {
+    const res = await app.handle(
+      new Request("http://localhost/api/post/p1/locale/en", {
+        method: "DELETE",
+        headers: { Authorization: "Bearer x" },
+      }),
+    );
+
+    expect(res.status).toBe(404);
+  });
+});
+
+describe("draft routes", () => {
+  const post = (path: string, authorization = "Bearer x") =>
+    app.handle(
+      new Request(`http://localhost${path}`, {
+        method: "POST",
+        headers: { Authorization: authorization },
+      }),
+    );
+
+  it("POST /api/article/:id/publish|unpublish|discard call the model", async () => {
+    draftCalls.length = 0;
+
+    for (const action of ["publish", "unpublish", "discard"]) {
+      const res = await post(`/api/article/a1/${action}`);
+      expect(res.status).toBe(200);
+      expect(((await res.json()) as { data: { id: string } }).data.id).toBe(
+        "a1",
+      );
+    }
+
+    expect(draftCalls).toEqual(["publish:a1", "unpublish:a1", "discard:a1"]);
+  });
+
+  it("passes the languages of ?locale to publish, or nothing", async () => {
+    draftOptions.length = 0;
+
+    await post("/api/article/a1/publish");
+    await post("/api/article/a1/publish?locale=en");
+    await post("/api/article/a1/publish?locale=en,%20id,");
+
+    expect(draftOptions).toEqual([
+      undefined,
+      { locale: ["en"] },
+      { locale: ["en", "id"] },
+    ]);
+  });
+
+  it("is not mounted for a model that is not draftable", async () => {
+    const res = await post("/api/post/p1/publish");
+
+    expect(res.status).toBe(404);
   });
 });
 

@@ -43,6 +43,7 @@ export const sqliteDialect: Dialect = {
   deleteReturning: true,
   rowLock: sql``,
   indexIfNotExists: true,
+  foreignKeys: "inline",
 
   // The client's transactions are BEGIN IMMEDIATE: the write lock is already held.
   lock: async () => async () => {},

@@ -2,24 +2,45 @@ import { getConfig } from "../core/config";
 import type { DbAdapter, TableDef } from "../core/db/contract";
 import { internalTables } from "../core/db/internal";
 import { makeModule } from "../core/module";
+import { isDraftableVars } from "../core/vars";
 
 // Every table the app will touch: njin's own, the built-in user/file models, then whatever
 // the project registered. Collected here (not at model-definition time) because importing a
 // model evaluates data types like file()/multiFile() that depend on other modules' singletons,
 // which only exist once every module's init() has run.
-const collectTables = async () => {
+type Collected = {
+  def: TableDef;
+  publishedDef?: TableDef;
+  // An i18n model's second table (one row per record and language).
+  i18nDef?: TableDef;
+  backfillPublished?: () => Promise<number>;
+};
+
+const collectModels = async () => {
   const { default: userModel } = await import("../models/user");
   const { default: fileModel } = await import("../models/file");
 
-  const tables = new Map<string, TableDef>();
-  for (const table of internalTables) tables.set(table.name, table);
-
-  const models: { def: TableDef }[] = [userModel, fileModel];
+  const models: Collected[] = [userModel, fileModel];
   for (const factory of getConfig().models) {
     const { default: model } = await factory();
     models.push(model);
   }
-  for (const model of models) tables.set(model.def.name, model.def);
+
+  return models;
+};
+
+const collectTables = (models: readonly Collected[]) => {
+  const tables = new Map<string, TableDef>();
+  for (const table of internalTables) tables.set(table.name, table);
+
+  for (const model of models) {
+    tables.set(model.def.name, model.def);
+    // A draftable model keeps its published copies in a second table.
+    if (model.publishedDef) {
+      tables.set(model.publishedDef.name, model.publishedDef);
+    }
+    if (model.i18nDef) tables.set(model.i18nDef.name, model.i18nDef);
+  }
 
   return [...tables.values()];
 };
@@ -45,7 +66,17 @@ const db = makeModule(() => {
       // still runs before elysia's spin() (which calls app.listen()), since db is earlier
       // in src/config/module.ts's array, so tables exist before the first request.
       spin: async () => {
-        await adapter.sync(await collectTables());
+        const models = await collectModels();
+        await adapter.sync(collectTables(models));
+
+        // Records that predate a model becoming draftable are live content.
+        for (const model of models) await model.backfillPublished?.();
+
+        // ...and so are the saved values of a settings group that became draftable.
+        for (const factory of getConfig().vars ?? []) {
+          const { default: group } = await factory();
+          if (isDraftableVars(group)) await group.backfillPublished();
+        }
 
         const shutdown = async () => {
           await adapter.close();

@@ -1,15 +1,17 @@
 import { createHash } from "node:crypto";
-import type {
-  AdapterCapabilities,
-  Condition,
-  CountBy,
-  DbAdapter,
-  ListQuery,
-  ListResult,
-  PartialRow,
-  Row,
-  ScalarType,
-  TableDef,
+import {
+  type AdapterCapabilities,
+  type Condition,
+  type CountBy,
+  type DbAdapter,
+  type DbOperations,
+  LinkTargetMissingError,
+  type ListQuery,
+  type ListResult,
+  type PartialRow,
+  type Row,
+  type ScalarType,
+  type TableDef,
 } from "../../db/contract";
 import { run, type SQL, type SqlClient, sql } from "./builder";
 import type { Dialect } from "./dialect";
@@ -79,14 +81,26 @@ const errorCode = (error: DriverError) => {
   return undefined;
 };
 
-const sanitize = (error: unknown): unknown =>
-  isDriverError(error)
-    ? new DbError(
-        error.message,
-        errorCode(error),
-        typeof error.constraint === "string" ? error.constraint : undefined,
-      )
-    : error;
+// SQLSTATE 23503 (Postgres), error 1452 (MySQL / MariaDB: cannot add or update a child row),
+// extended result 787 (SQLite). A violation on delete cannot happen: links are SET NULL / CASCADE.
+const FOREIGN_KEY_CODES = new Set(["23503", "1452", "787"]);
+
+const sanitize = (error: unknown): unknown => {
+  if (!isDriverError(error)) return error;
+
+  const code = errorCode(error);
+  const constraint =
+    typeof error.constraint === "string" ? error.constraint : undefined;
+
+  if (
+    (code && FOREIGN_KEY_CODES.has(code)) ||
+    error.code === "SQLITE_CONSTRAINT_FOREIGNKEY"
+  ) {
+    return new LinkTargetMissingError(constraint);
+  }
+
+  return new DbError(error.message, code, constraint);
+};
 
 const guarded = (target: SqlClient): SqlClient => ({
   query: (text, params) =>
@@ -130,7 +144,7 @@ const SIMILARITY_THRESHOLD = 0.5;
 const MAX_TRIGRAMS = 24;
 const SCHEMA_META_TABLE = "njin_schema_meta";
 // Bump to force every database to re-run its (idempotent) DDL on next boot.
-const LAYOUT_VERSION = 1;
+const LAYOUT_VERSION = 2;
 const INSERT_CHUNK = 200;
 
 // Serialises schema changes across processes (njin runs several workers against one database).
@@ -813,7 +827,11 @@ export const sqlAdapter = (config: SqlAdapterSpec): DbAdapter => {
 
   // Free-text matching: a field matches when it contains the query (ignoring case and spaces,
   // so "red wing" finds "REDWING") or, where the dialect can, when it is similar to it.
-  const searchParts = (plan: TablePlan, query: string) => {
+  const searchParts = (
+    plan: TablePlan,
+    query: string,
+    searchLocale?: string,
+  ) => {
     const pattern = likeEscaped(query);
     const matches: SQL[] = [];
     const scores: SQL[] = [];
@@ -874,10 +892,29 @@ export const sqlAdapter = (config: SqlAdapterSpec): DbAdapter => {
       );
       const ref = sql`${sql.identifier("s")}.${sql.identifier(targetColumn.name)}`;
 
+      // A link into a table of languages: its rows are keyed by the linked record's id, and can
+      // be narrowed to one language.
+      let keyed = sql.identifier("id");
+      let inLanguage = sql``;
+      if (target.perLanguage) {
+        const key = targetPlan.columns.find(
+          (c) => c.path.length === 1 && c.path[0] === target.perLanguage!.key,
+        );
+        const language = targetPlan.columns.find(
+          (c) =>
+            c.path.length === 1 && c.path[0] === target.perLanguage!.locale,
+        );
+        if (!key || !language) continue;
+        keyed = sql.identifier(key.name);
+        if (searchLocale !== undefined) {
+          inLanguage = sql` and "s".${sql.identifier(language.name)} = ${searchLocale}`;
+        }
+      }
+
       const from = linked
-        ? sql`${tableRef(targetPlan.name)} as "s" where "s"."id" = ${col(plan.name, linked.name)}`
+        ? sql`${tableRef(targetPlan.name)} as "s" where "s".${keyed} = ${col(plan.name, linked.name)}${inLanguage}`
         : pivot
-          ? sql`${tableRef(pivot.table)} as "pv" join ${tableRef(targetPlan.name)} as "s" on "s"."id" = "pv"."target" where "pv"."_parent" = ${col(plan.name, "id")}`
+          ? sql`${tableRef(pivot.table)} as "pv" join ${tableRef(targetPlan.name)} as "s" on "s".${keyed} = "pv"."target" where "pv"."_parent" = ${col(plan.name, "id")}${inLanguage}`
           : undefined;
       if (!from) continue;
 
@@ -939,7 +976,42 @@ export const sqlAdapter = (config: SqlAdapterSpec): DbAdapter => {
     primary?: string;
     columns: { name: string; type: ScalarType; unique?: boolean }[];
     indexes: string[][];
+    foreignKeys: ForeignKey[];
   };
+
+  // A link the database enforces. A one() link that loses its target becomes null; a pivot
+  // entry or an array row that loses its target / its owner row is deleted with it.
+  type ForeignKey = {
+    name: string;
+    column: string;
+    target: string;
+    onDelete: "set null" | "cascade";
+  };
+
+  const foreignKey = (
+    table: string,
+    column: string,
+    target: string,
+    onDelete: ForeignKey["onDelete"],
+  ): ForeignKey => ({
+    name: physicalName(`fk_${table}_${column}`),
+    column,
+    target,
+    onDelete,
+  });
+
+  // Only links to a table njin manages: a target outside the synced set (a model that was
+  // never registered) cannot be referenced, and such a link has always been left unresolved.
+  const enforced = (table: PhysicalTable) =>
+    table.foreignKeys.filter((fk) => plans.has(fk.target));
+
+  const onDeleteSql = (fk: ForeignKey) =>
+    fk.onDelete === "cascade"
+      ? sql`on delete cascade`
+      : sql`on delete set null`;
+
+  const foreignKeyDef = (fk: ForeignKey) =>
+    sql`foreign key (${sql.identifier(fk.column)}) references ${tableRef(fk.target)} (${sql.identifier("id")}) ${onDeleteSql(fk)}`;
 
   const childColumns = (): PhysicalTable["columns"] => [
     { name: "_id", type: "string" },
@@ -948,7 +1020,8 @@ export const sqlAdapter = (config: SqlAdapterSpec): DbAdapter => {
     { name: "_pos", type: "number" },
   ];
 
-  const pivotTable = (pivot: Pivot): PhysicalTable => ({
+  // `root` is the table of the row everything below ultimately belongs to (`_owner`).
+  const pivotTable = (pivot: Pivot, root: string): PhysicalTable => ({
     name: pivot.table,
     columns: [
       { name: "_owner", type: "string" },
@@ -957,9 +1030,13 @@ export const sqlAdapter = (config: SqlAdapterSpec): DbAdapter => {
       { name: "target", type: "string" },
     ],
     indexes: [["_owner"], ["_parent", "_pos"], ["target"]],
+    foreignKeys: [
+      foreignKey(pivot.table, "_owner", root, "cascade"),
+      foreignKey(pivot.table, "target", pivot.target, "cascade"),
+    ],
   });
 
-  const arrayTables = (array: ArrayPlan): PhysicalTable[] => [
+  const arrayTables = (array: ArrayPlan, root: string): PhysicalTable[] => [
     {
       name: array.table,
       primary: "_id",
@@ -972,9 +1049,15 @@ export const sqlAdapter = (config: SqlAdapterSpec): DbAdapter => {
         ["_parent", "_pos"],
         ...array.columns.filter((c) => c.link).map((c) => [c.name]),
       ],
+      foreignKeys: [
+        foreignKey(array.table, "_owner", root, "cascade"),
+        ...array.columns
+          .filter((c) => c.link)
+          .map((c) => foreignKey(array.table, c.name, c.link!, "set null")),
+      ],
     },
-    ...array.pivots.map(pivotTable),
-    ...array.arrays.flatMap(arrayTables),
+    ...array.pivots.map((pivot) => pivotTable(pivot, root)),
+    ...array.arrays.flatMap((nested) => arrayTables(nested, root)),
   ];
 
   const physicalTables = (plan: TablePlan): PhysicalTable[] => [
@@ -989,9 +1072,12 @@ export const sqlAdapter = (config: SqlAdapterSpec): DbAdapter => {
         ...(plan.document ? [{ name: "data", type: "json" as const }] : []),
       ],
       indexes: plan.columns.filter((c) => c.link).map((c) => [c.name]),
+      foreignKeys: plan.columns
+        .filter((c) => c.link)
+        .map((c) => foreignKey(plan.name, c.name, c.link!, "set null")),
     },
-    ...plan.pivots.map(pivotTable),
-    ...plan.arrays.flatMap(arrayTables),
+    ...plan.pivots.map((pivot) => pivotTable(pivot, plan.name)),
+    ...plan.arrays.flatMap((array) => arrayTables(array, plan.name)),
   ];
 
   // A statement that is allowed to fail without failing the migration. Where DDL is
@@ -1065,6 +1151,13 @@ export const sqlAdapter = (config: SqlAdapterSpec): DbAdapter => {
           ...table.columns
             .filter((c) => c.name !== table.primary)
             .map((c) => columnDef(table, c)),
+          // SQLite can only declare a link when the table is created.
+          ...(dialect.foreignKeys === "inline"
+            ? enforced(table).map(
+                (fk) =>
+                  sql`constraint ${sql.identifier(fk.name)} ${foreignKeyDef(fk)}`,
+              )
+            : []),
         ],
         sql`, `,
       )})${dialect.tableOptions ?? sql``}`,
@@ -1109,6 +1202,40 @@ export const sqlAdapter = (config: SqlAdapterSpec): DbAdapter => {
         console.warn(
           `[njin] Could not enforce uniqueness of ${table.name}.${c.name} in the database (existing duplicates?): ${failure}`,
         );
+      }
+    }
+  };
+
+  // Postgres / MySQL: the constraints go in once every table exists (a table can only reference
+  // one that is already there, and links may be circular). Existing rows that link to a record
+  // that is gone make a plain ADD CONSTRAINT fail; those databases fall back to enforcing the
+  // link for new writes only, and the migration says so.
+  const ensureForeignKeys = async (x: SqlClient) => {
+    const known = new Set(
+      [...((await dialect.foreignKeyNames?.(x, config.schema)) ?? [])].map(
+        fold,
+      ),
+    );
+
+    for (const plan of plans.values()) {
+      for (const table of physicalTables(plan)) {
+        for (const fk of enforced(table)) {
+          if (known.has(fold(`${table.name}.${fk.name}`))) continue;
+
+          const statement = sql`alter table ${tableRef(table.name)} add constraint ${sql.identifier(fk.name)} ${foreignKeyDef(fk)}`;
+          const failure = await attempt(x, (sp) => ddl(sp, statement));
+          if (!failure) continue;
+
+          const unchecked = dialect.addUncheckedForeignKey;
+          const fallback = unchecked
+            ? await attempt(x, (sp) => unchecked(sp, statement))
+            : failure;
+          console.warn(
+            fallback
+              ? `[njin] Could not add the link ${table.name}.${fk.column} -> ${fk.target}: ${fallback}`
+              : `[njin] ${table.name}.${fk.column} links to ${fk.target} records that no longer exist. The link is enforced for new writes only; clean up the old rows to enforce it fully.`,
+          );
+        }
       }
     }
   };
@@ -1186,112 +1313,10 @@ export const sqlAdapter = (config: SqlAdapterSpec): DbAdapter => {
   // The adapter
   // ------------------------------------------------------------------------------------
 
-  const adapter: DbAdapter = {
-    get name() {
-      return dialect?.name ?? config.name;
-    },
-
-    describe() {
-      return config.describe();
-    },
-
-    get capabilities(): AdapterCapabilities {
-      // Native where the database has it, trigram counting in plain SQL where it doesn't.
-      return { search: "fuzzy" };
-    },
-
-    async connect() {
-      const connection = await config.connect();
-      db = guarded(connection.client);
-      closer = connection.close;
-
-      dialect =
-        typeof config.dialect === "function"
-          ? await config.dialect(db)
-          : config.dialect;
-      typeWords = new Set(
-        (["string", "number", "boolean", "datetime", "json"] as const).flatMap(
-          (type) => [
-            dialect.columnType(type, true),
-            dialect.columnType(type, false),
-          ],
-        ),
-      );
-
-      await run(db, sql`select 1`);
-    },
-
-    async close() {
-      await closer?.();
-    },
-
-    async sync(tables) {
-      plans.clear();
-      for (const table of tables) plans.set(table.name, planTable(table));
-
-      // The whole migration runs in one transaction behind a lock: several processes booting
-      // against the same database take turns (and the later ones find the schema already
-      // recorded and skip), and where DDL is transactional a failure halfway leaves nothing
-      // half-built.
-      await db.transaction(async (tx) => {
-        const release = await dialect.lock(tx, SCHEMA_LOCK);
-
-        try {
-          // Fuzzy search needs a database feature (an extension) that managed databases often
-          // restrict; without it search still works, just as plain substring matching.
-          const feature = dialect.fuzzy;
-          fuzzy = feature
-            ? (await attempt(tx, (sp) => feature.enable(sp))) === undefined
-            : false;
-
-          const hash = createHash("sha256")
-            .update(
-              JSON.stringify({
-                version: LAYOUT_VERSION,
-                dialect: dialect.name,
-                fuzzy,
-                schema: config.schema ?? null,
-                tables: [...plans.values()].map((p) => ({
-                  name: p.name,
-                  columns: p.columns,
-                  arrays: p.arrays,
-                  pivots: p.pivots,
-                  document: p.document,
-                  search: p.def.search,
-                })),
-              }),
-            )
-            .digest("hex");
-
-          const meta = tableRef(SCHEMA_META_TABLE);
-          await ddl(
-            tx,
-            sql`create table if not exists ${meta} ("key" ${typeWord("string", true)} primary key, "hash" ${typeWord("string", false)} not null)${dialect.tableOptions ?? sql``}`,
-          );
-          const [recorded] = await rowsOf(
-            tx,
-            sql`select "hash" from ${meta} where "key" = 'current'`,
-          );
-          if (recorded?.hash === hash) return;
-
-          const before = await existing(tx);
-          for (const plan of plans.values()) {
-            await ensurePlan(tx, plan, before);
-          }
-
-          await run(tx, sql`delete from ${meta} where "key" = 'current'`);
-          await run(
-            tx,
-            sql`insert into ${meta} ("key", "hash") values ('current', ${hash})`,
-          );
-        } finally {
-          await release();
-        }
-      });
-
-      await checkColumnTypes();
-    },
-
+  // The data operations on a given client: the connection itself, or the one a transaction was
+  // opened with. Inside, `db` is that client (it shadows the connection's), so the same code
+  // serves both.
+  const operationsOn = (db: SqlClient): Omit<DbOperations, "transaction"> => ({
     async find(table, id, opts) {
       const plan = planOf(table);
       const row = (await loadRows(db, plan, [id])).get(id);
@@ -1358,7 +1383,9 @@ export const sqlAdapter = (config: SqlAdapterSpec): DbAdapter => {
 
       const term = q.search?.trim();
       const search =
-        term && plan.def.search.length ? searchParts(plan, term) : undefined;
+        term && plan.def.search.length
+          ? searchParts(plan, term, q.searchLocale)
+          : undefined;
       const where = whereOf(plan, q.where, search?.match);
 
       let order: SQL;
@@ -1484,6 +1511,132 @@ export const sqlAdapter = (config: SqlAdapterSpec): DbAdapter => {
         count: Number(r.count),
       }));
     },
+  });
+
+  // Operations plus transaction(): a transaction opened on a transaction's client is a savepoint.
+  const viewOn = (client: SqlClient): DbOperations => ({
+    ...operationsOn(client),
+    transaction: (fn) => client.transaction((tx) => fn(viewOn(tx))),
+  });
+
+  const adapter: DbAdapter = {
+    get name() {
+      return dialect?.name ?? config.name;
+    },
+
+    describe() {
+      return config.describe();
+    },
+
+    get capabilities(): AdapterCapabilities {
+      // Native where the database has it, trigram counting in plain SQL where it doesn't.
+      return { search: "fuzzy", referentialIntegrity: true };
+    },
+
+    async connect() {
+      const connection = await config.connect();
+      db = guarded(connection.client);
+      closer = connection.close;
+
+      dialect =
+        typeof config.dialect === "function"
+          ? await config.dialect(db)
+          : config.dialect;
+      typeWords = new Set(
+        (["string", "number", "boolean", "datetime", "json"] as const).flatMap(
+          (type) => [
+            dialect.columnType(type, true),
+            dialect.columnType(type, false),
+          ],
+        ),
+      );
+
+      await run(db, sql`select 1`);
+    },
+
+    async close() {
+      await closer?.();
+    },
+
+    async sync(tables) {
+      plans.clear();
+      for (const table of tables) plans.set(table.name, planTable(table));
+
+      // The whole migration runs in one transaction behind a lock: several processes booting
+      // against the same database take turns (and the later ones find the schema already
+      // recorded and skip), and where DDL is transactional a failure halfway leaves nothing
+      // half-built.
+      await db.transaction(async (tx) => {
+        const release = await dialect.lock(tx, SCHEMA_LOCK);
+
+        try {
+          // Fuzzy search needs a database feature (an extension) that managed databases often
+          // restrict; without it search still works, just as plain substring matching.
+          const feature = dialect.fuzzy;
+          fuzzy = feature
+            ? (await attempt(tx, (sp) => feature.enable(sp))) === undefined
+            : false;
+
+          const hash = createHash("sha256")
+            .update(
+              JSON.stringify({
+                version: LAYOUT_VERSION,
+                dialect: dialect.name,
+                fuzzy,
+                schema: config.schema ?? null,
+                tables: [...plans.values()].map((p) => ({
+                  name: p.name,
+                  columns: p.columns,
+                  arrays: p.arrays,
+                  pivots: p.pivots,
+                  document: p.document,
+                  search: p.def.search,
+                })),
+              }),
+            )
+            .digest("hex");
+
+          const meta = tableRef(SCHEMA_META_TABLE);
+          await ddl(
+            tx,
+            sql`create table if not exists ${meta} ("key" ${typeWord("string", true)} primary key, "hash" ${typeWord("string", false)} not null)${dialect.tableOptions ?? sql``}`,
+          );
+          const [recorded] = await rowsOf(
+            tx,
+            sql`select "hash" from ${meta} where "key" = 'current'`,
+          );
+          if (recorded?.hash === hash) return;
+
+          const before = await existing(tx);
+          for (const plan of plans.values()) {
+            await ensurePlan(tx, plan, before);
+          }
+          if (dialect.foreignKeys === "alter") await ensureForeignKeys(tx);
+
+          await run(tx, sql`delete from ${meta} where "key" = 'current'`);
+          await run(
+            tx,
+            sql`insert into ${meta} ("key", "hash") values ('current', ${hash})`,
+          );
+        } finally {
+          await release();
+        }
+      });
+
+      await checkColumnTypes();
+    },
+
+    // The connection is made in connect(), so the client is looked up per call.
+    find: (...args) => viewOn(db).find(...args),
+    insert: (...args) => viewOn(db).insert(...args),
+    update: (...args) => viewOn(db).update(...args),
+    upsert: (...args) => viewOn(db).upsert(...args),
+    remove: (...args) => viewOn(db).remove(...args),
+    list: (...args) => viewOn(db).list(...args),
+    count: (...args) => viewOn(db).count(...args),
+    removeWhere: (...args) => viewOn(db).removeWhere(...args),
+    countBy: (...args) => viewOn(db).countBy(...args),
+    transaction: (fn) => viewOn(db).transaction(fn),
   };
 
   return adapter;

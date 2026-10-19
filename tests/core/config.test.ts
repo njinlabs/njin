@@ -146,3 +146,40 @@ describe("loadConfig — static routes", () => {
     ).rejects.toThrow(/Invalid revalidate/);
   });
 });
+
+describe("loadConfig — i18n", () => {
+  it("is absent unless configured", async () => {
+    await loadConfig({});
+    expect(getConfig().i18n).toBeUndefined();
+  });
+
+  it("defaults the default locale to the first one", async () => {
+    await loadConfig({ i18n: { locales: ["id", "en"] } });
+    expect(getConfig().i18n).toEqual({
+      locales: ["id", "en"],
+      defaultLocale: "id",
+    });
+  });
+
+  it("keeps an explicit default locale and accepts regional codes", async () => {
+    await loadConfig({
+      i18n: { locales: ["en", "pt-BR"], defaultLocale: "pt-BR" },
+    });
+    expect(getConfig().i18n?.defaultLocale).toBe("pt-BR");
+  });
+
+  it("rejects an empty list, a bad code, a duplicate and an unknown default", async () => {
+    await expect(loadConfig({ i18n: { locales: [] } })).rejects.toThrow(
+      "at least one locale",
+    );
+    await expect(
+      loadConfig({ i18n: { locales: ["en", "x y"] } }),
+    ).rejects.toThrow("not a locale code");
+    await expect(
+      loadConfig({ i18n: { locales: ["en", "en"] } }),
+    ).rejects.toThrow("twice");
+    await expect(
+      loadConfig({ i18n: { locales: ["en"], defaultLocale: "id" } }),
+    ).rejects.toThrow("not in config.i18n.locales");
+  });
+});

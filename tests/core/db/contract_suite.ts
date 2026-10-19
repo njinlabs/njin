@@ -1,5 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import type { DbAdapter, TableDef } from "../../../src/core/db/contract";
+import {
+  type DbAdapter,
+  LinkTargetMissingError,
+  type TableDef,
+} from "../../../src/core/db/contract";
 
 // The behavioural contract every DbAdapter has to satisfy. Run it against an adapter with
 // describeAdapter(name, factory) — see surreal_adapter.test.ts. Nothing in here may assume a
@@ -64,7 +68,52 @@ const settings: TableDef = {
   document: true,
 };
 
-const ALL = [author, category, post, settings];
+// A record whose text lives in a table of languages (one row per record and language)...
+const topic: TableDef = {
+  name: "topic",
+  fields: [{ kind: "scalar", name: "color", type: "string" }],
+  search: [],
+};
+
+const topicText: TableDef = {
+  name: "topic_text",
+  fields: [
+    { kind: "one", name: "topic_id", target: "topic" },
+    { kind: "scalar", name: "locale", type: "string" },
+    { kind: "scalar", name: "label", type: "string" },
+  ],
+  search: [{ table: "topic_text", field: "label" }],
+};
+
+// ...and records that link to it, searched through the link.
+const perLanguage = { key: "topic_id", locale: "locale" };
+const sticker: TableDef = {
+  name: "sticker",
+  fields: [
+    { kind: "scalar", name: "title", type: "string" },
+    { kind: "one", name: "topic", target: "topic" },
+  ],
+  search: [{ table: "topic_text", field: "label", via: "topic", perLanguage }],
+};
+const album: TableDef = {
+  name: "album",
+  fields: [
+    { kind: "scalar", name: "title", type: "string" },
+    { kind: "many", name: "topics", target: "topic" },
+  ],
+  search: [{ table: "topic_text", field: "label", via: "topics", perLanguage }],
+};
+
+const ALL = [
+  author,
+  category,
+  post,
+  settings,
+  topic,
+  topicText,
+  sticker,
+  album,
+];
 
 let tick = 0;
 const stamp = () => {
@@ -249,19 +298,288 @@ export const describeAdapter = (
         expect(categories.map((c) => c.name)).toEqual(["C2", "C1"]);
       });
 
-      it("leaves a dangling link as its raw id when populating", async () => {
+      it("handles a link whose target was deleted", async () => {
         const a = await db.insert(author, { name: "Gone", ...meta() });
         const row = await mkPost({ author: a.id });
         await db.remove(author, a.id);
 
         const found = await db.find(post, row.id, { populate: ["author"] });
-        expect(found?.author).toBe(a.id);
+        // With referential integrity the database clears the link; without it the link stays
+        // as the raw id, which is how callers tell a dangling link from a resolved one.
+        expect(found?.author).toBe(
+          db.capabilities.referentialIntegrity ? null : a.id,
+        );
+      });
+
+      it("rejects a write that links to a row that does not exist (referential integrity only)", async () => {
+        if (!db.capabilities.referentialIntegrity) return;
+
+        await expect(mkPost({ author: "nobody" })).rejects.toBeInstanceOf(
+          LinkTargetMissingError,
+        );
+        await expect(mkPost({ categories: ["nobody"] })).rejects.toBeInstanceOf(
+          LinkTargetMissingError,
+        );
+
+        const row = await mkPost();
+        await expect(
+          db.update(post, row.id, { author: "nobody" }),
+        ).rejects.toBeInstanceOf(LinkTargetMissingError);
+        // The failed write left the row as it was.
+        expect((await db.find(post, row.id))?.author ?? null).toBeNull();
+      });
+
+      it("drops a deleted target from a many link and keeps the order of the rest (referential integrity only)", async () => {
+        if (!db.capabilities.referentialIntegrity) return;
+
+        const c1 = await db.insert(category, { name: "C1", ...meta() });
+        const c2 = await db.insert(category, { name: "C2", ...meta() });
+        const c3 = await db.insert(category, { name: "C3", ...meta() });
+        const row = await mkPost({ categories: [c3.id, c2.id, c1.id] });
+
+        await db.remove(category, c2.id);
+
+        expect((await db.find(post, row.id))?.categories).toEqual([
+          c3.id,
+          c1.id,
+        ]);
+      });
+
+      it("syncing again with the same tables changes nothing (referential integrity only)", async () => {
+        if (!db.capabilities.referentialIntegrity) return;
+
+        const a = await db.insert(author, { name: "Ann", ...meta() });
+        const row = await mkPost({ author: a.id });
+
+        await db.sync(ALL);
+
+        expect((await db.find(post, row.id))?.author).toBe(a.id);
+        await expect(mkPost({ author: "nobody" })).rejects.toBeInstanceOf(
+          LinkTargetMissingError,
+        );
       });
 
       it("ignores populate names that are not relation fields", async () => {
         const row = await mkPost();
         const found = await db.find(post, row.id, { populate: ["title"] });
         expect(found?.title).toBe("Hello");
+      });
+    });
+
+    describe("search through a table of languages", () => {
+      const seed = async () => {
+        const coffee = await db.insert(topic, { color: "brown", ...meta() });
+        const tea = await db.insert(topic, { color: "green", ...meta() });
+        for (const [row, locale, label] of [
+          [coffee, "id", "kopi"],
+          [coffee, "en", "coffee"],
+          [tea, "id", "teh"],
+          [tea, "en", "tea"],
+        ] as const) {
+          await db.insert(
+            topicText,
+            { topic_id: row.id, locale, label, ...meta() },
+            { id: `${row.id}.${locale}` },
+          );
+        }
+        const one = await db.insert(sticker, {
+          title: "S-coffee",
+          topic: coffee.id,
+          ...meta(),
+        });
+        await db.insert(sticker, { title: "S-tea", topic: tea.id, ...meta() });
+        const many = await db.insert(album, {
+          title: "A-both",
+          topics: [tea.id, coffee.id],
+          ...meta(),
+        });
+        await db.insert(album, { title: "A-tea", topics: [tea.id], ...meta() });
+        return { one, many };
+      };
+
+      const found = async (
+        table: TableDef,
+        search: string,
+        searchLocale?: string,
+      ) =>
+        (
+          await db.list(table, {
+            search,
+            searchLocale,
+            page: 1,
+            limit: 10,
+            populate: [],
+          })
+        ).rows.map((r) => r.title);
+
+      it("matches the text of any language when none is given", async () => {
+        await seed();
+
+        expect(await found(sticker, "kopi")).toEqual(["S-coffee"]);
+        expect(await found(sticker, "coffee")).toEqual(["S-coffee"]);
+        expect(await found(album, "coffee")).toEqual(["A-both"]);
+        expect((await found(album, "teh")).sort()).toEqual(["A-both", "A-tea"]);
+      });
+
+      it("matches one language only when one is given", async () => {
+        await seed();
+
+        expect(await found(sticker, "coffee", "en")).toEqual(["S-coffee"]);
+        expect(await found(sticker, "coffee", "id")).toEqual([]);
+        expect(await found(sticker, "kopi", "id")).toEqual(["S-coffee"]);
+        expect(await found(album, "coffee", "id")).toEqual([]);
+        expect(await found(album, "coffee", "en")).toEqual(["A-both"]);
+      });
+
+      it("matches nothing when the linked record has no text", async () => {
+        await seed();
+        const bare = await db.insert(topic, { color: "red", ...meta() });
+        await db.insert(sticker, {
+          title: "S-bare",
+          topic: bare.id,
+          ...meta(),
+        });
+
+        expect(await found(sticker, "bare")).toEqual([]);
+      });
+    });
+
+    describe("transaction", () => {
+      it("keeps what the callback wrote and returns its result", async () => {
+        const result = await db.transaction(async (tx) => {
+          const a = await tx.insert(author, { name: "Ann", ...meta() });
+          await tx.insert(post, {
+            title: "In tx",
+            tags: ["x", "y"],
+            author: a.id,
+            ...meta(),
+          });
+          return a.id;
+        });
+
+        expect(typeof result).toBe("string");
+        expect((await db.find(author, result))?.name).toBe("Ann");
+        const { rows } = await db.list(post, {
+          where: [{ field: "title", op: "$eq", value: "In tx" }],
+          page: 1,
+          limit: 10,
+          populate: [],
+        });
+        expect(rows).toHaveLength(1);
+        expect(rows[0]?.tags).toEqual(["x", "y"]);
+      });
+
+      it("undoes every write, children and links included, when the callback throws", async () => {
+        const c = await db.insert(category, { name: "C", ...meta() });
+        const keep = await mkPost({ title: "Keep", tags: ["k"] });
+
+        await expect(
+          db.transaction(async (tx) => {
+            await tx.insert(author, { name: "Ghost", ...meta() }, { id: "g1" });
+            await tx.insert(
+              post,
+              {
+                title: "Doomed",
+                tags: ["a", "b"],
+                categories: [c.id],
+                ...meta(),
+              },
+              { id: "doomed" },
+            );
+            await tx.update(post, keep.id, { title: "Changed", tags: ["z"] });
+            await tx.remove(category, c.id);
+            throw new Error("boom");
+          }),
+        ).rejects.toThrow("boom");
+
+        expect(await db.find(author, "g1")).toBeNull();
+        expect(await db.find(post, "doomed")).toBeNull();
+        expect(await db.find(category, c.id)).not.toBeNull();
+        const kept = await db.find(post, keep.id);
+        expect(kept?.title).toBe("Keep");
+        expect(kept?.tags).toEqual(["k"]);
+        expect(await db.count(post)).toBe(1);
+      });
+
+      it("undoes the earlier writes when a later one fails", async () => {
+        await expect(
+          db.transaction(async (tx) => {
+            await tx.insert(author, { name: "Early", ...meta() }, { id: "e1" });
+            await tx.insert(post, { title: "A", ...meta() }, { id: "dup" });
+            await tx.insert(post, { title: "B", ...meta() }, { id: "dup" });
+          }),
+        ).rejects.toThrow();
+
+        expect(await db.find(author, "e1")).toBeNull();
+        expect(await db.find(post, "dup")).toBeNull();
+      });
+
+      it("lets the callback read its own writes", async () => {
+        await db.transaction(async (tx) => {
+          const row = await tx.insert(post, {
+            title: "Mine",
+            tags: ["t"],
+            ...meta(),
+          });
+
+          expect((await tx.find(post, row.id))?.title).toBe("Mine");
+          expect(await tx.count(post)).toBe(1);
+          const { rows } = await tx.list(post, {
+            page: 1,
+            limit: 10,
+            populate: [],
+          });
+          expect(rows.map((r) => r.id)).toEqual([row.id]);
+
+          await tx.update(post, row.id, { title: "Mine 2" });
+          expect((await tx.find(post, row.id))?.title).toBe("Mine 2");
+          await tx.remove(post, row.id);
+          expect(await tx.find(post, row.id)).toBeNull();
+        });
+
+        expect(await db.count(post)).toBe(0);
+      });
+
+      it("runs a nested transaction inside the same one", async () => {
+        await db.transaction(async (tx) => {
+          await tx.insert(author, { name: "Outer", ...meta() }, { id: "o" });
+          await tx.transaction(async (inner) => {
+            await inner.insert(
+              author,
+              { name: "Inner", ...meta() },
+              { id: "i" },
+            );
+            expect((await inner.find(author, "o"))?.name).toBe("Outer");
+          });
+        });
+        expect(await db.find(author, "i")).not.toBeNull();
+
+        // An error after the nested one finished still undoes the nested writes.
+        await expect(
+          db.transaction(async (tx) => {
+            await tx.transaction(async (inner) => {
+              await inner.insert(author, { name: "N", ...meta() }, { id: "n" });
+            });
+            throw new Error("late");
+          }),
+        ).rejects.toThrow("late");
+        expect(await db.find(author, "n")).toBeNull();
+      });
+
+      it("is usable again after a rolled-back transaction", async () => {
+        await expect(
+          db.transaction(async (tx) => {
+            await tx.insert(author, { name: "X", ...meta() }, { id: "x" });
+            throw new Error("nope");
+          }),
+        ).rejects.toThrow("nope");
+
+        await db.transaction((tx) =>
+          tx.insert(author, { name: "Y", ...meta() }, { id: "y" }),
+        );
+
+        expect(await db.find(author, "x")).toBeNull();
+        expect((await db.find(author, "y"))?.name).toBe("Y");
       });
     });
 

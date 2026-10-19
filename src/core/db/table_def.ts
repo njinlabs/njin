@@ -11,6 +11,7 @@ type Meta = {
   renderAs?: string;
   model?: string;
   unique?: boolean;
+  localized?: boolean;
 };
 
 type AnyZod = any;
@@ -145,12 +146,27 @@ const shapeOf = (schema: AnyZod): Shape => {
   }
 };
 
-export const fieldsFromSchema = (schema: z.ZodObject): FieldDef[] =>
+// The njin metadata of a field (its label, renderAs, unique, localized...), wherever in the
+// Zod wrappers it was attached.
+export const fieldMeta = (schema: AnyZod): Record<string, unknown> => {
+  const tagged = find(schema, (layer) => Boolean(metaOf(layer)?.renderAs));
+  return (tagged ? metaOf(tagged) : undefined) ?? {};
+};
+
+// `unique: false` leaves the unique flag off every field (a table whose uniqueness is enforced
+// some other way).
+export const fieldsFromSchema = (
+  schema: z.ZodObject,
+  options: { unique?: boolean } = {},
+): FieldDef[] =>
   Object.entries(schema.shape as Record<string, AnyZod>).map(
     ([name, value]) => {
       const shape = shapeOf(value);
       const tagged = find(value, (layer) => Boolean(metaOf(layer)?.renderAs));
-      const unique = tagged ? metaOf(tagged)?.unique === true : false;
+      const unique =
+        options.unique !== false && tagged
+          ? metaOf(tagged)?.unique === true
+          : false;
 
       return (
         shape.kind === "scalar" && unique

@@ -80,6 +80,7 @@ export const mysqlDialect = (mariadb: boolean): Dialect => {
     deleteReturning: mariadb,
     rowLock: sql`for update`,
     indexIfNotExists: false,
+    foreignKeys: "alter",
 
     // A named lock held by this connection; the migration's transaction keeps its connection
     // for the whole migration (DDL commits the transaction but not the connection).
@@ -99,6 +100,25 @@ export const mysqlDialect = (mariadb: boolean): Dialect => {
         sql`select table_name as "t", column_name as "c", data_type as "d" from information_schema.columns where table_schema = ${schemaOf(schema)}`,
       );
       return new Map(rows.map((r) => [`${r.t}.${r.c}`, String(r.d)]));
+    },
+
+    async foreignKeyNames(x, schema) {
+      const rows = await run(
+        x,
+        sql`select table_name as "t", constraint_name as "c" from information_schema.table_constraints where constraint_type = 'FOREIGN KEY' and table_schema = ${schemaOf(schema)}`,
+      );
+      return new Set(rows.map((r) => `${r.t}.${r.c}`));
+    },
+
+    // With the check switched off MySQL adds the constraint without validating existing rows.
+    // The setting belongs to the connection, which the migration holds for its whole run.
+    async addUncheckedForeignKey(x, statement) {
+      await run(x, sql`set foreign_key_checks = 0`);
+      try {
+        await run(x, statement);
+      } finally {
+        await run(x, sql`set foreign_key_checks = 1`);
+      }
     },
 
     async indexes(x, schema) {

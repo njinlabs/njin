@@ -92,6 +92,100 @@ This automatically generates:
 | `DELETE` | `/api/post/:id` | Delete |
 | `GET` | `/api/schema` | Full schema for admin panel |
 
+### Draft & publish
+
+Add `draftable: true` to `makeModel` and each record gets a `status` and `publishedAt`. Editing a published record never takes it offline: edits go to the *working copy*, and the live copy only changes when you publish.
+
+```ts
+const post = makeModel("post", {
+  name: "Post",
+  draftable: true,
+  searchFields: ["title"],
+  schema: z.object({ title: text({ label: "Title" }) }),
+});
+
+await post.read();             // working copies — everything, newest edits (what the admin panel shows)
+await post.published.read();   // what is live; same options as read()
+await post.published.show(id);
+await post.publish(id);        // working copy → live
+await post.unpublish(id);      // takes it offline, keeps the working copy as a draft
+await post.discard(id);        // drops unpublished edits (working copy ← live)
+```
+
+`status` is `draft` (never published, or unpublished), `published`, or `changed` (published, with edits that are not live yet). It is filterable like any field: `post.read({ filters: { status: "changed" } })`. Nothing is filtered for you — pick `read()` or `published.read()` where you query.
+
+The live copies are kept in a second table, `_published_<prefix>`, created automatically with the same fields. `publish`, `unpublish` and `discard` each run as one database transaction, so a failure halfway leaves both tables as they were, and the `after*` hooks only fire once it has committed. Turning `draftable` on for a model that already has records publishes them once at boot, so the site does not go empty. `afterPublish(model, fn)` and `afterUnpublish(model, fn)` hooks exist for things like purging static pages. Over the API: `POST /api/{prefix}/:id/publish`, `/unpublish` and `/discard`; over MCP: `publish_record`, `unpublish_record`, `discard_changes`.
+
+### Languages (i18n)
+
+> Combined with `draftable: true` (below) every language of a record is drafted and published on its own.
+
+Declare the languages in `config.ts`, then mark a model with `i18n: true` and the fields that differ per language with `localized: true`:
+
+```ts
+// config.ts
+export default defineConfig({
+  i18n: { locales: ["id", "en"], defaultLocale: "id" },
+});
+
+// src/models/article.ts
+const article = makeModel("article", {
+  name: "Article",
+  i18n: true,
+  searchFields: ["title"],
+  schema: z.object({
+    slug: text({ label: "Slug", unique: true, localized: true }), // unique per language
+    title: text({ label: "Title", localized: true }),
+    views: numeric({ label: "Views" }).optional(),                // the same in every language
+    author: relation({ label: "Author" }, user),                  // the same in every language
+    faq: array({ label: "FAQ", localized: true }, z.string()).optional(), // per language: any field can be
+    labels: array({ label: "Labels" }, z.string()).optional(),    // ...or shared, like this one (the default)
+  }),
+});
+```
+
+Writes take a localized field as an object keyed by language; a language you leave out is untouched, `null` clears an optional field:
+
+```ts
+await article.create({
+  slug: { id: "tentang", en: "about" },
+  title: { id: "Tentang kami", en: "About us" },
+  views: 0,
+});
+await article.update(id, { title: { en: "About" } });   // only the English title changes
+await article.removeLocale(id, "en");                   // the last language cannot be removed
+```
+
+Reading is where the language is chosen:
+
+```ts
+await article.read({ locale: "en", filters: { slug: "about" } }); // flat records of one language; `id` is the record's id
+await article.show(id, { locale: "en" });
+await article.read();                                             // every language: title is { id: "...", en: "..." }
+```
+
+With a `locale`, filters, sorting, search and pagination work on every field — the language's own and the shared ones alike. A field the language has no value for is filled from the default locale (`fallback: false` turns that off), and only the records that have that language are listed. Without a locale, a condition on a localized field is answered across all languages and a record that matches in several is listed once (so a page can hold fewer than `limit` records).
+
+Every field — an array or an object included — is shared unless it says `localized: true`; an `object()` is changed key by key (`seo: { description: "x" }` leaves `seo.title` alone, `null` clears it), inside one language when it is localized and in every language when it is shared, and a localized object with nothing set falls back to the default language as a whole; a localized array is written like the other localized fields (`faq: { id: [...], en: [...] }`), a shared one as usual (`labels: [...]`). Behind the scenes the model is two tables: `article` holds what is shared and is what other models link to, and `article__i18n` has one row per record and language (`<id>.<locale>`) with the localized fields plus a copy of the shared ones (shared arrays included), which the writes keep in step. Deleting a record deletes its languages. **Decide on languages when you create the model.** Turning `i18n: true` (or `localized: true` on a field) on for a model or settings group that already holds data is not supported yet: the existing records have no language rows, so they do not show up in `read({ locale })`, and a saved plain value in a field that became localized is not read as one. There is no migration for it. **Links.** A `relation()` / `relationMany()` takes on the language of the model it points at, and is never `localized` itself. Pointing at a model without `i18n`, it is the same record in every language. Pointing at one with `i18n`, a record read in `locale: "en"` has the related record *in English* (its default-language row when it has no English one, unless `fallback: false`) — and in the default language when no locale is given. This holds for any model that reads the relation, i18n or not: `post.read({ locale: "en" })`, `post.show(id, { locale })`. A `file()` / `multiFile()` is the other case: it can differ per language (`cover: file({ label: "Cover", localized: true })`, written as `cover: { id: fileId, en: otherFileId }`; an empty language falls back to the default language's file). `select: ["category.name"]` and `searchFields: ["category.name"]` reach a localized field of the related model as well: the projection is taken from the related record in the language being read, and a search matches that language's text — or the text of every language when no `locale` is given. Links to a model with drafts are read from its working copy. Over the API: `GET /api/{prefix}?locale=en`, `GET /api/{prefix}/:id?locale=en` and `DELETE /api/{prefix}/:id/locale/:locale`; over MCP: the `locale` argument of `read_records` / `get_record` and `remove_locale`.
+
+#### Draft & publish per language
+
+```ts
+const article = makeModel("article", { i18n: true, draftable: true, /* ... */ });
+
+article.create({ title: { id: "Tentang", en: "About" }, /* ... */ });  // every language starts as a draft
+await article.publish(id, { locale: "en" });      // only English goes live (a list, or nothing for every language)
+await article.update(id, { title: { en: "About us" } });   // English is now "changed"; what is live stays
+await article.unpublish(id, { locale: "en" });
+await article.discard(id, { locale: "en" });      // drops that language's unpublished localized edits
+
+await article.published.read({ locale: "en", filters: { slug: "about" } }); // what is live, one language at a time
+await article.read({ locale: "en", filters: { status: "changed" } });       // the working copies of a language
+(await article.show(id)).status;                  // { id: "draft", en: "published" } — one status per language
+```
+
+A language has its own status (`draft` / `published` / `changed`) and its own live copy, in `_published_<prefix>__i18n` (one row per record and language). A change to a field shared by every language marks each language that is live as `changed`, and goes live with the next publish; publishing one language also brings the shared fields of the other live languages level, so a language that only differed in those is `published` again. `published.read()` needs a `locale`, and a missing value falls back to the default language's *live* copy. Deleting a record, or one language of it, takes its live copy with it. Over the API: `POST /api/{prefix}/:id/publish?locale=en,id` (likewise `unpublish`, `discard`); over MCP: the `locale` argument of `publish_record`, `unpublish_record` and `discard_changes`.
+
 ## Vars — user-editable settings
 
 `vars` groups are singleton settings objects (site name, SEO meta, feature toggles, ...) meant to be edited later through an admin panel — unlike a model, there's no list of records, just one object per group.
@@ -140,6 +234,34 @@ This automatically generates:
 @let(settings = await general.get())
 <title>{{ settings.siteName }}</title>
 ```
+
+### Languages and drafts for vars
+
+A group takes the same two options as a model. `i18n: true` keeps the fields marked `localized: true` once per language (`config.i18n`); `draftable: true` keeps a live copy apart from the working copy:
+
+```ts
+const site = makeVars("site", {
+  name: "Site",
+  i18n: true,
+  draftable: true,
+  schema: z.object({
+    tagline: text({ label: "Tagline", localized: true }, (z) => z.default("Selamat datang")),
+    phone: text({ label: "Phone" }, (z) => z.default("")),     // the same in every language
+  }),
+});
+
+await site.update({ tagline: { en: "Welcome" } });   // only English changes; a language you leave out is untouched, null clears it
+await site.get();                                    // working copy, every language: tagline is { id: "...", en: "..." }
+await site.get({ locale: "en" });                    // one language, flat (a missing value falls back to the default language)
+
+await site.publish({ locale: "en" });                // English goes live (a list, or nothing for every language)
+await site.published.get({ locale: "en" });          // what is live — use this in public templates
+await site.unpublish({ locale: "en" });
+await site.discard({ locale: "en" });                // that language's unpublished localized edits are dropped
+(await site.get()).status;                           // { id: "draft", en: "published" }; a plain string without i18n
+```
+
+A localized field is stored as a `{ locale: value }` map inside the group's one document (a group is only read and written as a whole, so no translation table is needed). `status` is `draft`, `published` or `changed`, worked out by comparing the working copy with the live one: editing a field shared by every language marks each live language `changed`, and publishing one language puts the shared fields live for all of them. The values a language really has are what get published — an empty language stays empty live and falls back to the default language's *live* value. Not-yet-published groups read as their `.default()`s on `published.get()`; turning `draftable` on for a group that already has saved values publishes them once at boot. A localized field can be a file or a list of files, not a relation. Over the API: `GET /api/vars/{name}?locale=en`, `GET /api/vars/{name}/published?locale=en`, `POST /api/vars/{name}/publish?locale=en,id` (likewise `unpublish`, `discard`); over MCP: the `locale` and `published` arguments of `get_vars`, and `publish_vars` / `unpublish_vars` / `discard_vars`. Hooks: `afterVarsPublish`, `afterVarsUnpublish`.
 
 ## Helpers — custom template functions
 
@@ -568,13 +690,14 @@ Tables are created and migrated automatically on boot, and the data is stored as
 | --- | --- |
 | `text`, `richtext`, `email`, `select` | `text` column |
 | `numeric` / `boolean` / `date` | `double precision` / `boolean` / `timestamptz` column |
-| `relation()` / `file()` | a `text` column holding the target id (indexed, no foreign key) |
+| `relation()` / `file()` | a `text` column holding the target id, indexed, with a foreign key (`ON DELETE SET NULL`) |
 | `object()` | its fields flattened into columns on the same table (`seo__title`) |
-| `array()` | a child table `post__tags (_id, _owner, _parent, _pos, value ...)`, one row per element |
-| `relationMany()` / `multiFile()` | a pivot table `post__categories (_parent, _pos, target)` |
+| `array()` | a child table `post__tags (_id, _owner, _parent, _pos, value ...)`, one row per element (`_owner` is a foreign key, `ON DELETE CASCADE`) |
+| `relationMany()` / `multiFile()` | a pivot table `post__categories (_parent, _pos, target)`, both ends foreign keys with `ON DELETE CASCADE` |
 | `z.any()`, `z.record()` and other shapeless types | the only `jsonb` columns |
 
 - **Migrations only add.** A new field becomes a new column or table; nothing is ever dropped or retyped, so removing a field leaves its column (and data) in place. The applied layout is recorded in `njin_schema_meta`, so a warm boot skips all DDL.
+- **Links are foreign keys.** A `relation()` / `file()` can only hold the id of a record that exists (otherwise the write fails, and the API answers `422`); deleting a record sets the links that point at it to `null`, and removes it from `relationMany()` lists. Deleting a record deletes its array and pivot rows. When a database that predates this has rows linking to records that are gone, the migration still succeeds: on Postgres the constraint is added `NOT VALID` (enforced for new writes, old rows left alone), on MySQL / MariaDB it is added with the check switched off, and a warning names the link so you can clean it up.
 - **Ids** are UUIDv7 strings; datetimes are `timestamptz` and still come out as ISO-8601 strings.
 - **Search** uses the `pg_trgm` extension (substring match plus typo-tolerant ranking) when the database lets it be created, and falls back to the portable search described below otherwise.
 - Filters, sorting and search work on top-level fields; an element of an `array()` or `relationMany()` can be matched with `$in`.
@@ -594,7 +717,7 @@ adapters: {
 
 One file and no server — a good fit for a small site. It runs on `bun:sqlite` (built into Bun, so nothing to install and nothing to ship next to a compiled binary). `path: ":memory:"` gives a database that lives as long as the process. Several njin processes can share one file: writes take turns (`busyTimeout`, 5 s by default, is how long one waits for another), and the file is kept in WAL mode so readers never block the writer.
 
-The layout, ids, migrations and filter/sort behaviour are the same as on Postgres (everything above applies); only the column types differ: `text` / `real` / `integer` (booleans are 0/1), and datetimes and JSON are stored as text (datetimes as UTC ISO-8601, which sorts correctly). Search is the portable fuzzy search (below); SQLite folds case for ASCII letters only, so `É` and `é` count as different letters there.
+The layout, ids, migrations, foreign keys and filter/sort behaviour are the same as on Postgres (everything above applies, with one limit: SQLite cannot add a constraint to a table that already exists, so a table created before foreign keys existed keeps working without them — only tables created from now on have them); only the column types differ: `text` / `real` / `integer` (booleans are 0/1), and datetimes and JSON are stored as text (datetimes as UTC ISO-8601, which sorts correctly). Search is the portable fuzzy search (below); SQLite folds case for ASCII letters only, so `É` and `é` count as different letters there.
 
 #### MySQL and MariaDB
 

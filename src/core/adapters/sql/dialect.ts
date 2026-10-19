@@ -65,6 +65,18 @@ export type Dialect = {
   lock(tx: SqlClient, name: string): Promise<() => Promise<void>>;
   // Every column of every table in the schema: "table.column" -> the type the database reports.
   columns(x: SqlClient, schema?: string): Promise<Map<string, string>>;
+  // How foreign keys get into the schema. "alter": ADD CONSTRAINT once every table exists
+  // (Postgres, MySQL — a table must exist before it can be referenced). "inline": inside
+  // CREATE TABLE (SQLite cannot add a constraint to a table that already exists, so a table
+  // created before foreign keys existed stays without them).
+  readonly foreignKeys: "alter" | "inline";
+  // Every foreign key constraint, as "table.constraint". Needed for "alter" so a migration
+  // can be repeated.
+  foreignKeyNames?(x: SqlClient, schema?: string): Promise<Set<string>>;
+  // Adds a constraint without checking the rows already there — the fallback when existing
+  // data links to rows that are gone (the constraint then only guards new writes). Absent: the
+  // constraint is skipped with a warning.
+  addUncheckedForeignKey?(x: SqlClient, statement: SQL): Promise<void>;
   // Every index name, as "table.index". Only needed when !indexIfNotExists.
   indexes?(x: SqlClient, schema?: string): Promise<Set<string>>;
   // Gives the JSON column of a free-form document table a default of {}, where the database

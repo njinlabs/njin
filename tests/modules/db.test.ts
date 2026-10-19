@@ -34,7 +34,15 @@ mock.module("../../src/models/file", () => ({
   default: { def: { name: "file", fields: [], search: [] } },
 }));
 
-let extraModels: (() => Promise<{ default: { def: TableDef } }>)[] = [];
+let extraVars: (() => Promise<{ default: object }>)[] = [];
+let extraModels: (() => Promise<{
+  default: {
+    def: TableDef;
+    publishedDef?: TableDef;
+    i18nDef?: TableDef;
+    backfillPublished?: () => Promise<number>;
+  };
+}>)[] = [];
 
 // Spreads the real module's other exports (loadConfig, defineConfig, ...) — without
 // --isolate, mock.module() replaces the module in a registry shared across the whole
@@ -42,7 +50,11 @@ let extraModels: (() => Promise<{ default: { def: TableDef } }>)[] = [];
 // from this same specifier.
 mock.module("../../src/core/config", () => ({
   ...realConfig,
-  getConfig: () => ({ adapters: { db: fakeAdapter }, models: extraModels }),
+  getConfig: () => ({
+    adapters: { db: fakeAdapter },
+    models: extraModels,
+    vars: extraVars,
+  }),
 }));
 
 const { default: db } = await import("../../src/modules/db");
@@ -74,6 +86,77 @@ describe("db module", () => {
     for (const table of internalTables) expect(names).toContain(table.name);
     for (const name of ["user", "file", "post"]) expect(names).toContain(name);
     expect(new Set(names).size).toBe(names.length);
+  });
+
+  it("syncs a draftable model's published table and backfills it after the sync", async () => {
+    const order: string[] = [];
+    extraModels = [
+      async () => ({
+        default: {
+          def: { name: "article", fields: [], search: [] },
+          publishedDef: { name: "_published_article", fields: [], search: [] },
+          backfillPublished: async () => {
+            order.push(`backfill:${calls.join(",")}`);
+            return 0;
+          },
+        },
+      }),
+    ];
+    const result = await db.init();
+    calls.length = 0;
+
+    await result.spin!();
+
+    const names = synced.map((t) => t.name);
+    expect(names).toContain("article");
+    expect(names).toContain("_published_article");
+    // Backfill needs the tables to exist, so it runs only once sync() has finished.
+    expect(order).toEqual(["backfill:sync"]);
+  });
+
+  it("syncs an i18n model's translation table", async () => {
+    extraModels = [
+      async () => ({
+        default: {
+          def: { name: "page", fields: [], search: [] },
+          i18nDef: { name: "page__i18n", fields: [], search: [] },
+        },
+      }),
+    ];
+    const result = await db.init();
+
+    await result.spin!();
+
+    const names = synced.map((t) => t.name);
+    expect(names).toContain("page");
+    expect(names).toContain("page__i18n");
+  });
+
+  it("backfills a draftable settings group after the sync, and leaves the others alone", async () => {
+    const seen: string[] = [];
+    extraVars = [
+      async () => ({
+        default: {
+          prefix: "site",
+          publish: async () => {},
+          published: {},
+          discard: async () => {},
+          backfillPublished: async () => {
+            seen.push(`backfill:${calls.join(",")}`);
+            return 0;
+          },
+        },
+      }),
+      async () => ({ default: { prefix: "plain" } }),
+    ];
+    const result = await db.init();
+    calls.length = 0;
+
+    await result.spin!();
+
+    // the tables must exist first
+    expect(seen).toEqual(["backfill:sync"]);
+    extraVars = [];
   });
 
   it("lets a model override an internal table of the same name instead of defining it twice", async () => {

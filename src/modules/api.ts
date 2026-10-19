@@ -2,8 +2,9 @@ import Elysia from "elysia";
 import z from "zod";
 import { toAdminSchema } from "../core/admin_schema";
 import { getConfig } from "../core/config";
-import { filtersQuerySchema } from "../core/model";
+import { filtersQuerySchema, isDraftable, isI18n } from "../core/model";
 import { makeModule } from "../core/module";
+import { isDraftableVars, isI18nVars } from "../core/vars";
 import auth from "./auth";
 import elysia from "./elysia";
 
@@ -39,6 +40,8 @@ const api = makeModule(() => {
                 return {
                   name: data.name,
                   prefix: data.prefix,
+                  draftable: isDraftable(data),
+                  i18n: isI18n(data),
                   schema: toAdminSchema(data.validation),
                 };
               })(),
@@ -53,13 +56,20 @@ const api = makeModule(() => {
                 return {
                   name: group.name,
                   prefix: group.prefix,
+                  draftable: isDraftableVars(group),
+                  i18n: isI18nVars(group),
                   schema: toAdminSchema(group.validation),
                 };
               })(),
             ),
           );
 
-          return { data: allModels, vars: allVars };
+          return {
+            data: allModels,
+            vars: allVars,
+            // The languages of the site, for models with `i18n: true`; null when not configured.
+            i18n: getConfig().i18n ?? null,
+          };
         },
         {
           auth: true,
@@ -91,8 +101,11 @@ const api = makeModule(() => {
         )
         .get(
           "/:id",
-          async ({ params }) => {
-            const data = await model.show(params.id);
+          async ({ params, query }) => {
+            const data = await model.show(params.id, {
+              locale: query.locale,
+              fallback: query.fallback !== "false",
+            });
 
             return {
               data,
@@ -101,6 +114,12 @@ const api = makeModule(() => {
           {
             params: z.object({
               id: z.coerce.string(),
+            }),
+            // One language: flat records for a model with `i18n: true`, and the language of
+            // the related i18n records for any other.
+            query: z.object({
+              locale: z.coerce.string().optional(),
+              fallback: z.enum(["true", "false"]).optional(),
             }),
             auth: true,
           },
@@ -148,6 +167,8 @@ const api = makeModule(() => {
               populate,
               select,
               filters,
+              locale,
+              fallback,
             },
           }) => {
             const populateOpt =
@@ -164,7 +185,7 @@ const api = makeModule(() => {
                   .filter(Boolean)
               : undefined;
 
-            return model.read({
+            const options = {
               search,
               page,
               limit,
@@ -173,6 +194,14 @@ const api = makeModule(() => {
               populate: populateOpt,
               select: selectOpt,
               filters,
+            };
+
+            // `locale` is a model's own language when it has i18n, and the language of the
+            // related records of other i18n models otherwise.
+            return model.read({
+              ...options,
+              locale,
+              fallback: fallback !== "false",
             });
           },
           {
@@ -186,9 +215,56 @@ const api = makeModule(() => {
               populate: z.coerce.string().optional(),
               select: z.coerce.string().max(1000).optional(),
               filters: filtersQuerySchema.optional(),
+              // See the single-record route above.
+              locale: z.coerce.string().optional(),
+              fallback: z.enum(["true", "false"]).optional(),
             }),
           },
         );
+
+      // i18n models: take one language of a record away.
+      if (isI18n(model)) {
+        controller.delete(
+          "/:id/locale/:locale",
+          async ({ params }) => ({
+            data: await model.removeLocale(params.id, params.locale),
+          }),
+          {
+            params: z.object({
+              id: z.coerce.string(),
+              locale: z.coerce.string(),
+            }),
+            auth: true,
+          },
+        );
+      }
+
+      // Draftable models: edits only touch the working copy, these move it to / from live.
+      if (isDraftable(model)) {
+        for (const action of ["publish", "unpublish", "discard"] as const) {
+          controller.post(
+            `/:id/${action}`,
+            async ({ params, query }) => {
+              // i18n models: `?locale=en` or `?locale=en,id`; nothing means every language.
+              const locale = query.locale
+                ?.split(",")
+                .map((code) => code.trim())
+                .filter(Boolean);
+              return {
+                data: await model[action](
+                  params.id,
+                  locale?.length ? { locale } : undefined,
+                ),
+              };
+            },
+            {
+              params: z.object({ id: z.coerce.string() }),
+              query: z.object({ locale: z.coerce.string().optional() }),
+              auth: true,
+            },
+          );
+        }
+      }
 
       elysia().use(controller);
     }
