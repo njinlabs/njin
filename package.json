@@ -48,6 +48,7 @@
     "./banner": "./src/core/banner.ts",
     "./worker": "./src/core/worker.ts",
     "./static": "./src/core/static_cache.ts",
+    "./testing": "./src/core/testing.ts",
     "./logger": "./src/modules/logger.ts",
     "./adapters/*": "./src/core/adapters/*.ts"
   },

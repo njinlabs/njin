@@ -34,7 +34,9 @@ type ViteGlobal = {
 };
 
 export const buildViteGlobal = async (): Promise<ViteGlobal> => {
-  if (isDev) {
+  // createTestApp() (core/testing.ts) sets NJIN_TEST: no dev server in a test run — the pages
+  // still render live, only the asset tags fall back to the built manifest (or a comment).
+  if (isDev && process.env.NJIN_TEST !== "1") {
     const { createServer } = await import("vite");
     const server = await createServer();
     await server.listen();

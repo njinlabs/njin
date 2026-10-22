@@ -5,7 +5,8 @@
   "scripts": {
     "dev": "njin dev",
     "build": "njin build",
-    "start": "njin start"
+    "start": "njin start",
+    "test": "bun test --isolate"
   },
   "dependencies": {
     "zod": "^4.4.3",

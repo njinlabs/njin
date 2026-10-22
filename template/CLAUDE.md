@@ -718,6 +718,32 @@ For S3 (or R2/Spaces/MinIO), use `s3Adapter` from `"@njinlabs/njin/adapters/s3"`
 
 ---
 
+## Testing
+
+`@njinlabs/njin/testing` boots your real app (every module, plus your models, hooks, events, routes and vars) on an in-memory SQLite database and lets a test call it without opening a port:
+
+```ts
+import { afterAll, expect, it } from "bun:test";
+import { createTestApp } from "@njinlabs/njin/testing";
+import config from "../config";
+import post from "../src/models/post";
+
+const app = await createTestApp(config);
+afterAll(() => app.close());
+
+it("lists posts for a signed-in user", async () => {
+  await app.seed(post, { title: "Hello" });
+  const res = await app.get("/api/post", { as: await app.createUser() });
+  expect(res.status).toBe(200);
+});
+```
+
+- `app.get/post/put/patch/delete(path, { body, query, headers, as })`: `as` is a user (a session token is minted for it) or a bearer token; a body is sent as JSON.
+- `app.seed(model, data)` creates a record through the model, so validation and hooks run as in production. `app.createUser()` makes a user; `app.tokenFor(user)` gives its token.
+- `app.reset()` empties every table between tests; `app.db` is the adapter, for assertions HTTP can't express.
+- Pass `adapters: { db }` in the config to test on another database. The logger is silenced and no Vite dev server starts.
+- njin's modules are process-wide singletons: run the suite with `bun test --isolate` so each test file gets its own app.
+
 ## Commands
 
 ```bash
