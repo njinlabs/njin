@@ -1,11 +1,9 @@
-import moment from "moment";
 import db from "../modules/db";
 import elysia from "../modules/elysia";
 import sqliteAdapter from "./adapters/sqlite";
 import { getConfig, loadConfig, type NjinConfig } from "./config";
 import type { DbAdapter, TableDef } from "./db/contract";
-import { internalTables, tokenTable } from "./db/internal";
-import { hashToken } from "./token_hash";
+import { internalTables } from "./db/internal";
 
 // Test helper for projects built on njin: boots the real app (every module, your models, hooks,
 // events, routes and vars) on an in-memory SQLite database and lets a test call it over HTTP
@@ -35,7 +33,7 @@ export type TestRequestInit = {
   query?: Record<string, string | number | boolean | undefined>;
   headers?: Record<string, string>;
   // Authenticates the request: a user record (an `id` is enough — a session token is minted
-  // for it) or a ready-made "token:<id>:<secret>" bearer token.
+  // for it) or a ready-made "njt:<id>:<secret>" bearer token.
   as?: { id: string } | string;
 };
 
@@ -56,10 +54,24 @@ export type TestApp = {
     model: Model,
     data: Parameters<Model["create"]>[0],
   ): Promise<Awaited<ReturnType<Model["create"]>>>;
-  // Creates a user (random email, password "password" unless given).
+  // Creates a user (random email, password "password" unless given). Unless `groups` says
+  // otherwise the user is in the built-in "Full access" group, so a test sees everything until
+  // it asks for less: pass `groups: []` for a user that can do nothing, or the ids of groups
+  // made with createGroup().
   createUser(
-    data?: Partial<{ name: string; email: string; password: string }>,
+    data?: Partial<{
+      name: string;
+      email: string;
+      password: string;
+      groups: string[];
+    }>,
   ): Promise<{ id: string; name: string; email: string }>;
+  // Creates an access group; grants look like "post:*:own" or "vars.site:read".
+  createGroup(data: {
+    name: string;
+    grants: string[];
+    description?: string;
+  }): Promise<{ id: string; name: string; grants: string[] }>;
   // A bearer token for `user`, to put in your own Authorization header.
   tokenFor(user: { id: string }): Promise<string>;
 
@@ -103,18 +115,13 @@ export const createTestApp = async (
   const app = elysia();
   const adapter = db();
   const { default: userModel } = await import("../models/user");
-  const { default: accessGroupModel } = await import("../models/access_group");
+  const { default: accessGroupModel, ensureFullAccessGroup } = await import(
+    "../models/access_group"
+  );
+  const { issueToken } = await import("../modules/token");
 
-  const tokenFor = async (user: { id: string }) => {
-    const secret = Bun.randomUUIDv7();
-    const token = await adapter.insert(tokenTable, {
-      hash: hashToken(secret),
-      user: user.id,
-      createdAt: moment().toISOString(),
-      updatedAt: moment().toISOString(),
-    });
-    return `token:${token.id}:${secret}`;
-  };
+  const tokenFor = async (user: { id: string }) =>
+    (await issueToken({ user: user.id, kind: "session" })).bearer;
 
   const request: TestApp["request"] = async (method, path, init = {}) => {
     const url = new URL(path, "http://localhost");
@@ -181,14 +188,22 @@ export const createTestApp = async (
       model.create(data)) as TestApp["seed"],
     createUser: async (data = {}) => {
       userCount += 1;
+      const { groups, ...rest } = data;
       const user = (await userModel.create({
         name: `Test User ${userCount}`,
         email: `user${userCount}-${Bun.randomUUIDv7()}@test.local`,
         password: "password",
-        ...data,
+        ...rest,
+        groups: groups ?? [await ensureFullAccessGroup()],
       } as never)) as { id: string; name: string; email: string };
       return user;
     },
+    createGroup: async (data) =>
+      (await accessGroupModel.create(data)) as {
+        id: string;
+        name: string;
+        grants: string[];
+      },
     tokenFor,
 
     reset: async () => {

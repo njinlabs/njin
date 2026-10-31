@@ -1,17 +1,16 @@
 import Elysia, { status } from "elysia";
-import moment from "moment";
 import z from "zod";
-import { tokenTable } from "../core/db/internal";
 import { makeModule } from "../core/module";
-import { hashToken } from "../core/token_hash";
 import db from "./db";
 import elysia from "./elysia";
+import { issueToken } from "./token";
 
 const setup = makeModule(() => {
   const fn = () => {};
 
   fn.init = async () => {
     const { default: user } = await import("../models/user");
+    const { ensureFullAccessGroup } = await import("../models/access_group");
 
     const hasUsers = async () => {
       return (await db().count(user.def)) > 0;
@@ -32,17 +31,16 @@ const setup = makeModule(() => {
             return status(403, { message: "Setup already completed" });
           }
 
+          // The first admin can do everything, and has to be able to hand out narrower access.
           const created = await user.create({
             ...body,
             password: Bun.password.hashSync(body.password),
+            groups: [await ensureFullAccessGroup()],
           });
 
-          const plainToken = Bun.randomUUIDv7();
-          const token = await db().insert(tokenTable, {
-            hash: hashToken(plainToken),
+          const { bearer } = await issueToken({
             user: created.id,
-            createdAt: moment().toISOString(),
-            updatedAt: moment().toISOString(),
+            kind: "session",
           });
 
           const { password: _, ...safeUser } = created as typeof created & {
@@ -51,7 +49,7 @@ const setup = makeModule(() => {
 
           return {
             data: {
-              token: `token:${token.id}:${plainToken}`,
+              token: bearer,
               user: safeUser,
             },
           };

@@ -8,11 +8,7 @@ import { makeModule } from "../core/module";
 import { publicBase } from "../core/public_url";
 import db from "./db";
 import elysia from "./elysia";
-import {
-  issueOAuthTokens,
-  revokeOAuthToken,
-  rotateOAuthTokens,
-} from "./mcp_token";
+import { issueOAuthTokens, revokeOAuthToken, rotateOAuthTokens } from "./token";
 
 // OAuth 2.1 authorization server for MCP clients (Claude etc.), living in the same process as
 // the MCP endpoint: the user signs in with their normal njin account on a page served here and
@@ -550,6 +546,8 @@ const oauth = makeModule(() => {
               name: client.clientName,
               clientId,
               userId: record.userId,
+              // Everything the user can do, until the consent screen lets them narrow it.
+              scopes: ["*:*"],
             }),
           );
         },

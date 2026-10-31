@@ -9,10 +9,10 @@ import { isDraftable, isI18n } from "../core/model";
 import { makeModule } from "../core/module";
 import { publicBase } from "../core/public_url";
 import { isDraftableVars, isI18nVars } from "../core/vars";
+import auth from "./auth";
 import elysia from "./elysia";
 import fileModule from "./file";
 import logger from "./logger";
-import mcpToken from "./mcp_token";
 import { createUploadTicket, getUploadStatus } from "./mcp_upload";
 
 type Model = Awaited<ReturnType<ModelFactory>>["default"];
@@ -263,7 +263,7 @@ const mcp = makeModule(() => {
   const fn = () => {};
 
   fn.init = async () => {
-    const { plugin: tokenPlugin } = await mcpToken();
+    const { plugin: authPlugin } = await auth();
 
     const models = new Map<string, Model>();
     for (const factory of getConfig().models) {
@@ -876,10 +876,17 @@ const mcp = makeModule(() => {
       return server;
     };
 
-    const controller = new Elysia().use(tokenPlugin).all(
+    const controller = new Elysia().use(authPlugin).all(
       "/mcp",
-      async ({ request, mcpToken }) => {
-        const server = buildServer(mcpToken, publicBase(request));
+      async ({ request, principal }) => {
+        const server = buildServer(
+          {
+            id: principal.token.id,
+            name: principal.token.name ?? "Unnamed",
+            createdBy: principal.user.id,
+          },
+          publicBase(request),
+        );
         const transport = new WebStandardStreamableHTTPServerTransport({
           sessionIdGenerator: undefined,
           enableJsonResponse: true,
@@ -893,7 +900,7 @@ const mcp = makeModule(() => {
         }
       },
       // The transport reads the raw request body itself — Elysia must not consume it first.
-      { mcpAuth: true, parse: "none" },
+      { auth: { mcp: true }, parse: "none" },
     );
 
     elysia().use(controller);

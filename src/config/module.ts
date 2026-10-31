@@ -9,7 +9,6 @@ import file from "../modules/file";
 import img from "../modules/img";
 import logger from "../modules/logger";
 import mcp from "../modules/mcp";
-import mcpToken from "../modules/mcp_token";
 import mcpUpload from "../modules/mcp_upload";
 import oauth from "../modules/oauth";
 import plugin from "../modules/plugin";
@@ -35,7 +34,6 @@ const modules = [
   await plugin.init(),
   await file.init(),
   await auth.init(),
-  await mcpToken.init(),
   await setup.init(),
   await api.init(),
   await vars.init(),

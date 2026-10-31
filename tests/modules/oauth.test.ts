@@ -4,7 +4,6 @@ import Elysia from "elysia";
 import * as realConfig from "../../src/core/config";
 import { oauthClientTable, oauthCodeTable } from "../../src/core/db/internal";
 import * as realElysiaModule from "../../src/modules/elysia";
-import { makeFakeAuthPlugin } from "../helpers/fake_auth";
 import { makeFakeElysia } from "../helpers/fake_elysia";
 import { useTestDb } from "../helpers/test_db";
 
@@ -24,9 +23,6 @@ mock.module("../../src/core/config", () => ({
     },
   }),
 }));
-mock.module("../../src/modules/auth", () => ({
-  default: async () => ({ plugin: makeFakeAuthPlugin() }),
-}));
 
 const fakeElysia = makeFakeElysia();
 mock.module("../../src/modules/elysia", () => ({
@@ -35,20 +31,29 @@ mock.module("../../src/modules/elysia", () => ({
 }));
 
 const { default: userModel } = await import("../../src/models/user");
+const { default: accessGroup } = await import("../../src/models/access_group");
 const { default: oauth } = await import("../../src/modules/oauth");
-const { default: mcpToken } = await import("../../src/modules/mcp_token");
+const { default: auth } = await import("../../src/modules/auth");
 
 await oauth.init();
-await mcpToken.init();
-await db.sync([userModel.def]);
+await auth.init();
+await db.sync([userModel.def, accessGroup.def]);
 const app = fakeElysia.buildApp();
 
-// A real mcpAuth-protected route, so a token coming out of the OAuth flow is proven against
+// A real auth-protected route, so a token coming out of the OAuth flow is proven against
 // the actual verifier rather than just inspected.
-const { plugin: mcpAuthPlugin } = await mcpToken();
-const protectedApp = new Elysia()
-  .use(mcpAuthPlugin)
-  .get("/probe", ({ mcpToken }) => ({ data: mcpToken }), { mcpAuth: true });
+const { plugin: authPlugin } = await auth();
+const protectedApp = new Elysia().use(authPlugin).get(
+  "/probe",
+  ({ principal }) => ({
+    data: {
+      name: principal.token.name,
+      kind: principal.kind,
+      createdBy: principal.user.id,
+    },
+  }),
+  { auth: { mcp: true } },
+);
 
 const CALLBACK = "https://claude.ai/api/mcp/auth_callback";
 const PASSWORD = "correct-horse";
@@ -498,7 +503,7 @@ describe("POST /oauth/revoke", () => {
   it("answers 200 even for a token that never existed", async () => {
     const res = await request(
       "/oauth/revoke",
-      form({ token: "mcp:nope:nope" }),
+      form({ token: "njt:nope:nope" }),
     );
     expect(res.status).toBe(200);
   });

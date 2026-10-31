@@ -4,7 +4,7 @@ import type z from "zod";
 export type McpToolShape = Record<string, z.ZodType>;
 
 export type McpToolContext = {
-  // The connection the agent called through — the same token listed under /api/mcp-token.
+  // The connection the agent called through — the same token listed under /api/token.
   token: { id: string; name: string; createdBy: string | null };
   // Public base URL of the site ("https://example.com"), for building absolute links.
   baseUrl: string;

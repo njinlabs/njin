@@ -214,18 +214,24 @@ mock.module("../../src/core/config", () => ({
   }),
 }));
 
-// Real Elysia plugin (macros can't be faked with a plain object) standing in for
-// mcp_token.ts's — only "Bearer ok" authenticates.
-const fakeMcpTokenPlugin = new Elysia({ name: "mcp-auth" }).macro({
-  mcpAuth: {
+// Real Elysia plugin (macros can't be faked with a plain object) standing in for auth.ts's —
+// only "Bearer ok" authenticates, as an agent token.
+const fakeAuthPlugin = new Elysia({ name: "auth" }).macro({
+  auth: {
     resolve: ({ headers }) =>
       headers.authorization === "Bearer ok"
-        ? { mcpToken: { id: "t1", name: "Test agent" } }
+        ? {
+            principal: {
+              user: { id: "u1" },
+              kind: "pat" as const,
+              token: { id: "t1", name: "Test agent", clientId: null },
+            },
+          }
         : status(401, { message: "Unauthorized" }),
   },
 });
-mock.module("../../src/modules/mcp_token", () => ({
-  default: async () => ({ plugin: fakeMcpTokenPlugin }),
+mock.module("../../src/modules/auth", () => ({
+  default: async () => ({ plugin: fakeAuthPlugin }),
 }));
 
 const fileRecords = new Map<string, Record<string, unknown>>();

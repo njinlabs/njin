@@ -13,9 +13,14 @@ mock.module("../../src/modules/elysia", () => ({
 }));
 
 const { default: userModel } = await import("../../src/models/user");
+const {
+  default: accessGroup,
+  FULL_ACCESS_GRANTS,
+  FULL_ACCESS_NAME,
+} = await import("../../src/models/access_group");
 const { default: setup } = await import("../../src/modules/setup");
 
-await db.sync([userModel.def]);
+await db.sync([userModel.def, accessGroup.def]);
 await setup.init();
 const app = fakeElysia.buildApp();
 
@@ -51,7 +56,7 @@ describe("setup", () => {
     const body = (await res.json()) as {
       data: { token: string; user: Record<string, unknown> };
     };
-    expect(body.data.token).toMatch(/^token:[^:]+:.+$/);
+    expect(body.data.token).toMatch(/^njt:[^:]+:[^:]+$/);
     expect(body.data.user.password).toBeUndefined();
     expect(body.data.user.email).toBe("admin@example.com");
 
@@ -71,6 +76,34 @@ describe("setup", () => {
     const tokenId = body.data.token.split(":")[1] as string;
     const token = await db.adapter.find(tokenTable, tokenId);
     expect(token?.user).toBe(stored?.id as string);
+    expect(token?.kind).toBe("session");
+  });
+
+  it("puts the first admin in a group that can do everything", async () => {
+    const [stored] = (
+      await db.adapter.list(userModel.def, {
+        page: 1,
+        limit: 10,
+        populate: ["groups"],
+      })
+    ).rows;
+
+    const groups = stored?.groups as { name: string; grants: string[] }[];
+    expect(groups).toHaveLength(1);
+    expect(groups[0]?.name).toBe(FULL_ACCESS_NAME);
+    expect(groups[0]?.grants).toEqual(FULL_ACCESS_GRANTS);
+  });
+
+  it("does not make a second group when it is needed again", async () => {
+    const { ensureFullAccessGroup } = await import(
+      "../../src/models/access_group"
+    );
+
+    const first = await ensureFullAccessGroup();
+    const second = await ensureFullAccessGroup();
+
+    expect(second).toBe(first);
+    expect(await db.adapter.count(accessGroup.def)).toBe(1);
   });
 
   it("reports needsSetup: false once a user exists", async () => {

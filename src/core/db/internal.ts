@@ -41,17 +41,19 @@ const table = (name: string, fields: FieldDef[]): TableDef => ({
   search: [],
 });
 
-// Admin session tokens (modules/auth.ts, modules/setup.ts).
-export const tokenTable = table("token", [str("hash"), one("user", "user")]);
-
-// MCP connections, manual and OAuth-issued (modules/mcp_token.ts).
-export const mcpTokenTable = table("mcp_token", [
-  str("name"),
+// Every credential: admin sessions, personal access tokens, and the tokens OAuth hands to agents
+// (modules/token.ts). `kind` says which; the secret is stored only as a hash. A session carries
+// the user's full permissions, any other kind is narrowed to `scopes`.
+export const tokenTable = table("token", [
   str("hash"),
+  one("user", "user"),
   str("kind"),
+  str("name"),
   str("clientId"),
-  one("createdBy", "user"),
+  one("consent", "oauth_consent"),
+  strings("scopes"),
   datetime("expiresAt"),
+  datetime("lastUsedAt"),
   str("refreshHash"),
   datetime("refreshExpiresAt"),
 ]);
@@ -132,7 +134,6 @@ export const varsPublishedTable: TableDef = {
 
 export const internalTables: readonly TableDef[] = [
   tokenTable,
-  mcpTokenTable,
   oauthClientTable,
   oauthCodeTable,
   oauthConsentTable,

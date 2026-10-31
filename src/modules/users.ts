@@ -34,7 +34,7 @@ const users = makeModule(() => {
           return { data: result.data.map(stripPassword), meta: result.meta };
         },
         {
-          auth: true,
+          auth: { session: true },
           query: z.object({
             search: z.coerce.string().optional(),
             page: z.coerce.number().int().positive().default(1),
@@ -52,7 +52,10 @@ const users = makeModule(() => {
 
           return { data: data ? stripPassword(data) : null };
         },
-        { auth: true, params: z.object({ id: z.coerce.string() }) },
+        {
+          auth: { session: true },
+          params: z.object({ id: z.coerce.string() }),
+        },
       )
       .post(
         "/",
@@ -61,7 +64,7 @@ const users = makeModule(() => {
 
           return { data: stripPassword(created) };
         },
-        { auth: true, body: user.validation },
+        { auth: { session: true }, body: user.validation },
       )
       .put(
         "/:id",
@@ -71,7 +74,7 @@ const users = makeModule(() => {
           return { data: stripPassword(updated) };
         },
         {
-          auth: true,
+          auth: { session: true },
           params: z.object({ id: z.coerce.string() }),
           body: user.validation.partial(),
         },
@@ -91,7 +94,10 @@ const users = makeModule(() => {
 
           return { data: stripPassword(deleted) };
         },
-        { auth: true, params: z.object({ id: z.coerce.string() }) },
+        {
+          auth: { session: true },
+          params: z.object({ id: z.coerce.string() }),
+        },
       );
 
     elysia().use(controller);
