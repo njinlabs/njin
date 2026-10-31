@@ -229,7 +229,16 @@ const direct = (
   return vars && level === "own" ? null : level;
 };
 
-export type RelationField = { name: string; many: boolean; target: string };
+export type RelationField = {
+  name: string;
+  many: boolean;
+  target: string;
+  // The field of the target the form shows a choice by (`relation({ labelKey })`), when the
+  // model names one.
+  labelKey: string | null;
+};
+
+const PLAIN_FIELD = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
 const RELATION_KINDS = new Set([
   "relation",
@@ -241,9 +250,11 @@ const RELATION_KINDS = new Set([
 export const relationFieldsOf = (schema: z.ZodObject): RelationField[] =>
   Object.entries(schema.shape).flatMap(([name, field]) => {
     const meta = (field as z.ZodType).meta() as
-      | { renderAs?: string; model?: string }
+      | { renderAs?: string; model?: string; labelKey?: unknown }
       | undefined;
     if (!RELATION_KINDS.has(meta?.renderAs ?? "")) return [];
+
+    const labelKey = meta?.labelKey;
 
     return [
       {
@@ -252,6 +263,10 @@ export const relationFieldsOf = (schema: z.ZodObject): RelationField[] =>
           meta?.renderAs === "multi_relation" ||
           meta?.renderAs === "multi_file",
         target: meta?.model ?? "",
+        labelKey:
+          typeof labelKey === "string" && PLAIN_FIELD.test(labelKey)
+            ? labelKey
+            : null,
       },
     ];
   });

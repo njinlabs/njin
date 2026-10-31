@@ -382,9 +382,10 @@ export const listTokens = async (userId: string) => {
     populate: [],
   });
 
+  // The sign-in cookie of the OAuth pages is not a credential to manage.
   return rows.flatMap((row) => {
     const token = toRecord(row);
-    return token ? [token] : [];
+    return token && token.kind !== "web" ? [token] : [];
   });
 };
 

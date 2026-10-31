@@ -131,6 +131,60 @@ describe("gate.read", () => {
     expect(narrowed.search).toBe("news");
   });
 
+  it("shows a reference by the label key of the relation that points at it", async () => {
+    const people = makeModel("person", {
+      name: "Person",
+      schema: z.object({
+        name: text({ label: "Name" }),
+        nickname: text({ label: "Nickname" }),
+      }),
+      searchFields: ["name"],
+    });
+    const post = makeModel("byline", {
+      name: "Byline",
+      schema: z.object({
+        author: relation({ label: "Author", labelKey: "nickname" }, people),
+      }),
+      searchFields: [],
+    });
+    const labelled = createGuard([people, post]);
+    const gate = labelled.gate(
+      await principalWith("byline:update:all"),
+      people,
+    );
+
+    expect(
+      gate.read({ select: undefined as string[] | undefined }).select,
+    ).toEqual(["nickname"]);
+    expect(
+      gate.shape({ id: "p1", name: "Ann", nickname: "A", secret: "x" }),
+    ).toEqual({ id: "p1", nickname: "A" });
+  });
+
+  it("ignores a label key the target does not have", async () => {
+    const places = makeModel("place", {
+      name: "Place",
+      schema: z.object({ name: text({ label: "Name" }) }),
+      searchFields: ["name"],
+    });
+    const visit = makeModel("visit", {
+      name: "Visit",
+      schema: z.object({
+        place: relation(
+          { label: "Place", labelKey: "nonexistent" as never },
+          places,
+        ),
+      }),
+      searchFields: [],
+    });
+    const labelled = createGuard([places, visit]);
+    const gate = labelled.gate(await principalWith("visit:update:all"), places);
+
+    expect(
+      gate.read({ select: undefined as string[] | undefined }).select,
+    ).toEqual(["name"]);
+  });
+
   it("lets a reference be sorted by its label", async () => {
     const gate = guard.gate(
       await principalWith("article:update:all"),

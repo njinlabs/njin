@@ -246,9 +246,29 @@ describe("isOwner", () => {
 describe("relationFieldsOf / buildRelationGraph", () => {
   it("lists link fields with their cardinality and target", () => {
     expect(relationFieldsOf(schemas.blog)).toEqual([
-      { name: "category", many: false, target: "category" },
-      { name: "tags", many: true, target: "tag" },
-      { name: "cover", many: false, target: "file" },
+      { name: "category", many: false, target: "category", labelKey: null },
+      { name: "tags", many: true, target: "tag", labelKey: null },
+      { name: "cover", many: false, target: "file", labelKey: null },
+    ]);
+  });
+
+  it("reads the field a relation is shown by, when it names a plain one", () => {
+    const schema = z.object({
+      author: z
+        .string()
+        .meta({ renderAs: "relation", model: "user", labelKey: "name" }),
+      editor: z
+        .string()
+        .meta({ renderAs: "relation", model: "user", labelKey: "a.b" }),
+      owner: z
+        .string()
+        .meta({ renderAs: "relation", model: "user", labelKey: 7 }),
+    });
+
+    expect(relationFieldsOf(schema).map((field) => field.labelKey)).toEqual([
+      "name",
+      null,
+      null,
     ]);
   });
 

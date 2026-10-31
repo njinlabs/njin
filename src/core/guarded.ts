@@ -81,6 +81,19 @@ export const createGuard = (models: readonly GuardModel[]) => {
     labels.set(model.prefix, labelFieldOf(model.searchFields));
   }
 
+  // A form shows a choice by the `labelKey` of the relation that points at it, so that is the
+  // label to keep — when the target really has such a field.
+  const fieldsOf = new Map(
+    models.map((model) => [model.prefix, Object.keys(model.validation.shape)]),
+  );
+  for (const model of models) {
+    for (const { target, labelKey } of relationFieldsOf(model.validation)) {
+      if (labelKey && fieldsOf.get(target)?.includes(labelKey)) {
+        labels.set(target, labelKey);
+      }
+    }
+  }
+
   const labelOf = (target: string) => labels.get(target);
 
   const forbidden = () => new HttpError(403);
