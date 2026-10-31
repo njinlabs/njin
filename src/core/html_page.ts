@@ -50,6 +50,11 @@ button.primary{background:var(--accent);color:var(--accent-fg);border-color:var(
 input[type=file]{width:100%;padding:32px 12px;border:2px dashed var(--line);border-radius:8px;background:transparent;color:inherit;font:inherit;cursor:pointer}
 .ok{color:var(--fg)}
 ul{margin:0 0 16px;padding-left:20px;color:var(--muted)}
+.scopes{margin:0 0 8px}
+label.scope{display:flex;gap:8px;align-items:flex-start;margin:6px 0;font-size:14px}
+.scope input{margin-top:4px}
+.who{margin:20px 0 0;font-size:13px;color:var(--muted)}
+.who button{display:inline;flex:none;padding:0;border:0;background:none;color:inherit;text-decoration:underline}
 .host{font-family:ui-monospace,monospace;font-size:14px;color:var(--fg)}
 </style>
 </head>

@@ -12,6 +12,7 @@ import logger from "../modules/logger";
 import mcp from "../modules/mcp";
 import mcpUpload from "../modules/mcp_upload";
 import oauth from "../modules/oauth";
+import oauthConsent from "../modules/oauth_consent";
 import plugin from "../modules/plugin";
 import setup from "../modules/setup";
 import users from "../modules/users";
@@ -42,6 +43,7 @@ const modules = [
   await mcp.init(),
   await mcpUpload.init(),
   await oauth.init(),
+  await oauthConsent.init(),
   await img.init(),
   await analytics.init(),
   await users.init(),

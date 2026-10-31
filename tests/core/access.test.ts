@@ -5,12 +5,16 @@ import {
   buildCatalog,
   buildRelationGraph,
   compile,
+  intersectScopes,
   isOwner,
+  isScope,
   minimal,
   ownerFilter,
   parseGrant,
   redactRefs,
   relationFieldsOf,
+  scopeCovers,
+  scopeMatches,
   validateGrants,
 } from "../../src/core/access";
 
@@ -389,5 +393,67 @@ describe("catalog and validation", () => {
     expect(errors[4]).toContain("no owner");
     expect(errors[5]).toContain("no owner");
     expect(errors[6]).toContain('unknown action "fly"');
+  });
+});
+
+describe("scopes", () => {
+  it("are <resource>:<action> with nothing else in them", () => {
+    for (const ok of ["article:read", "*:*", "vars.site:write", "*:read"]) {
+      expect(isScope(ok)).toBe(true);
+    }
+    for (const bad of [
+      "",
+      "article",
+      "a:b:c",
+      "a b:read",
+      ":read",
+      "article:",
+    ]) {
+      expect(isScope(bad)).toBe(false);
+    }
+  });
+
+  it("match when each half is equal or a wildcard in the granted one", () => {
+    expect(scopeMatches("*:*", "article:read")).toBe(true);
+    expect(scopeMatches("article:*", "article:read")).toBe(true);
+    expect(scopeMatches("*:read", "article:read")).toBe(true);
+    expect(scopeMatches("article:read", "article:read")).toBe(true);
+
+    expect(scopeMatches("article:read", "article:update")).toBe(false);
+    expect(scopeMatches("article:*", "category:read")).toBe(false);
+    expect(scopeMatches("*:read", "article:update")).toBe(false);
+  });
+
+  it("never take in a wider scope than the one granted", () => {
+    expect(scopeMatches("article:read", "*:*")).toBe(false);
+    expect(scopeMatches("article:*", "*:read")).toBe(false);
+    expect(scopeMatches("*:read", "*:*")).toBe(false);
+  });
+
+  it("cover a list only when every one of them is taken in", () => {
+    expect(scopeCovers(["*:*"], ["article:read", "user:delete"])).toBe(true);
+    expect(scopeCovers(["article:read"], ["article:read"])).toBe(true);
+    expect(
+      scopeCovers(["article:read"], ["article:read", "article:update"]),
+    ).toBe(false);
+    expect(scopeCovers([], ["article:read"])).toBe(false);
+    expect(scopeCovers(["article:read"], [])).toBe(true);
+  });
+
+  it("intersect to what both take in, the narrower of each pair", () => {
+    expect(intersectScopes(["*:*"], ["article:read"])).toEqual([
+      "article:read",
+    ]);
+    expect(intersectScopes(["article:read"], ["*:*"])).toEqual([
+      "article:read",
+    ]);
+    expect(
+      intersectScopes(
+        ["article:*", "user:read"],
+        ["article:read", "user:*"],
+      ).sort(),
+    ).toEqual(["article:read", "user:read"]);
+    expect(intersectScopes(["article:read"], ["user:read"])).toEqual([]);
+    expect(intersectScopes([], ["*:*"])).toEqual([]);
   });
 });

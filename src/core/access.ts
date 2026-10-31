@@ -116,6 +116,39 @@ export const validateGrants = (
   return errors;
 };
 
+// A token's scope is "<resource>:<action>", either half of which may be "*".
+const SCOPE = /^[^\s:]+:[^\s:]+$/;
+
+export const isScope = (value: string) => SCOPE.test(value);
+
+// Whether a scope that was granted takes in a scope that is wanted: "*:*" covers everything,
+// "article:*" every action on articles, "*:read" reading anything.
+export const scopeMatches = (granted: string, wanted: string) => {
+  const [grantedResource, grantedAction] = granted.split(":");
+  const [wantedResource, wantedAction] = wanted.split(":");
+
+  return (
+    (grantedResource === "*" || grantedResource === wantedResource) &&
+    (grantedAction === "*" || grantedAction === wantedAction)
+  );
+};
+
+export const scopeCovers = (
+  granted: readonly string[],
+  wanted: readonly string[],
+) => wanted.every((scope) => granted.some((g) => scopeMatches(g, scope)));
+
+// What two lists of scopes have in common: each scope of one that the other takes in.
+export const intersectScopes = (
+  first: readonly string[],
+  second: readonly string[],
+) => [
+  ...new Set([
+    ...first.filter((scope) => scopeCovers(second, [scope])),
+    ...second.filter((scope) => scopeCovers(first, [scope])),
+  ]),
+];
+
 type Rules = Map<string, Level>;
 
 const key = (resource: string, action: string) => `${resource}\u0000${action}`;

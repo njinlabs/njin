@@ -1,7 +1,7 @@
 import bearer from "@elysia/bearer";
 import Elysia, { status } from "elysia";
 import z from "zod";
-import { access } from "../core/access";
+import { access, isScope } from "../core/access";
 import { makeModule } from "../core/module";
 import { publicBase } from "../core/public_url";
 import { clearFailures, isLimited, recordFailure } from "../core/rate_limit";
@@ -33,8 +33,6 @@ const surfaceOf = (options: true | AuthOptions): Surface => {
   if (options.mcp) return "mcp";
   return "any";
 };
-
-const SCOPE = /^[^\s:]+:[^\s:]+$/;
 
 // `auth` is the one way to protect a route:
 //   { auth: true }                content API: a session, personal token or OAuth token
@@ -187,7 +185,10 @@ const auth = makeModule(() => {
             name: z.string().trim().min(1).max(100),
             // What the token may do, as "<resource>:<action>" (wildcards allowed). It can never
             // do more than its owner can.
-            scopes: z.array(z.string().regex(SCOPE)).min(1).default(["*:*"]),
+            scopes: z
+              .array(z.string().refine(isScope, "Use <resource>:<action>"))
+              .min(1)
+              .default(["*:*"]),
           }),
         },
       )
