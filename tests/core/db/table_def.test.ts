@@ -197,7 +197,11 @@ describe("fieldsFromSchema", () => {
     });
 
     expect(model.def.name).toBe("table_def_model");
-    expect(model.def.fields.map((f) => f.name)).toEqual(["title", "author"]);
+    expect(model.def.fields.map((f) => f.name)).toEqual([
+      "title",
+      "author",
+      "createdBy",
+    ]);
     expect(model.def.search).toEqual([
       { table: "table_def_model", field: "title" },
     ]);

@@ -24,6 +24,11 @@ const num = (name: string): FieldDef => ({
   name,
   type: "number",
 });
+const strings = (name: string): FieldDef => ({
+  kind: "array",
+  name,
+  of: { kind: "scalar", type: "string" },
+});
 const one = (name: string, target: string): FieldDef => ({
   kind: "one",
   name,
@@ -67,7 +72,27 @@ export const oauthCodeTable = table("oauth_code", [
   one("userId", "user"),
   str("redirectUri"),
   str("codeChallenge"),
+  // What the user agreed to hand the client, as "<resource>:<action>" scopes.
+  strings("scopes"),
   datetime("expiresAt"),
+]);
+
+// What a user has let an OAuth client do on their behalf — one row per (user, client), the source
+// for "connected apps". Revoking it takes the client's tokens with it.
+export const oauthConsentTable = table("oauth_consent", [
+  one("user", "user"),
+  str("clientId"),
+  str("clientName"),
+  strings("scopes"),
+  datetime("grantedAt"),
+  datetime("lastUsedAt"),
+]);
+
+// Failed-attempt counters (core/rate_limit.ts). The record id is the thing being limited, e.g.
+// "login:alice@example.com".
+export const rateLimitTable = table("rate_limit", [
+  num("count"),
+  datetime("resetAt"),
 ]);
 
 export const mcpUploadTable = table("mcp_upload", [
@@ -110,6 +135,8 @@ export const internalTables: readonly TableDef[] = [
   mcpTokenTable,
   oauthClientTable,
   oauthCodeTable,
+  oauthConsentTable,
+  rateLimitTable,
   mcpUploadTable,
   pageviewTable,
   varsTable,

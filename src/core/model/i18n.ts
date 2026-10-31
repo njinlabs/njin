@@ -21,6 +21,7 @@ import {
   stable,
   translationTableName,
 } from "./localized";
+import { type CreateOptions, OWNER_FIELD } from "./owner";
 
 // A model made with `i18n: true` is two tables behind one model:
 //
@@ -79,7 +80,7 @@ export type I18nModel = {
   // Localized fields are `{ locale: value }` maps in this schema.
   validation: z.ZodObject;
   searchFields: string[];
-  create(data: Rec): Promise<Rec>;
+  create(data: Rec, options?: CreateOptions): Promise<Rec>;
   update(id: string, data: Rec): Promise<Rec | null>;
   destroy(id: string): Promise<Rec | undefined>;
   read(options?: I18nReadOptions): Promise<{ data: Rec[]; meta: ReadMeta }>;
@@ -183,6 +184,9 @@ export const makeI18nModel = (
 
   const localizedList = [...localized];
   const sharedList = [...shared];
+  // What a language's row copies from the shared row: the shared fields and the owner, so a read
+  // confined to a caller's own records works on either table.
+  const mirrored = [...sharedList, OWNER_FIELD];
   // Fields that link to another model: relations, files, and lists of them.
   const linkKinds = new Map(
     fieldsFromSchema(config.schema).map((f) => [f.name, f.kind]),
@@ -554,6 +558,7 @@ export const makeI18nModel = (
     const found = await translations.read({
       search: options.search,
       filters: options.filters,
+      where: options.where,
       sort: options.sort,
       order: options.order,
       page: options.page,
@@ -616,7 +621,7 @@ export const makeI18nModel = (
 
   // ---- writing -------------------------------------------------------------------------
 
-  const create = async (data: Rec) => {
+  const create = async (data: Rec, options: CreateOptions = {}) => {
     const merged = (await runBeforeHooks(
       "beforeCreate",
       prefix,
@@ -637,11 +642,12 @@ export const makeI18nModel = (
     const id = await db().transaction(async (tx) => {
       const row = await tx.insert(main.def, {
         ...sharedPart,
+        ...(options.createdBy ? { [OWNER_FIELD]: options.createdBy } : {}),
         createdAt: now,
         updatedAt: now,
       });
 
-      const mirror = pick(row, sharedList);
+      const mirror = pick(row, mirrored);
       for (const [locale, values] of byLocale) {
         await tx.insert(
           translations.def,
@@ -683,7 +689,7 @@ export const makeI18nModel = (
         ...sharedPart,
         updatedAt: now,
       }))!;
-      const mirror = pick(row, sharedList);
+      const mirror = pick(row, mirrored);
 
       // A change to a shared field reaches every language that has a row.
       if (Object.keys(sharedPart).length > 0) {

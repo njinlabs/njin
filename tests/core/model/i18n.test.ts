@@ -623,6 +623,94 @@ describe("listing every language", () => {
   });
 });
 
+describe("owner (createdBy)", () => {
+  const own = (id: string) => [
+    { field: "createdBy", op: "$eq" as const, value: id },
+  ];
+
+  const seed = async () => {
+    const { article, ann } = await build();
+    const mine = await article.create(sample(ann), { createdBy: "u1" });
+    const theirs = await article.create(
+      sample(ann, {
+        slug: { id: "dua", en: "two" },
+        title: { id: "Dua", en: "Two" },
+      }),
+      { createdBy: "u2" },
+    );
+    return { article, mine, theirs };
+  };
+
+  it("is stored on the shared row and copied onto every language", async () => {
+    const { article, mine } = await seed();
+
+    const shared = await db.adapter.find(article.def, mine.id, {
+      populate: [],
+    });
+    expect(shared?.createdBy).toBe("u1");
+
+    for (const locale of ["id", "en"]) {
+      const row = await db.adapter.find(
+        article.i18nDef,
+        `${mine.id}.${locale}`,
+        { populate: [] },
+      );
+      expect(row?.createdBy).toBe("u1");
+    }
+  });
+
+  it("confines a listing of every language to the owner's records", async () => {
+    const { article, mine } = await seed();
+
+    const { data, meta } = await article.read({ where: own("u1") });
+
+    expect(data.map((r) => r.id)).toEqual([mine.id]);
+    expect(meta.total).toBe(1);
+  });
+
+  it("confines a listing that has to look at the languages", async () => {
+    const { article, mine } = await seed();
+
+    // "Tentang" only matches the first record; "Two" only the second.
+    expect(
+      (await article.read({ search: "Tentang", where: own("u1") })).data.map(
+        (r) => r.id,
+      ),
+    ).toEqual([mine.id]);
+    expect(
+      (await article.read({ search: "Two", where: own("u1") })).data,
+    ).toEqual([]);
+  });
+
+  it("confines the listing of one language", async () => {
+    const { article, mine } = await seed();
+
+    const { data } = await article.read({ locale: "en", where: own("u1") });
+
+    expect(data.map((r) => r.id)).toEqual([mine.id]);
+  });
+
+  it("keeps the owner when a language is added by an update", async () => {
+    const { article, ann } = await build();
+    const created = await article.create(
+      sample(ann, {
+        slug: { id: "satu" },
+        title: { id: "Satu" },
+        tags: { id: [] },
+      }),
+      { createdBy: "u1" },
+    );
+
+    await article.update(created.id, {
+      slug: { en: "one" },
+      title: { en: "One" },
+    });
+
+    const { data } = await article.read({ locale: "en", where: own("u1") });
+    expect(data.map((r) => r.id)).toEqual([created.id]);
+  });
+});
+
 describe("writing", () => {
   it("a change to a shared field reaches every language", async () => {
     const { article, ann, bob } = await build();

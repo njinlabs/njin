@@ -84,7 +84,9 @@ describe("db module", () => {
     expect(calls).toEqual(["sync"]);
     const names = synced.map((t) => t.name);
     for (const table of internalTables) expect(names).toContain(table.name);
-    for (const name of ["user", "file", "post"]) expect(names).toContain(name);
+    for (const name of ["user", "access_group", "file", "post"]) {
+      expect(names).toContain(name);
+    }
     expect(new Set(names).size).toBe(names.length);
   });
 

@@ -23,6 +23,9 @@ import {
   TRANSLATION_LOCALE,
   translationTableName,
 } from "./localized";
+import { type CreateOptions, OWNER_FIELD, OWNER_FIELDS } from "./owner";
+
+export { type CreateOptions, OWNER_FIELD } from "./owner";
 
 // Input shape of create()/update(): the schema's own data, with relation fields given as plain
 // id strings.
@@ -98,6 +101,9 @@ export type ReadOptions = {
   // record is returned.
   select?: readonly string[];
   filters?: Record<string, FilterValue>;
+  // Extra conditions, AND-ed with `filters` and exempt from the field whitelist. For the server
+  // to confine a read (e.g. to a caller's own rows) — never fill it from a request.
+  where?: readonly Condition[];
   // A relation takes on the language of the model it points at. Where that model has i18n, a
   // populated related record is its record in this language — the default language's when it
   // has none, unless `fallback` is false — and in the default language when no locale is given.
@@ -121,7 +127,7 @@ type RelationRoot<K> = K extends `${infer Root}.${string}` ? Root : K;
 const SAFE_IDENTIFIER = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
 // Present on every record but not part of the user-defined schema shape.
-const RECORD_META_FIELDS = ["id", "createdAt", "updatedAt"];
+const RECORD_META_FIELDS = ["id", "createdAt", "updatedAt", "createdBy"];
 
 // What a draftable model adds to every record, on top of RECORD_META_FIELDS. "draft": never
 // published (or unpublished since); "published": the working copy equals the published one;
@@ -319,6 +325,8 @@ export const makeModel = <
     id: string;
     createdAt: string;
     updatedAt: string;
+    // The user's id, or null for a record nobody created through an account.
+    createdBy: string | null;
   } & (Draftable extends true ? DraftMeta : unknown);
 
   const draftable = config.draftable === true;
@@ -329,6 +337,12 @@ export const makeModel = <
       registerSchema,
       registerLocalizedFields,
     }) as unknown as Model;
+  }
+
+  if (OWNER_FIELD in config.schema.shape) {
+    throw new Error(
+      `Model "${config.name}": field "${OWNER_FIELD}" is reserved; njin records who created each record in it.`,
+    );
   }
 
   if (draftable) {
@@ -386,6 +400,7 @@ export const makeModel = <
       ...fieldsFromSchema(config.schema, {
         unique: config.enforceUnique !== false,
       }),
+      ...OWNER_FIELDS,
       ...(draftable ? DRAFT_FIELDS : []),
     ],
     search: searchTargets,
@@ -424,6 +439,7 @@ export const makeModel = <
   // them slip past a schema-shape membership check and get passed on as a field name.
   const filterableFieldSet = new Set([
     ...Object.keys(config.schema.shape),
+    OWNER_FIELD,
     ...(draftable ? DRAFT_META_FIELDS : []),
   ]);
 
@@ -466,7 +482,7 @@ export const makeModel = <
     }
   };
 
-  const create = async (data: Values<Data>) => {
+  const create = async (data: Values<Data>, options: CreateOptions = {}) => {
     const merged = (await runBeforeHooks(
       "beforeCreate",
       prefix,
@@ -478,6 +494,8 @@ export const makeModel = <
 
     const record = (await db().insert(def, {
       ...merged,
+      // After `merged` on purpose: an owner smuggled in through the data never wins.
+      [OWNER_FIELD]: options.createdBy ?? null,
       ...(draftable ? { status: "draft", publishedAt: null } : {}),
       createdAt: moment().toISOString(),
       updatedAt: moment().toISOString(),
@@ -518,6 +536,7 @@ export const makeModel = <
       populate,
       select,
       filters,
+      where: confinedTo,
       locale,
       fallback,
     }: Omit<ReadOptions, "select"> & { select?: S } = {},
@@ -565,6 +584,10 @@ export const makeModel = <
         }
       }
     }
+
+    // Pushed after the client's filters and never read from them, so nothing a request sends
+    // can widen it.
+    if (confinedTo) where.push(...confinedTo);
 
     // Validate select against the schema — prevents arbitrary field injection. Anything that
     // isn't a known field (or isn't a plain identifier) is dropped, and an empty result means
@@ -915,7 +938,7 @@ export const makeModel = <
   type BaseModel = {
     name: string;
     prefix: string;
-    create(data: Values<Data>): Promise<Returning>;
+    create(data: Values<Data>, options?: CreateOptions): Promise<Returning>;
     update(id: string, data: Values<Partial<Data>>): Promise<Returning>;
     def: TableDef;
     destroy: typeof destroy;

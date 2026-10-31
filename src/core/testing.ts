@@ -103,6 +103,7 @@ export const createTestApp = async (
   const app = elysia();
   const adapter = db();
   const { default: userModel } = await import("../models/user");
+  const { default: accessGroupModel } = await import("../models/access_group");
 
   const tokenFor = async (user: { id: string }) => {
     const secret = Bun.randomUUIDv7();
@@ -151,6 +152,7 @@ export const createTestApp = async (
     const tables = new Map<string, TableDef>();
     for (const table of internalTables) tables.set(table.name, table);
     tables.set(userModel.def.name, userModel.def);
+    tables.set(accessGroupModel.def.name, accessGroupModel.def);
     for (const factory of getConfig().models) {
       const { default: model } = await factory();
       const m = model as {

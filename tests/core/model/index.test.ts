@@ -208,6 +208,109 @@ describe("makeModel read() filter whitelist", () => {
   });
 });
 
+describe("makeModel owner (createdBy)", () => {
+  const build = () =>
+    makeModel(unique("note"), {
+      name: "Note",
+      searchFields: [],
+      schema: z.object({ title: text({ label: "Title" }) }),
+    });
+
+  it("records who created a record, and nobody when no owner is given", async () => {
+    const note = await sync(build());
+
+    const mine = await note.create({ title: "Mine" }, { createdBy: "u1" });
+    const orphan = await note.create({ title: "Orphan" });
+
+    expect((await note.show(mine.id)).createdBy).toBe("u1");
+    expect((await note.show(orphan.id)).createdBy ?? null).toBeNull();
+  });
+
+  it("never takes the owner from the data", async () => {
+    const note = await sync(build());
+
+    const forged = await note.create(
+      { title: "Forged", createdBy: "intruder" } as never,
+      { createdBy: "u1" },
+    );
+    const anonymous = await note.create({
+      title: "Anon",
+      createdBy: "intruder",
+    } as never);
+
+    expect((await note.show(forged.id)).createdBy).toBe("u1");
+    expect((await note.show(anonymous.id)).createdBy ?? null).toBeNull();
+  });
+
+  it("keeps the owner when the record is updated", async () => {
+    const note = await sync(build());
+    const created = await note.create({ title: "A" }, { createdBy: "u1" });
+
+    await note.update(created.id, { title: "B" });
+
+    expect((await note.show(created.id)).createdBy).toBe("u1");
+  });
+
+  it("refuses a schema that declares the field itself", () => {
+    expect(() =>
+      makeModel(unique("clash"), {
+        name: "Clash",
+        searchFields: [],
+        schema: z.object({ createdBy: text({ label: "Mine" }) }),
+      }),
+    ).toThrow(/createdBy.*reserved/);
+  });
+
+  it("confines a read with `where`, whatever the filters ask for", async () => {
+    const note = await sync(build());
+    await note.create({ title: "One" }, { createdBy: "u1" });
+    await note.create({ title: "Two" }, { createdBy: "u2" });
+    await note.create({ title: "Three" });
+
+    const own = [{ field: "createdBy", op: "$eq" as const, value: "u1" }];
+
+    const all = await note.read({ where: own });
+    expect(all.data.map((r) => r.title)).toEqual(["One"]);
+    expect(all.meta.total).toBe(1);
+
+    // a client filter can narrow further but never widen
+    const widened = await note.read({
+      where: own,
+      filters: { createdBy: "u2" },
+    });
+    expect(widened.data).toEqual([]);
+
+    const narrowed = await note.read({
+      where: own,
+      filters: { title: "One" },
+    });
+    expect(narrowed.data.map((r) => r.title)).toEqual(["One"]);
+  });
+
+  it("can be filtered, selected and sorted on", async () => {
+    const note = await sync(build());
+    await note.create({ title: "One" }, { createdBy: "u1" });
+    await note.create({ title: "Two" }, { createdBy: "u2" });
+
+    const filtered = await note.read({ filters: { createdBy: "u2" } });
+    expect(filtered.data.map((r) => r.title)).toEqual(["Two"]);
+
+    const selected = await note.read({ select: ["title", "createdBy"] });
+    expect(selected.data.every((r) => "createdBy" in r)).toBe(true);
+
+    const sorted = await note.read({ sort: "createdBy", order: "desc" });
+    expect(sorted.data.map((r) => r.title)).toEqual(["Two", "One"]);
+  });
+
+  it("lists the owner as a link to a user in the table definition", () => {
+    expect(build().def.fields).toContainEqual({
+      kind: "one",
+      name: "createdBy",
+      target: "user",
+    });
+  });
+});
+
 describe("makeModel read() select", () => {
   const build = () =>
     makeModel(unique("post"), {

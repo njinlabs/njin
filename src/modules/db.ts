@@ -18,9 +18,10 @@ type Collected = {
 
 const collectModels = async () => {
   const { default: userModel } = await import("../models/user");
+  const { default: accessGroupModel } = await import("../models/access_group");
   const { default: fileModel } = await import("../models/file");
 
-  const models: Collected[] = [userModel, fileModel];
+  const models: Collected[] = [userModel, accessGroupModel, fileModel];
   for (const factory of getConfig().models) {
     const { default: model } = await factory();
     models.push(model);

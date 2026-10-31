@@ -1,6 +1,7 @@
 import z from "zod";
-import { email, makeModel, text } from "../core/model";
+import { email, makeModel, relationMany, text } from "../core/model";
 import db from "../modules/db";
+import accessGroup from "./access_group";
 
 const user = makeModel("user", {
   name: "Pengguna",
@@ -11,6 +12,10 @@ const user = makeModel("user", {
       z.transform((value) => {
         return Bun.password.hashSync(value);
       }),
+    ),
+    // What the user may do is the union of what these groups grant; none means no access.
+    groups: relationMany({ label: "Access groups" }, accessGroup, (r) =>
+      r.optional(),
     ),
   }),
   searchFields: ["name", "email"],
