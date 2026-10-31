@@ -1,6 +1,7 @@
 import { describe, expect, it, mock } from "bun:test";
 import Elysia, { status } from "elysia";
 import z from "zod";
+import { compile } from "../../src/core/access";
 import * as realConfig from "../../src/core/config";
 import { defineTool } from "../../src/core/mcp_tool";
 import * as realElysiaModule from "../../src/modules/elysia";
@@ -27,6 +28,8 @@ const expand = (record: Record<string, unknown>) => {
 const fakeModel = {
   name: "Post",
   prefix: "post",
+  searchFields: ["title"],
+  def: { name: "post", fields: [], search: [] },
   validation: z.object({
     title: z.string(),
     // Mirrors the real user model's password field — the transform must run for MCP writes
@@ -187,7 +190,17 @@ const explode = defineTool({
   },
 });
 
-const CUSTOM_TOOLS = new Set(["publish_post", "ping", "explode"]);
+const whoami = defineTool({
+  name: "whoami",
+  description: "Says who is calling and what they may do.",
+  handler: (_args, { principal, can }) => ({
+    userId: principal.user.id,
+    canReadPost: can("post", "read"),
+    canEditPost: can("post", "update"),
+  }),
+});
+
+const CUSTOM_TOOLS = new Set(["publish_post", "ping", "explode", "whoami"]);
 
 const mcpConfig = {
   redirectUris: [] as string[],
@@ -195,6 +208,7 @@ const mcpConfig = {
     async () => ({ default: publishPost }),
     async () => ({ default: ping }),
     async () => ({ default: explode }),
+    async () => ({ default: whoami }),
   ] as realConfig.McpToolFactory[],
 };
 
@@ -214,20 +228,30 @@ mock.module("../../src/core/config", () => ({
   }),
 }));
 
+// What each bearer may do. "ok" is everything; "narrow" may read posts and nothing else.
+const GRANTS: Record<string, string[]> = {
+  "Bearer ok": ["*:*:all"],
+  "Bearer narrow": ["post:read:all"],
+  "Bearer nothing": [],
+};
+
 // Real Elysia plugin (macros can't be faked with a plain object) standing in for auth.ts's —
-// only "Bearer ok" authenticates, as an agent token.
+// only the bearers above authenticate, as an agent token.
 const fakeAuthPlugin = new Elysia({ name: "auth" }).macro({
   auth: {
-    resolve: ({ headers }) =>
-      headers.authorization === "Bearer ok"
-        ? {
-            principal: {
-              user: { id: "u1" },
-              kind: "pat" as const,
-              token: { id: "t1", name: "Test agent", clientId: null },
-            },
-          }
-        : status(401, { message: "Unauthorized" }),
+    resolve: ({ headers }) => {
+      const grants = GRANTS[headers.authorization ?? ""];
+      if (!grants) return status(401, { message: "Unauthorized" });
+
+      return {
+        principal: {
+          user: { id: "u1" },
+          kind: "pat" as const,
+          token: { id: "t1", name: "Test agent", clientId: null },
+          permissions: compile(grants),
+        },
+      };
+    },
   },
 });
 mock.module("../../src/modules/auth", () => ({
@@ -242,6 +266,10 @@ const removed: string[] = [];
 mock.module("../../src/modules/file", () => ({
   default: () => ({
     model: {
+      prefix: "file",
+      searchFields: ["name"],
+      validation: z.object({}),
+      def: { name: "file", fields: [], search: [] },
       read: async (opts: Record<string, unknown>) => {
         fileReadCalls.push(opts);
         return {
@@ -313,8 +341,12 @@ type ToolResult = {
   isError?: boolean;
 };
 
-const callTool = async (name: string, args: Record<string, unknown> = {}) => {
-  const res = await rpc("tools/call", { name, arguments: args });
+const callTool = async (
+  name: string,
+  args: Record<string, unknown> = {},
+  authorization = "Bearer ok",
+) => {
+  const res = await rpc("tools/call", { name, arguments: args }, authorization);
   const body = (await res.json()) as {
     result?: ToolResult;
     error?: { message: string };
@@ -332,6 +364,86 @@ describe("POST /mcp auth", () => {
   it("returns 401 without a valid token", async () => {
     const res = await rpc("tools/list", {}, "Bearer nope");
     expect(res.status).toBe(401);
+  });
+});
+
+describe("permissions of the connection", () => {
+  const narrow = "Bearer narrow";
+
+  it("lists only the models and settings it can do something with", async () => {
+    const { json } = await callTool("list_models", {}, narrow);
+
+    expect(json().models.map((m: { prefix: string }) => m.prefix)).toEqual([
+      "post",
+    ]);
+    expect(json().vars).toEqual([]);
+
+    const none = await callTool("list_models", {}, "Bearer nothing");
+    expect(none.json()).toEqual({ models: [], vars: [] });
+  });
+
+  it("reads what it may read", async () => {
+    const list = await callTool("read_records", { model: "post" }, narrow);
+    expect(list.isError).toBe(false);
+
+    const one = await callTool(
+      "get_record",
+      { model: "post", id: "p1" },
+      narrow,
+    );
+    expect(one.isError).toBe(false);
+    expect(one.json().title).toBe("Hello");
+  });
+
+  it("is refused what it may not do, as a readable error", async () => {
+    for (const [tool, args] of [
+      ["create_record", { model: "post", data: { title: "x" } }],
+      ["update_record", { model: "post", id: "p1", data: { title: "x" } }],
+      ["delete_record", { model: "post", id: "p1" }],
+      ["read_records", { model: "article" }],
+      ["get_record", { model: "article", id: "a1" }],
+    ] as const) {
+      const result = await callTool(tool, args, narrow);
+      expect(result.isError).toBe(true);
+      expect(result.text).toBe("Forbidden");
+    }
+  });
+
+  it("cannot touch settings or files without the grants", async () => {
+    for (const [tool, args] of [
+      ["get_vars", { group: "seo" }],
+      ["update_vars", { group: "seo", data: { title: "x" } }],
+      ["create_upload_url", {}],
+      ["list_files", {}],
+      ["get_file", { id: "f1" }],
+      ["delete_file", { id: "f1" }],
+    ] as const) {
+      const result = await callTool(tool, args, narrow);
+      expect(result.isError).toBe(true);
+      expect(result.text).toBe("Forbidden");
+    }
+  });
+
+  it("changes nothing when refused", async () => {
+    const before = records.get("p1");
+    await callTool(
+      "update_record",
+      { model: "post", id: "p1", data: { title: "x" } },
+      narrow,
+    );
+    await callTool("delete_record", { model: "post", id: "p1" }, narrow);
+
+    expect(records.get("p1")).toEqual(before);
+  });
+
+  it("hands a custom tool who is calling and what they may do", async () => {
+    const result = await callTool("whoami", {}, narrow);
+
+    expect(result.json()).toEqual({
+      userId: "u1",
+      canReadPost: true,
+      canEditPost: false,
+    });
   });
 });
 

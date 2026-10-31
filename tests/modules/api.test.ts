@@ -15,6 +15,8 @@ records.set("p1", { id: "p1", title: "Hello" });
 const fakeModel = {
   name: "Post",
   prefix: "post",
+  searchFields: ["title"],
+  def: { name: "post", fields: [], search: [] },
   validation: z.object({
     title: z.string(),
     owner: z.string().meta({ renderAs: "relation" }).optional(),

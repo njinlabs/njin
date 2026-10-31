@@ -130,13 +130,14 @@ export const createUploadTicket = async (input: {
   };
 };
 
-// Called by the check_upload tool: what has landed on a ticket so far.
-export const getUploadStatus = async (uploadId: string) => {
+// Called by the check_upload tool: what has landed on a ticket so far. Only for whoever asked
+// for the ticket — someone else's is "unknown".
+export const getUploadStatus = async (uploadId: string, userId: string) => {
   const ticket = (await db().find(
     mcpUploadTable,
     uploadId,
   )) as McpUpload | null;
-  if (!ticket) return null;
+  if (!ticket || ticket.createdBy !== userId) return null;
 
   const files = (
     await Promise.all(
@@ -270,7 +271,10 @@ const mcpUpload = makeModule(() => {
 
           const created: FileRecord[] = [];
           for (const file of normalized) {
-            const [record] = (await fileModule().upload(file)) as FileRecord[];
+            const [record] = (await fileModule().upload(
+              file,
+              ticket.createdBy ? { createdBy: ticket.createdBy } : {},
+            )) as FileRecord[];
             created.push(record!);
           }
 

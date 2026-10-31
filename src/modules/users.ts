@@ -1,14 +1,16 @@
 import Elysia, { status } from "elysia";
 import z from "zod";
+import { HttpError } from "../core/http_error";
 import { filtersQuerySchema } from "../core/model";
 import { makeModule } from "../core/module";
 import auth from "./auth";
 import elysia from "./elysia";
+import { getGuard } from "./guard";
 
-const stripPassword = <T extends { password: unknown }>({
-  password: _,
-  ...rest
-}: T) => rest;
+const omitPassword = (record: Record<string, unknown>) => {
+  const { password: _, ...rest } = record;
+  return rest;
+};
 
 const users = makeModule(() => {
   const fn = () => {};
@@ -16,22 +18,42 @@ const users = makeModule(() => {
   fn.init = async () => {
     const { default: user } = await import("../models/user");
     const authPlugin = (await auth()).plugin;
+    const guard = await getGuard();
+
+    // Which groups a user is in decides what they can do, so handing them out is the same power
+    // as editing the groups: whoever can only edit users could otherwise make themselves an admin.
+    const assertMayAssignGroups = (
+      principal: Parameters<typeof guard.can>[0],
+      groups: unknown,
+    ) => {
+      if (
+        groups !== undefined &&
+        !guard.can(principal, "access_group", "update")
+      ) {
+        throw new HttpError(
+          403,
+          "Putting a user in access groups needs access to manage access groups",
+        );
+      }
+    };
 
     const controller = new Elysia({ prefix: "/api/user" })
       .use(authPlugin)
       .get(
         "/",
-        async ({ query: { search, page, limit, sort, order, filters } }) => {
-          const result = await user.read({
-            search,
-            page,
-            limit,
-            sort,
-            order,
-            filters,
-          });
+        async ({
+          principal,
+          query: { search, page, limit, sort, order, filters },
+        }) => {
+          const gate = guard.gate(principal, user);
+          const result = await user.read(
+            gate.read({ search, page, limit, sort, order, filters }),
+          );
 
-          return { data: result.data.map(stripPassword), meta: result.meta };
+          return {
+            data: gate.shapeAll(result.data).map(omitPassword),
+            meta: result.meta,
+          };
         },
         {
           auth: { session: true },
@@ -47,10 +69,13 @@ const users = makeModule(() => {
       )
       .get(
         "/:id",
-        async ({ params }) => {
+        async ({ params, principal }) => {
+          const gate = guard.gate(principal, user);
+          await gate.seeing(params.id);
+
           const data = await user.show(params.id);
 
-          return { data: data ? stripPassword(data) : null };
+          return { data: data ? omitPassword(gate.shape(data)) : null };
         },
         {
           auth: { session: true },
@@ -59,19 +84,27 @@ const users = makeModule(() => {
       )
       .post(
         "/",
-        async ({ body }) => {
-          const created = await user.create(body);
+        async ({ body, principal }) => {
+          const gate = guard.gate(principal, user);
+          const owner = gate.creating();
+          assertMayAssignGroups(principal, body.groups);
 
-          return { data: stripPassword(created) };
+          const created = await user.create(body, owner);
+
+          return { data: omitPassword(gate.echo(created)) };
         },
         { auth: { session: true }, body: user.validation },
       )
       .put(
         "/:id",
-        async ({ params, body }) => {
+        async ({ params, body, principal }) => {
+          const gate = guard.gate(principal, user);
+          await gate.changing(params.id, "update");
+          assertMayAssignGroups(principal, body.groups);
+
           const updated = await user.update(params.id, body);
 
-          return { data: stripPassword(updated) };
+          return { data: omitPassword(gate.echo(updated)) };
         },
         {
           auth: { session: true },
@@ -81,18 +114,21 @@ const users = makeModule(() => {
       )
       .delete(
         "/:id",
-        async ({ params, user: actingUser }) => {
+        async ({ params, principal }) => {
           // The only recovery path for a locked-out instance is a manual DB edit —
           // setup is permanently disabled once any user exists, so block self-delete.
-          if (params.id === actingUser.id) {
+          if (params.id === principal.user.id) {
             return status(400, {
               message: "You cannot delete your own account",
             });
           }
 
+          const gate = guard.gate(principal, user);
+          await gate.changing(params.id, "delete");
+
           const deleted = await user.destroy(params.id);
 
-          return { data: stripPassword(deleted) };
+          return { data: omitPassword(gate.echo(deleted)) };
         },
         {
           auth: { session: true },

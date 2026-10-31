@@ -1,5 +1,6 @@
 import type { ToolAnnotations } from "@modelcontextprotocol/sdk/types.js";
 import type z from "zod";
+import type { Principal } from "../modules/token";
 
 export type McpToolShape = Record<string, z.ZodType>;
 
@@ -8,6 +9,10 @@ export type McpToolContext = {
   token: { id: string; name: string; createdBy: string | null };
   // Public base URL of the site ("https://example.com"), for building absolute links.
   baseUrl: string;
+  // Who is calling, with what they may do. A tool that reads or writes content outside the
+  // models (which are checked for it) should ask first: `can("post", "update")`.
+  principal: Principal;
+  can(resource: string, action: string): boolean;
 };
 
 export type McpTool<Shape extends McpToolShape = McpToolShape> = {

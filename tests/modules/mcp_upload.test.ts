@@ -171,7 +171,7 @@ describe("POST /mcp/upload/:ticket", () => {
       ["c.pdf", "3"],
     ]);
 
-    const status = await getUploadStatus(ticket.upload_id);
+    const status = await getUploadStatus(ticket.upload_id, "admin1");
     expect(status!.files.map((f) => f.name)).toEqual([
       "a.png",
       "b.jpg",
@@ -263,7 +263,9 @@ describe("POST /mcp/upload/:ticket", () => {
 
     expect(res.status).toBe(415);
     expect(uploaded).toHaveLength(0);
-    expect((await getUploadStatus(ticket.upload_id))!.remaining).toBe(10);
+    expect((await getUploadStatus(ticket.upload_id, "admin1"))!.remaining).toBe(
+      10,
+    );
   });
 
   it("rejects a request with no file field", async () => {
@@ -304,13 +306,22 @@ describe("POST /mcp/upload/:ticket", () => {
     });
 
     expect((await post(ticket.url, [["a.png", "x"]])).status).toBe(404);
-    expect((await getUploadStatus(ticket.upload_id))!.expired).toBe(true);
+    expect((await getUploadStatus(ticket.upload_id, "admin1"))!.expired).toBe(
+      true,
+    );
   });
 });
 
 describe("getUploadStatus", () => {
   it("returns null for an unknown ticket", async () => {
-    expect(await getUploadStatus("nope")).toBeNull();
+    expect(await getUploadStatus("nope", "admin1")).toBeNull();
+  });
+
+  it("answers only the user who asked for the ticket", async () => {
+    const ticket = await newTicket();
+
+    expect(await getUploadStatus(ticket.upload_id, "admin1")).not.toBeNull();
+    expect(await getUploadStatus(ticket.upload_id, "someone-else")).toBeNull();
   });
 });
 
@@ -323,6 +334,6 @@ describe("pruning", () => {
 
     await newTicket();
 
-    expect(await getUploadStatus(old.upload_id)).toBeNull();
+    expect(await getUploadStatus(old.upload_id, "admin1")).toBeNull();
   });
 });

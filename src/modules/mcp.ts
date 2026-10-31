@@ -4,6 +4,7 @@ import Elysia from "elysia";
 import z from "zod";
 import { toAdminSchema } from "../core/admin_schema";
 import { getConfig, type ModelFactory, type VarsFactory } from "../core/config";
+import type { Gate } from "../core/guarded";
 import type { McpTool } from "../core/mcp_tool";
 import { isDraftable, isI18n } from "../core/model";
 import { makeModule } from "../core/module";
@@ -12,8 +13,10 @@ import { isDraftableVars, isI18nVars } from "../core/vars";
 import auth from "./auth";
 import elysia from "./elysia";
 import fileModule from "./file";
+import { getGuard } from "./guard";
 import logger from "./logger";
 import { createUploadTicket, getUploadStatus } from "./mcp_upload";
+import type { Principal } from "./token";
 
 type Model = Awaited<ReturnType<ModelFactory>>["default"];
 type VarsGroup = Awaited<ReturnType<VarsFactory>>["default"];
@@ -144,7 +147,11 @@ const stubWarning = (field: string, recordId?: string) =>
 // the agent can't tell a link that resolved from one pointing at nothing (a dangling link
 // comes back as a bare id, not as a record). Re-read through show(), the same FETCH
 // get_record uses, so related records come back expanded, and flag any link that didn't resolve.
-const readBack = async (model: Model, written: Record<string, unknown>) => {
+const readBack = async (
+  model: Model,
+  written: Record<string, unknown>,
+  gate: Gate,
+) => {
   const id = String(written.id);
   const shown = ((await model.show(id)) ?? written) as Record<string, unknown>;
 
@@ -169,7 +176,8 @@ const readBack = async (model: Model, written: Record<string, unknown>) => {
     }
   }
 
-  return warnings.length ? { ...shown, _warnings: warnings } : shown;
+  const out = gate.echo(shown);
+  return warnings.length ? { ...out, _warnings: warnings } : out;
 };
 
 const fail = (message: string): ToolResult => ({
@@ -201,6 +209,8 @@ const run = async (
     throw e;
   }
 };
+
+const MODEL_ACTIONS = ["read", "create", "update", "delete", "publish"];
 
 const BUILT_IN_TOOLS = new Set([
   "list_models",
@@ -264,6 +274,7 @@ const mcp = makeModule(() => {
 
   fn.init = async () => {
     const { plugin: authPlugin } = await auth();
+    const guard = await getGuard();
 
     const models = new Map<string, Model>();
     for (const factory of getConfig().models) {
@@ -320,10 +331,13 @@ const mcp = makeModule(() => {
 
     // One server per request — the endpoint is stateless (no session to keep alive), which
     // also suits njin's workers being evicted when idle.
-    const buildServer = (
-      token: { id: string; name: string; createdBy: string | null },
-      base: string,
-    ) => {
+    const buildServer = (principal: Principal, base: string) => {
+      const token = {
+        id: principal.token.id,
+        name: principal.token.name ?? "Unnamed",
+        createdBy: principal.user.id,
+      };
+
       const server = new McpServer(
         { name: "njin", version: "1.0.0" },
         { instructions: INSTRUCTIONS },
@@ -342,7 +356,19 @@ const mcp = makeModule(() => {
         },
         async () => {
           audit("list_models");
-          return ok(catalog);
+          // Only what this connection can do something with.
+          return ok({
+            models: catalog.models.filter((entry) =>
+              MODEL_ACTIONS.some((action) =>
+                guard.can(principal, entry.prefix, action),
+              ),
+            ),
+            vars: catalog.vars.filter((entry) =>
+              ["read", "write"].some((action) =>
+                guard.can(principal, `vars.${entry.prefix}`, action),
+              ),
+            ),
+          });
         },
       );
 
@@ -398,18 +424,22 @@ const mcp = makeModule(() => {
                 ? undefined
                 : options.populate;
             const target = getModel(model);
-            const result = await target.read({ ...options, populate });
-
-            const warnings = (result.data as Record<string, unknown>[]).flatMap(
-              (row) =>
-                stubFieldsOf(target, row).map((field) =>
-                  stubWarning(field, String(row.id)),
-                ),
+            const gate = guard.gate(principal, target);
+            const result = await target.read(
+              gate.read({ ...options, populate }),
             );
 
+            const rows = result.data as Record<string, unknown>[];
+            const warnings = rows.flatMap((row) =>
+              stubFieldsOf(target, row).map((field) =>
+                stubWarning(field, String(row.id)),
+              ),
+            );
+
+            const shaped = { ...result, data: gate.shapeAll(rows) };
             return warnings.length
-              ? { ...result, _warnings: warnings.slice(0, 20) }
-              : result;
+              ? { ...shaped, _warnings: warnings.slice(0, 20) }
+              : shaped;
           }),
       );
 
@@ -434,15 +464,19 @@ const mcp = makeModule(() => {
           run(async () => {
             audit("get_record", model, id);
             const target = getModel(model);
+            const gate = guard.gate(principal, target);
+            await gate.seeing(bareId(model, id));
+
             const record = (await target.show(bareId(model, id), {
               locale,
             })) as Record<string, unknown> | undefined;
             if (!record) throw new Error(`No ${model} record with id "${id}"`);
 
             const stubs = stubFieldsOf(target, record);
+            const shaped = gate.shape(record);
             return stubs.length
-              ? { ...record, _warnings: stubs.map((f) => stubWarning(f)) }
-              : record;
+              ? { ...shaped, _warnings: stubs.map((f) => stubWarning(f)) }
+              : shaped;
           }),
       );
 
@@ -461,13 +495,17 @@ const mcp = makeModule(() => {
           run(async () => {
             audit("create_record", model);
             const target = getModel(model);
+            const gate = guard.gate(principal, target);
+            const owner = gate.creating();
             return readBack(
               target,
               (await target.create(
                 target.validation.parse(
                   normalizeRelations(target, data),
                 ) as never,
+                owner,
               )) as Record<string, unknown>,
+              gate,
             );
           }),
       );
@@ -489,6 +527,8 @@ const mcp = makeModule(() => {
           run(async () => {
             audit("update_record", model, id);
             const target = getModel(model);
+            const gate = guard.gate(principal, target);
+            await gate.changing(bareId(model, id), "update");
             return readBack(
               target,
               (await target.update(
@@ -497,6 +537,7 @@ const mcp = makeModule(() => {
                   .partial()
                   .parse(normalizeRelations(target, data)) as never,
               )) as Record<string, unknown>,
+              gate,
             );
           }),
       );
@@ -512,7 +553,14 @@ const mcp = makeModule(() => {
         async ({ model, id }) =>
           run(async () => {
             audit("delete_record", model, id);
-            return getModel(model).destroy(bareId(model, id));
+            const target = getModel(model);
+            const gate = guard.gate(principal, target);
+            await gate.changing(bareId(model, id), "delete");
+
+            const removed = await target.destroy(bareId(model, id));
+            return removed
+              ? gate.echo(removed as Record<string, unknown>)
+              : removed;
           }),
       );
 
@@ -546,10 +594,13 @@ const mcp = makeModule(() => {
           run(async () => {
             audit("publish_record", model, id);
             const target = getDraftable(model);
+            const gate = guard.gate(principal, target);
+            await gate.changing(bareId(model, id), "publish");
             await target.publish(bareId(model, id), { locale });
             return readBack(
               target,
               (await target.show(bareId(model, id))) as never,
+              gate,
             );
           }),
       );
@@ -576,10 +627,13 @@ const mcp = makeModule(() => {
           run(async () => {
             audit("unpublish_record", model, id);
             const target = getDraftable(model);
+            const gate = guard.gate(principal, target);
+            await gate.changing(bareId(model, id), "publish");
             await target.unpublish(bareId(model, id), { locale });
             return readBack(
               target,
               (await target.show(bareId(model, id))) as never,
+              gate,
             );
           }),
       );
@@ -606,10 +660,13 @@ const mcp = makeModule(() => {
           run(async () => {
             audit("discard_changes", model, id);
             const target = getDraftable(model);
+            const gate = guard.gate(principal, target);
+            await gate.changing(bareId(model, id), "publish");
             await target.discard(bareId(model, id), { locale });
             return readBack(
               target,
               (await target.show(bareId(model, id))) as never,
+              gate,
             );
           }),
       );
@@ -634,7 +691,16 @@ const mcp = makeModule(() => {
             if (!isI18n(target)) {
               throw new Error(`Model "${model}" is not marked "i18n".`);
             }
-            return target.removeLocale(bareId(model, id), locale);
+            const gate = guard.gate(principal, target);
+            await gate.changing(bareId(model, id), "update");
+
+            const removed = await target.removeLocale(
+              bareId(model, id),
+              locale,
+            );
+            return removed
+              ? gate.echo(removed as Record<string, unknown>)
+              : removed;
           }),
       );
 
@@ -665,6 +731,7 @@ const mcp = makeModule(() => {
           run(async () => {
             audit("get_vars", group);
             const target = getGroup(group);
+            guard.vars(principal, group)("read");
             const values = (await (published
               ? getDraftableGroup(group).published.get({ locale })
               : target.get({ locale }))) as Record<string, unknown>;
@@ -726,7 +793,9 @@ const mcp = makeModule(() => {
           async ({ group, locale }) =>
             run(async () => {
               audit(name, group);
-              return getDraftableGroup(group)[action]({ locale });
+              const target = getDraftableGroup(group);
+              guard.vars(principal, group)("write");
+              return target[action]({ locale });
             }),
         );
       }
@@ -747,6 +816,7 @@ const mcp = makeModule(() => {
           run(async () => {
             audit("update_vars", group);
             const target = getGroup(group);
+            guard.vars(principal, group)("write");
             return target.update(
               target.validation
                 .partial()
@@ -765,6 +835,8 @@ const mcp = makeModule(() => {
         async () =>
           run(async () => {
             audit("create_upload_url");
+            // Whoever may add a file may ask for a link to add files with.
+            guard.gate(principal, fileModule().model).creating();
             return {
               ...(await createUploadTicket({
                 tokenId: token.id,
@@ -792,7 +864,7 @@ const mcp = makeModule(() => {
         async ({ upload_id }) =>
           run(async () => {
             audit("check_upload", undefined, upload_id);
-            const status = await getUploadStatus(upload_id);
+            const status = await getUploadStatus(upload_id, principal.user.id);
             if (!status) throw new Error("Unknown upload_id.");
             return status;
           }),
@@ -816,10 +888,16 @@ const mcp = makeModule(() => {
         async (options) =>
           run(async () => {
             audit("list_files");
-            return fileModule().model.read({
-              ...options,
-              sort: options.sort ?? "createdAt",
-            });
+            const files = fileModule().model;
+            const gate = guard.gate(principal, files);
+            const result = await files.read(
+              gate.read({ ...options, sort: options.sort ?? "createdAt" }),
+            );
+
+            return {
+              ...result,
+              data: gate.shapeAll(result.data as Record<string, unknown>[]),
+            };
           }),
       );
 
@@ -834,9 +912,13 @@ const mcp = makeModule(() => {
         async ({ id }) =>
           run(async () => {
             audit("get_file", undefined, id);
-            const record = await fileModule().model.show(bareId("file", id));
+            const files = fileModule().model;
+            const gate = guard.gate(principal, files);
+            await gate.seeing(bareId("file", id));
+
+            const record = await files.show(bareId("file", id));
             if (!record) throw new Error(`No file with id "${id}"`);
-            return record;
+            return gate.shape(record as Record<string, unknown>);
           }),
       );
 
@@ -852,7 +934,13 @@ const mcp = makeModule(() => {
         async ({ id }) =>
           run(async () => {
             audit("delete_file", undefined, id);
-            return fileModule().remove(bareId("file", id));
+            const gate = guard.gate(principal, fileModule().model);
+            await gate.changing(bareId("file", id), "delete");
+
+            const removed = await fileModule().remove(bareId("file", id));
+            return typeof removed === "object" && removed !== null
+              ? gate.echo(removed as Record<string, unknown>)
+              : removed;
           }),
       );
 
@@ -868,7 +956,13 @@ const mcp = makeModule(() => {
           async (args) =>
             run(async () => {
               audit(tool.name);
-              return tool.handler(args, { token, baseUrl: base });
+              return tool.handler(args, {
+                token,
+                baseUrl: base,
+                principal,
+                can: (resource, action) =>
+                  guard.can(principal, resource, action) !== false,
+              });
             }, okText),
         );
       }
@@ -879,14 +973,7 @@ const mcp = makeModule(() => {
     const controller = new Elysia().use(authPlugin).all(
       "/mcp",
       async ({ request, principal }) => {
-        const server = buildServer(
-          {
-            id: principal.token.id,
-            name: principal.token.name ?? "Unnamed",
-            createdBy: principal.user.id,
-          },
-          publicBase(request),
-        );
+        const server = buildServer(principal, publicBase(request));
         const transport = new WebStandardStreamableHTTPServerTransport({
           sessionIdGenerator: undefined,
           enableJsonResponse: true,

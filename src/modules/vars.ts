@@ -31,6 +31,10 @@ const vars = makeModule(() => {
         fallback: z.enum(["true", "false"]).optional(),
       });
 
+      // A settings group is read or written as a whole; publishing counts as writing.
+      const canRead = { can: [`vars.${group.prefix}`, "read"] } as const;
+      const canWrite = { can: [`vars.${group.prefix}`, "write"] } as const;
+
       const controller = new Elysia({ prefix: `/api/vars/${group.prefix}` })
         .use(authPlugin.plugin)
         .get(
@@ -41,10 +45,10 @@ const vars = makeModule(() => {
               fallback: query.fallback !== "false",
             }),
           }),
-          { auth: true, query: read },
+          { auth: canRead, query: read },
         )
         .put("/", async ({ body }) => ({ data: await group.update(body) }), {
-          auth: true,
+          auth: canWrite,
           body: group.validation.partial(),
         });
 
@@ -58,7 +62,7 @@ const vars = makeModule(() => {
               fallback: query.fallback !== "false",
             }),
           }),
-          { auth: true, query: read },
+          { auth: canRead, query: read },
         );
 
         for (const action of ["publish", "unpublish", "discard"] as const) {
@@ -68,7 +72,7 @@ const vars = makeModule(() => {
               data: await group[action](languagesOf(query.locale)),
             }),
             {
-              auth: true,
+              auth: canWrite,
               query: z.object({ locale: z.coerce.string().optional() }),
             },
           );

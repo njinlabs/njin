@@ -1,4 +1,5 @@
 import { describe, expect, it, mock } from "bun:test";
+import z from "zod";
 import * as realConfig from "../../src/core/config";
 import type { TableDef } from "../../src/core/db/contract";
 import * as realElysiaModule from "../../src/modules/elysia";
@@ -31,6 +32,8 @@ await useTestDb([fileDef]);
 mock.module("../../src/models/file", () => ({
   default: {
     prefix: "file",
+    searchFields: ["name"],
+    validation: z.object({}),
     def: fileDef,
     read: async () => ({ data: [], meta: {} }),
   },
@@ -39,6 +42,7 @@ mock.module("../../src/models/file", () => ({
 mock.module("../../src/core/config", () => ({
   ...realConfig,
   getConfig: () => ({
+    models: [],
     adapters: {
       file: {
         // No `dir` — the S3-style adapter case, where /uploads/* should never be mounted.

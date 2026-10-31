@@ -3,12 +3,13 @@ import Elysia, { status } from "elysia";
 import moment from "moment";
 import z from "zod";
 import { getConfig } from "../core/config";
-import type { makeModel } from "../core/model";
+import { type CreateOptions, type makeModel, OWNER_FIELD } from "../core/model";
 import { makeModule } from "../core/module";
 import { resolveSafePath } from "../core/path_guard";
 import auth from "./auth";
 import db from "./db";
 import elysia from "./elysia";
+import { getGuard } from "./guard";
 
 export type FileUpload<Meta> = {
   id: string;
@@ -56,7 +57,7 @@ const file = makeModule(() => {
   let model: ReturnType<typeof makeModel>;
   // Set in init() once the file model is loaded — shared by the REST routes below and any
   // other caller (e.g. the MCP upload flow) so every path goes through the same adapter.
-  let upload: (file: File) => Promise<unknown>;
+  let upload: (file: File, options?: CreateOptions) => Promise<unknown>;
   let remove: (id: string) => Promise<unknown>;
 
   const fn = () => ({ model, upload, remove });
@@ -68,9 +69,10 @@ const file = makeModule(() => {
 
     // Resolves to a one-element array — that is the response shape of POST /api/file, which
     // the admin panel and the MCP upload flow already rely on.
-    upload = async (file) => [
+    upload = async (file, options = {}) => [
       await db().insert(baseModel.def, {
         ...(await getConfig().adapters.file.write(file)),
+        [OWNER_FIELD]: options.createdBy ?? null,
         createdAt: moment().toISOString(),
         updatedAt: moment().toISOString(),
       }),
@@ -87,12 +89,19 @@ const file = makeModule(() => {
       return data;
     };
 
+    const guard = await getGuard();
+
     const controller = new Elysia({ prefix: "/api/file" })
       .use((await auth()).plugin)
       .get(
         "/",
-        async ({ query: { search, page, limit, sort, order } }) => {
-          return baseModel.read({ search, page, limit, sort, order });
+        async ({ query: { search, page, limit, sort, order }, principal }) => {
+          const gate = guard.gate(principal, baseModel);
+          const result = await baseModel.read(
+            gate.read({ search, page, limit, sort, order }),
+          );
+
+          return { ...result, data: gate.shapeAll(result.data) };
         },
         {
           auth: true,
@@ -107,8 +116,17 @@ const file = makeModule(() => {
       )
       .delete(
         "/:id",
-        async ({ params }) => {
-          return { data: await remove(params.id) };
+        async ({ params, principal }) => {
+          const gate = guard.gate(principal, baseModel);
+          await gate.changing(params.id, "delete");
+
+          const removed = await remove(params.id);
+          return {
+            data:
+              typeof removed === "object" && removed !== null
+                ? gate.echo(removed as Record<string, unknown>)
+                : removed,
+          };
         },
         {
           params: z.object({
@@ -119,7 +137,9 @@ const file = makeModule(() => {
       )
       .post(
         "/",
-        async ({ body }) => {
+        async ({ body, principal }) => {
+          const owner = guard.gate(principal, baseModel).creating();
+
           // Only filesystem-backed adapters (dir set) serve uploads from this origin.
           if (getConfig().adapters.file.dir && hasActiveExt(body.file.name)) {
             return status(422, {
@@ -128,7 +148,7 @@ const file = makeModule(() => {
             });
           }
 
-          return { data: await upload(body.file) };
+          return { data: await upload(body.file, owner) };
         },
         {
           auth: true,

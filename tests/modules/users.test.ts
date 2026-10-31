@@ -1,5 +1,6 @@
 import { describe, expect, it, mock } from "bun:test";
 import z from "zod";
+import * as realConfig from "../../src/core/config";
 import realUserModel from "../../src/models/user";
 import * as realElysiaModule from "../../src/modules/elysia";
 import { makeFakeAuthPlugin } from "../helpers/fake_auth";
@@ -69,6 +70,11 @@ mock.module("../../src/models/user", () => ({
       fakeDb.update(id, data),
     destroy: (id: string) => fakeDb.destroy(id),
   },
+}));
+
+mock.module("../../src/core/config", () => ({
+  ...realConfig,
+  getConfig: () => ({ models: [] }),
 }));
 
 const fakeAuthPlugin = makeFakeAuthPlugin();

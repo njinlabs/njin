@@ -2,6 +2,7 @@ import { afterAll, describe, expect, it, mock } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import z from "zod";
 import * as realConfig from "../../src/core/config";
 import type { TableDef } from "../../src/core/db/contract";
 import * as realElysiaModule from "../../src/modules/elysia";
@@ -42,6 +43,8 @@ const db = await useTestDb([fileDef]);
 mock.module("../../src/models/file", () => ({
   default: {
     prefix: "file",
+    searchFields: ["name"],
+    validation: z.object({}),
     def: fileDef,
     read: async () => ({
       data: [],
@@ -53,6 +56,7 @@ mock.module("../../src/models/file", () => ({
 mock.module("../../src/core/config", () => ({
   ...realConfig,
   getConfig: () => ({
+    models: [],
     rootDir: projectRoot,
     adapters: {
       file: {

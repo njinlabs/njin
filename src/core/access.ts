@@ -274,7 +274,7 @@ const idOf = (value: unknown) =>
     ? (value as { id: unknown }).id
     : value;
 
-export const isOwner = (row: { createdBy?: unknown }, userId: string) =>
+export const isOwner = (row: Record<string, unknown>, userId: string) =>
   idOf(row.createdBy) === userId;
 
 export const minimal = (

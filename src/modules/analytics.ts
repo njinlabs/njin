@@ -125,6 +125,7 @@ const analytics = makeModule(() => {
 
   fn.init = async () => {
     const authPlugin = (await auth()).plugin;
+    const canRead = { can: ["analytics", "read"] } as const;
 
     const controller = new Elysia({ prefix: "/api/analytics" })
       .use(authPlugin)
@@ -143,7 +144,7 @@ const analytics = makeModule(() => {
 
           return { data: { totalPageviews, uniqueVisitors } };
         },
-        { auth: true, query: rangeQuery },
+        { auth: canRead, query: rangeQuery },
       )
       .get(
         "/by-country",
@@ -159,7 +160,7 @@ const analytics = makeModule(() => {
             data: rows.map(({ key, count }) => ({ country: key, count })),
           };
         },
-        { auth: true, query: rangeQuery },
+        { auth: canRead, query: rangeQuery },
       )
       .get(
         "/by-referrer",
@@ -175,7 +176,7 @@ const analytics = makeModule(() => {
             data: rows.map(({ key, count }) => ({ referrer: key, count })),
           };
         },
-        { auth: true, query: rangeQuery },
+        { auth: canRead, query: rangeQuery },
       )
       .get(
         "/by-page",
@@ -192,7 +193,7 @@ const analytics = makeModule(() => {
           };
         },
         {
-          auth: true,
+          auth: canRead,
           query: rangeQuery.omit({ path: true }),
         },
       )
@@ -214,7 +215,7 @@ const analytics = makeModule(() => {
           };
         },
         {
-          auth: true,
+          auth: canRead,
           query: rangeQuery.extend({
             interval: z.enum(["day", "hour"]).default("day"),
           }),
