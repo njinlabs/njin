@@ -113,6 +113,8 @@ const post = makeModel("post", {
 export default post;
 ```
 
+Every record also gets `id`, `createdAt`, `updatedAt` and `createdBy` (the user who made it) for free. Don't declare a field named `createdBy` — the name is reserved, and the server fills it in.
+
 ### Data types
 
 `text`, `email`, `richtext`, `numeric`, `boolean`, `date`, `select`, `array`, `object`, `relation`, `relationMany`, `file`, `multiFile`.
@@ -625,7 +627,7 @@ Add custom JavaScript/CSS in `src/client/main.ts` and `src/client/app.css`.
 
 ## API reference
 
-All endpoints require `Authorization: Bearer <token>` header.
+All endpoints require `Authorization: Bearer <token>` header, and the token's user must be allowed to do what they ask by their access groups (`403`; a record that is someone else's under an `own` grant is `404`) — see [Access control](#access-control).
 
 ```
 GET    /img?url=&w=&h=&q=         → image/webp  (no auth required, browser-cached)
@@ -636,8 +638,22 @@ POST   /api/setup                 → { data: { token, user } }   first-run only
 POST   /api/auth/login            → { data: { token, user } }
 GET    /api/auth/check-token      → { data: user }
 DELETE /api/auth/logout
+GET    /api/auth/permissions      → { data: [{ resource, scoped, actions: { read: "all" | "own" | "ref", ... } }] }   what the caller may do
 
-GET    /api/schema                → full schema for admin panel
+GET    /api/token                 → { data: [...] }   your sessions, personal tokens and connected apps (session only)
+POST   /api/token                 → { data: { ..., token } }   body: { name, scopes?: ["article:read", ...] } — the token is shown once
+DELETE /api/token/:id
+
+GET    /api/access_group          → { data: [...], meta: {...} }   (session only; same shape as /api/{prefix})
+POST   /api/access_group          → { data: {...} }   body: { name, description?, grants: ["article:*:own", ...] } — 422 lists the invalid grants
+GET    /api/access_group/:id      PUT /api/access_group/:id      DELETE /api/access_group/:id
+                                     409 on a change that would leave nobody with full access
+GET    /api/access/catalog        → { data: [{ resource, actions, scoped }] }   every resource and action a grant can name here
+
+GET    /api/oauth/consents        → { data: [...] }   apps the user connected over OAuth (session only)
+PUT    /api/oauth/consents/:id    → body: { scopes } — narrow an app; DELETE disconnects it and its tokens
+
+GET    /api/schema                → schema for the admin panel — only the models and vars the caller has access to
 
 GET    /api/{prefix}              → { data: [...], meta: { total, page, limit, pageCount } }
 POST   /api/{prefix}              → { data: {...} }
@@ -658,7 +674,8 @@ GET    /uploads/*                 → uploaded file bytes (no auth — public UR
                                      files from their own public URL instead.)
 
 GET    /api/user                  → { data: [...], meta: {...} }   (same shape as /api/{prefix}, password always stripped)
-POST   /api/user                  → { data: {...} }   body: { name, email, password } — password is hashed server-side
+POST   /api/user                  → { data: {...} }   body: { name, email, password, groups? } — password is hashed server-side; `groups` needs `access_group:update` too
+                                     /api/user needs a session token and the `user` grants
 GET    /api/user/:id              → { data: {...} | null }
 PUT    /api/user/:id              → { data: {...} }
 DELETE /api/user/:id              → { data: {...} }   400 if deleting your own account (setup is permanently locked after first user)
@@ -675,6 +692,29 @@ GET    /api/analytics/timeseries  → { data: [{ date, count }] }
 ```
 
 ---
+
+## Access control
+
+Nobody can do anything just by having an account. A user is in any number of **access groups**; each group holds **grants**, and the user can do whatever their groups grant, added together (no "deny"). The first admin is put in the built-in **Full access** group (`*:*:all`).
+
+A grant is `<resource>:<action>[:<scope>]`:
+
+```
+post:*:own          # every action on posts, only ones the user created
+post:read:all       # read every post   (post:read means the same)
+post:publish        # publish / unpublish — draftable models only
+category:read       # read categories whole
+vars.general:read   # a vars group: read | write (publishing counts as writing)
+file:create:own     # resources: a model prefix, vars.<prefix>, file, user, access_group, analytics
+*:*:all             # everything
+```
+
+- `own` means `createdBy` is the caller. Someone else's record is `404`. Records with no `createdBy` (seeded, or older) need `all`. Vars groups have no owner and only take `all`.
+- Being allowed to read, create or update `post` also lets the user *pick* what it links to: for `category` they get a **reference** — each record's id and label (the relation's `labelKey`, else the first search field), nothing more — and `category` expanded inside a post is cut down the same way. Add `category:read` for the rest. This follows from your relations; there is nothing to configure.
+- Groups are managed over `/api/access_group` (or the admin panel). A grant is validated against `/api/access/catalog`. Assigning a user to groups needs `access_group:update`, and nobody may be left without full access.
+- Personal and OAuth tokens carry **scopes** (`<resource>:<action>`, `*` allowed) and can never do more than the user they belong to. Only a session token manages users, groups and tokens.
+- Access is worked out on every request, so changing a group or removing a user is effective immediately, agents included.
+- Code you write (hooks, helpers, templates, custom MCP tools) calls the model directly and is **not** checked: it is yours to guard. In a custom MCP tool, `handler(args, { can })` gives `can("post", "update")`.
 
 ## Configuration (`config.ts`, project root)
 
@@ -740,6 +780,7 @@ it("lists posts for a signed-in user", async () => {
 
 - `app.get/post/put/patch/delete(path, { body, query, headers, as })`: `as` is a user (a session token is minted for it) or a bearer token; a body is sent as JSON.
 - `app.seed(model, data)` creates a record through the model, so validation and hooks run as in production. `app.createUser()` makes a user; `app.tokenFor(user)` gives its token.
+- `app.createUser()` is in the Full access group unless you say otherwise: `createUser({ groups: [] })` can do nothing, and `const g = await app.createGroup({ name: "Editors", grants: ["post:*:own"] })` then `createUser({ groups: [g.id] })` tries a real permission.
 - `app.reset()` empties every table between tests; `app.db` is the adapter, for assertions HTTP can't express.
 - Pass `adapters: { db }` in the config to test on another database. The logger is silenced and no Vite dev server starts.
 - njin's modules are process-wide singletons: run the suite with `bun test --isolate` so each test file gets its own app.

@@ -510,7 +510,7 @@ POST /api/setup
 # Returns: { data: { token, user } }
 ```
 
-After the first user is created, this endpoint is permanently disabled.
+After the first user is created, this endpoint is permanently disabled. The first admin is put in the built-in **Full access** group, which can do everything (see [Access control](#access-control)).
 
 ## Auth
 
@@ -518,9 +518,76 @@ After the first user is created, this endpoint is permanently disabled.
 POST   /api/auth/login         # { email, password } → { data: { token, user } }
 GET    /api/auth/check-token   # Bearer <token> → { data: user }
 DELETE /api/auth/logout        # Bearer <token>
+GET    /api/auth/permissions   # what the caller may do (see Access control)
 ```
 
-All `/api/*` endpoints require `Authorization: Bearer <token>`.
+Every `/api/*` endpoint needs `Authorization: Bearer <token>`. A token looks like `njt:<id>:<secret>`; only a hash of the secret is stored. There are three kinds:
+
+| Kind | Made by | Lifetime | May do |
+| --- | --- | --- | --- |
+| session | `POST /api/auth/login` | 30 days, renewed while it is used | whatever its user can, and manage users, groups and tokens |
+| personal token | `POST /api/token` | until revoked | what its scopes say, never more than its user |
+| OAuth token | connecting an MCP client | 1 hour, renewed with a rotating refresh token (30 days) | what the user approved, never more than the user |
+
+Managing users, access groups and tokens needs a **session**: a personal or OAuth token can't, so a leaked agent token can't mint itself a replacement. The agent endpoint (`/mcp`) is the other way round and takes personal and OAuth tokens only.
+
+Failed logins are counted per email in the database — ten in fifteen minutes lock that email out for the rest of the window (`429`).
+
+**Personal tokens** are for scripts and for clients that can send a header but can't do OAuth:
+
+```bash
+GET    /api/token        # your sessions, personal tokens and connected apps (never the secrets)
+POST   /api/token        # { name, scopes? } → the token, shown once
+DELETE /api/token/:id    # revoke — takes effect immediately
+```
+
+`scopes` is a list of `<resource>:<action>` (either half may be `*`; the default is `["*:*"]`). A token with `["article:read"]` can read articles and nothing else, even if its owner can do much more.
+
+## Access control
+
+Nobody can do anything just by having an account. A user is in any number of **access groups**, each holding **grants**, and can do whatever the groups they are in grant, added together. There is no "deny": a user in no group can do nothing.
+
+A grant is `<resource>:<action>[:<scope>]`:
+
+```
+article:*:own          # every action on articles, but only ones they created
+article:read:all       # read every article
+category:read          # same as category:read:all
+article:publish        # publish and unpublish articles (draftable models)
+vars.site:read         # read the "site" settings group
+vars.site:write        # change it, and publish it
+file:create:own        # upload files
+user:read              # see users
+access_group:*         # manage access groups
+analytics:read         # the analytics endpoints
+*:read:all             # read everything
+*:*:all                # full access
+```
+
+| Resource | Actions |
+| --- | --- |
+| a model's prefix (`article`) | `read`, `create`, `update`, `delete`, and `publish` if the model is draftable |
+| `vars.<prefix>` | `read`, `write` (publishing counts as writing) |
+| `file` | `read`, `create`, `delete` |
+| `user`, `access_group` | `read`, `create`, `update`, `delete` |
+| `analytics` | `read` |
+
+**Own and all.** Every record remembers who created it in `createdBy` — set by the server from the caller, never from the request body, and a reserved field name. With `own` a user lists and touches only their own records; someone else's record is simply "not found" (`404`). A record nobody created through an account (made by a seed script, say, or before this existed) is only visible with `all`. Settings groups have no owner, so they only take `all`.
+
+**Linked records.** Being allowed to create or edit a model is enough to *pick* the records it links to. If an `article` has a `category` relation, anyone who can read, create or update articles gets a *reference* to categories: they can list them and see each one's id and label (the `labelKey` of the relation, else the model's first search field), so a form can offer the choice, and nothing else — no other field, no filter or sort on one, no changing a category. A category expanded inside an article they read is cut down the same way. Add `category:read` to see it whole. This is worked out from the relations in your models; it is not configured. It goes one hop only.
+
+**Managing groups.** The admin first created is in the built-in **Full access** group. Groups, the grants a project can use and what the current credential may do are all in the API:
+
+```bash
+GET|POST        /api/access_group        # { name, description?, grants: [] }
+GET|PUT|DELETE  /api/access_group/:id
+GET             /api/access/catalog      # every resource and action a grant can name here
+GET             /api/auth/permissions    # what the caller may do, with the scope for each
+```
+
+Grants are checked against the catalog when a group is saved (`422` with the reasons). Putting a user in groups takes the right to manage groups (`access_group:update`) as well as to edit users — otherwise whoever can edit users could make themselves an admin. A change that would leave nobody with full access (taking it from the last group that gives it, moving the last person out of it, or deleting them) is refused with `409`.
+
+`/api/schema`, and `list_models` for agents, list only the models and settings the caller can do something with.
 
 ## MCP — manage the site with AI agents
 
@@ -539,9 +606,9 @@ export default defineConfig({
 });
 ```
 
-A client that can't do OAuth but can send a header can use a token from `POST /api/mcp-token` instead.
+A client that can't do OAuth but can send a header can use a [personal token](#auth) from `POST /api/token` instead.
 
-**Connecting Claude:** add a custom connector and enter only the URL, `https://your-site.com/mcp`. Claude opens an njin sign-in page, you log in with your normal njin account and click **Allow** — no token to copy. The site must be reachable from the internet over HTTPS; set `publicUrl` in `config.ts` if it sits behind a proxy that rewrites the host.
+**Connecting Claude:** add a custom connector and enter only the URL, `https://your-site.com/mcp`. Claude opens an njin sign-in page, you log in with your normal njin account (once — the sign-in is remembered for the next connection), choose what Claude may do and click **Allow** — no token to copy. The site must be reachable from the internet over HTTPS; set `publicUrl` in `config.ts` if it sits behind a proxy that rewrites the host.
 
 | Tool | |
 | --- | --- |
@@ -587,28 +654,32 @@ export default defineConfig({
 
 - `input` is a set of zod fields: the agent sees them as JSON schema, and the handler only runs once they validate.
 - Whatever the handler returns is sent back as JSON (a string is sent as-is). A thrown error goes back as a tool error the agent can read, so throw with a message that says what to fix.
-- The second argument tells you who is calling (`token`, the same connection listed under `/api/mcp-token`) and the site's public `baseUrl`.
+- The second argument tells you who is calling (`token`, the same connection listed under `/api/token`), the `principal` with what they may do, `can(resource, action)` to ask it, and the site's public `baseUrl`.
 - Names may only use letters, digits, `_` and `-` (max 64), and must not reuse a built-in tool's name. A bad name stops the app at boot.
 - A plugin can ship tools too: `definePlugin({ mcp: { tools: [...] } })`.
-- Custom tools run with the same full access as the built-in ones — every connected agent can call them.
+- A custom tool is called by every connected agent, whatever it may do, and its handler is trusted code: reading or writing through your models there is *not* checked for the caller. Ask first when it matters — `if (!can("post", "update")) throw new Error("Not allowed")`.
 
 **Links.** A relation or file field takes the related record's id as a plain string, and that is what `list_models` tells the agent. If an agent sends an object instead (`{ "id": "..." }`, or a whole record read earlier) it is reduced to the id before saving — otherwise njin would store a dead embedded copy rather than a link. Created and updated records come back with their relations expanded, with a `_warnings` entry if a link points at nothing, and reads flag records that already hold an embedded `{ id }` copy so they can be repaired.
 
 **Files.** File bytes can't go through a tool call, so `create_upload_url` returns a short-lived link (10 minutes, up to 10 files of 10 MB). The agent uploads with `curl -F file=@photo.jpg <url>`, or — if it has no shell or network — shows the link so you can open it and drop the file. `check_upload` then returns the file ids to put in a model's file field. Only safe types are accepted (images except SVG, PDF, Office documents, audio, video, zip, fonts); HTML, SVG and scripts are rejected because `/uploads` is served from the site's own origin.
 
-**Managing connections.** Every connected agent is a token you can revoke:
+**What an agent may do.** Everything the built-in tools do goes through the same [access control](#access-control) as the REST API, as the user who connected it, narrowed to what they approved. On the consent page the user ticks which of the things the client asked for (`article:read`, `vars.site:write`, …) it gets; a client that asks for nothing in particular is offered everything the user can do. The agent is told no more than that, and what it may not do comes back as a readable `Forbidden`. Taking a permission away from the user takes effect on the agent's next call.
+
+**Managing connections.** What a user has approved is theirs to look at and take back (a session is needed, never an agent's token):
 
 ```bash
-GET    /api/mcp-token       # connected agents (OAuth) and manually created tokens
-DELETE /api/mcp-token/:id   # revoke — takes effect immediately
-POST   /api/mcp-token       # { name } → a long-lived token, shown once, for clients that can send an Authorization header
+GET    /api/oauth/consents        # connected apps: name, scopes, when last used, tokens held
+PUT    /api/oauth/consents/:id    # { scopes } — narrow an app; what it already holds shrinks with it
+DELETE /api/oauth/consents/:id    # disconnect — its tokens stop working at once
+GET    /api/token                 # every credential, including connected apps' tokens
+DELETE /api/token/:id             # revoke a single token
 ```
 
-These need an admin session token, never an MCP token. There is no per-agent permission scoping yet: an agent can do anything an admin can in the content API (it cannot touch users or sessions).
+A client that was approved before, for at least what it asks now, is not asked again (unless it sends `prompt=consent`); one that now asks for more is.
 
 ## Admin panel
 
-njin doesn't bundle an admin panel — `_admin/` at your project root is just a static folder the server looks for at startup (`GET /_admin`). Drop a built admin SPA's `index.html`/assets into it (your own, or one shared by the community) and it's served automatically; if it's missing, the startup banner just notes it wasn't found.
+`_admin/` at your project root is a static folder the server serves at `GET /_admin`. New projects get a prebuilt admin panel there, and `bunx njin update` refreshes it; you can also drop in your own build's `index.html` and assets. If the folder is missing, the startup banner just notes it wasn't found. The panel is driven by `GET /api/schema`, so it shows each user only the models and settings they have access to.
 
 ## Configuration
 
@@ -816,6 +887,7 @@ it("lists posts for a signed-in user", async () => {
 
 - `app.get/post/put/patch/delete(path, { body, query, headers, as })`: `as` is a user (a session token is minted for it) or a bearer token; a body is sent as JSON.
 - `app.seed(model, data)` creates a record through the model, so validation and hooks run as in production. `app.createUser()` makes a user; `app.tokenFor(user)` gives its token.
+- `app.createUser()` puts the user in the built-in Full access group, so a test sees everything until it asks for less. `createUser({ groups: [] })` is a user who can do nothing; `const group = await app.createGroup({ name: "Editors", grants: ["post:*:own"] })` and `createUser({ groups: [group.id] })` try a real permission.
 - `app.reset()` empties every table between tests; `app.db` is the adapter, for assertions HTTP can't express.
 - Pass `adapters: { db }` in the config to test on another database. The logger is silenced and no Vite dev server starts.
 - njin's modules are process-wide singletons: run the suite with `bun test --isolate` so each test file gets its own app.
