@@ -4,7 +4,7 @@ import db from "../modules/db";
 import accessGroup from "./access_group";
 
 const user = makeModel("user", {
-  name: "Pengguna",
+  name: "User",
   schema: z.object({
     name: text({ label: "Name" }),
     email: email({ label: "Email", unique: true }),
