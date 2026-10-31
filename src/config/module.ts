@@ -1,4 +1,5 @@
 import { loadConfig } from "../core/config";
+import accessGroup from "../modules/access_group";
 import admin from "../modules/admin";
 import analytics from "../modules/analytics";
 import api from "../modules/api";
@@ -44,6 +45,7 @@ const modules = [
   await img.init(),
   await analytics.init(),
   await users.init(),
+  await accessGroup.init(),
   await admin.init(),
   await view.init(),
 ] as const;

@@ -3,6 +3,7 @@ import z from "zod";
 import { HttpError } from "../core/http_error";
 import { filtersQuerySchema } from "../core/model";
 import { makeModule } from "../core/module";
+import { assertFullAccessRemains } from "./access_group";
 import auth from "./auth";
 import elysia from "./elysia";
 import { getGuard } from "./guard";
@@ -11,6 +12,14 @@ const omitPassword = (record: Record<string, unknown>) => {
   const { password: _, ...rest } = record;
   return rest;
 };
+
+// A group is given as its id or as a record carrying one.
+const groupIds = (groups: readonly unknown[]) =>
+  groups.map((group) =>
+    typeof group === "object" && group !== null && "id" in group
+      ? String(group.id)
+      : String(group),
+  );
 
 const users = makeModule(() => {
   const fn = () => {};
@@ -101,6 +110,11 @@ const users = makeModule(() => {
           const gate = guard.gate(principal, user);
           await gate.changing(params.id, "update");
           assertMayAssignGroups(principal, body.groups);
+          if (body.groups !== undefined) {
+            await assertFullAccessRemains({
+              user: { id: params.id, groups: groupIds(body.groups) },
+            });
+          }
 
           const updated = await user.update(params.id, body);
 
@@ -125,6 +139,9 @@ const users = makeModule(() => {
 
           const gate = guard.gate(principal, user);
           await gate.changing(params.id, "delete");
+          await assertFullAccessRemains({
+            user: { id: params.id, groups: null },
+          });
 
           const deleted = await user.destroy(params.id);
 

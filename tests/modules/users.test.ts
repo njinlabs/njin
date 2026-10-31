@@ -77,6 +77,11 @@ mock.module("../../src/core/config", () => ({
   getConfig: () => ({ models: [] }),
 }));
 
+// The lockout check reads the real tables; it has its own tests.
+mock.module("../../src/modules/access_group", () => ({
+  assertFullAccessRemains: async () => {},
+}));
+
 const fakeAuthPlugin = makeFakeAuthPlugin();
 mock.module("../../src/modules/auth", () => ({
   default: async () => ({ plugin: fakeAuthPlugin }),

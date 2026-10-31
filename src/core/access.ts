@@ -79,7 +79,10 @@ export const buildCatalog = (input: {
 ];
 
 // Human-readable problems, empty when every grant is valid for this catalog.
-export const validateGrants = (grants: string[], catalog: CatalogEntry[]) => {
+export const validateGrants = (
+  grants: readonly string[],
+  catalog: readonly CatalogEntry[],
+) => {
   const errors: string[] = [];
   const byResource = new Map(catalog.map((entry) => [entry.resource, entry]));
   const everyAction = new Set(catalog.flatMap((entry) => entry.actions));
