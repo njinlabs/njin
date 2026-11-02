@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { route } from "../../src/core/route";
+import { route } from "../../src/core/api/route";
 
 describe("route", () => {
   it("returns a plain Elysia instance that can be chained and handled directly", async () => {

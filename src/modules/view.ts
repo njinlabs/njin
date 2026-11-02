@@ -1,17 +1,17 @@
 import { join } from "node:path";
 import { Edge } from "edge.js";
 import Elysia from "elysia";
-import { getConfig } from "../core/config";
-import { escapeHtml } from "../core/html_page";
-import { HttpError } from "../core/http_error";
-import { makeModule } from "../core/module";
+import { escapeHtml } from "../core/http/html_page";
+import { HttpError } from "../core/http/http_error";
 import {
   cacheKey,
   getOrRenderStatic,
   purgeStatic,
   registerStaticRoute,
   warmStatic,
-} from "../core/static_cache";
+} from "../core/http/static_cache";
+import { makeModule } from "../core/module";
+import { getConfig } from "../core/runtime/config";
 import elysia from "./elysia";
 import logger from "./logger";
 
@@ -34,7 +34,7 @@ type ViteGlobal = {
 };
 
 export const buildViteGlobal = async (): Promise<ViteGlobal> => {
-  // createTestApp() (core/testing.ts) sets NJIN_TEST: no dev server in a test run — the pages
+  // createTestApp() (core/api/testing.ts) sets NJIN_TEST: no dev server in a test run — the pages
   // still render live, only the asset tags fall back to the built manifest (or a comment).
   if (isDev && process.env.NJIN_TEST !== "1") {
     const { createServer } = await import("vite");
@@ -296,7 +296,7 @@ const view = makeModule(() => {
         async ({ params, query, path, request, server }) => {
           try {
             // Static routes render on their first hit and are then served from the cache until
-            // purged or revalidated (see core/static_cache.ts). Dev always renders live.
+            // purged or revalidated (see core/http/static_cache.ts). Dev always renders live.
             const staticRoute = isDev ? undefined : staticRoutes.get(route);
             const key = staticRoute ? cacheKey(path) : null;
 

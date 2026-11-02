@@ -1,4 +1,4 @@
-import { loadConfig } from "../core/config";
+import { loadConfig } from "../core/runtime/config";
 import accessGroup from "../modules/access_group";
 import admin from "../modules/admin";
 import analytics from "../modules/analytics";

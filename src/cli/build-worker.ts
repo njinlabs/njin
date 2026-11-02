@@ -11,7 +11,7 @@ await stageBuildAssets(root, outDir);
 
 // The database adapter says which packages it needs left out of the bundle — this command
 // doesn't know which database is in use.
-const { loadConfig, getConfig } = await import("../core/config");
+const { loadConfig, getConfig } = await import("../core/runtime/config");
 await loadConfig();
 const dbBuild = await getConfig().adapters.db.build?.({
   target: "worker",
@@ -61,7 +61,7 @@ await loadConfig({ ...config, rootDir: config.rootDir ?? import.meta.dir });
 const { boot } = await import("@njinlabs/njin/boot");
 
 // No printBanner() here — headless has no port/admin URL to show. serveWorker()'s own
-// "ready" postMessage() (src/core/worker.ts) is the supervisor's readiness signal instead.
+// "ready" postMessage() (src/core/runtime/worker.ts) is the supervisor's readiness signal instead.
 await boot();
 `,
   );

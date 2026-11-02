@@ -3,7 +3,7 @@ import { z } from "zod";
 import db from "../../modules/db";
 import type { DbOperations, TableDef } from "../db/contract";
 import { fieldMeta, fieldsFromSchema } from "../db/table_def";
-import { HttpError } from "../http_error";
+import { HttpError } from "../http/http_error";
 import { relation } from "./data_type/relation";
 import { text } from "./data_type/text";
 import { UniqueConstraintError } from "./errors";

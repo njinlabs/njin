@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { access } from "../../src/core/access";
+import { access } from "../../src/core/auth/access";
 import { tokenTable } from "../../src/core/db/internal";
 import { useTestDb } from "../helpers/test_db";
 

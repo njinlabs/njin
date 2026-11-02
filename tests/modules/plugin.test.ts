@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
-import { loadConfig } from "../../src/core/config";
-import { definePlugin } from "../../src/core/plugin";
+import { definePlugin } from "../../src/core/api/plugin";
+import { loadConfig } from "../../src/core/runtime/config";
 import plugin from "../../src/modules/plugin";
 
 describe("plugin module", () => {

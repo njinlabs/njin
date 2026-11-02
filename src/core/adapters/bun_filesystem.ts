@@ -2,8 +2,8 @@ import { join, resolve } from "node:path";
 import { init } from "@paralleldrive/cuid2";
 import z from "zod";
 import type { FileAdapter } from "../../modules/file";
-import { getConfig } from "../config";
-import { sanitizeFileName } from "../path_guard";
+import { sanitizeFileName } from "../http/path_guard";
+import { getConfig } from "../runtime/config";
 
 const createId = init({
   random: Math.random,

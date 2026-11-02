@@ -1,7 +1,7 @@
 import Elysia from "elysia";
 import { z } from "zod";
-import { getConfig } from "../core/config";
 import { makeModule } from "../core/module";
+import { getConfig } from "../core/runtime/config";
 import { isDraftableVars } from "../core/vars";
 import auth from "./auth";
 import elysia from "./elysia";

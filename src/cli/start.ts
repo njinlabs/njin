@@ -2,8 +2,8 @@
 // view.ts (reached transitively) evaluates, and static imports would run first.
 process.env.NODE_ENV = "production";
 
-const { boot } = await import("../core/boot");
-const { printBanner } = await import("../core/banner");
+const { boot } = await import("../core/runtime/boot");
+const { printBanner } = await import("../core/runtime/banner");
 
 await boot();
 printBanner({ mode: "production" });

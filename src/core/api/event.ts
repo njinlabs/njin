@@ -1,4 +1,4 @@
-import logger from "../modules/logger";
+import logger from "../../modules/logger";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Handler<T> = (payload: T) => void | Promise<void>;

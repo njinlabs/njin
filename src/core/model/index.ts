@@ -10,7 +10,7 @@ import type {
   TableDef,
 } from "../db/contract";
 import { fieldsFromSchema } from "../db/table_def";
-import { HttpError } from "../http_error";
+import { HttpError } from "../http/http_error";
 import { UniqueConstraintError } from "./errors";
 import { runAfterHooks, runBeforeDestroyHooks, runBeforeHooks } from "./hooks";
 import { type I18nDraftApi, type I18nModel, makeI18nModel } from "./i18n";
@@ -1002,11 +1002,11 @@ export const makeModel = <
   return model as Model;
 };
 
-export * from "../event";
-export * from "../helper";
-export * from "../mcp_tool";
-export * from "../plugin";
-export * from "../route";
+export * from "../api/event";
+export * from "../api/helper";
+export * from "../api/mcp_tool";
+export * from "../api/plugin";
+export * from "../api/route";
 export * from "../vars";
 export * from "./data_type";
 export * from "./hooks";

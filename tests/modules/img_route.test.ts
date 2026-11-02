@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, mock, spyOn } from "bun:test";
-import * as realConfig from "../../src/core/config";
+import * as realConfig from "../../src/core/runtime/config";
 import * as realElysiaModule from "../../src/modules/elysia";
 import * as realViewModule from "../../src/modules/view";
 
@@ -26,7 +26,7 @@ mock.module("../../src/modules/view", () => ({
   }),
 }));
 
-mock.module("../../src/core/config", () => ({
+mock.module("../../src/core/runtime/config", () => ({
   ...realConfig,
   getConfig: () => ({ port: 4000, img: { hosts: ["cdn.example.com"] } }),
 }));

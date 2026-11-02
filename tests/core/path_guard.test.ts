@@ -1,6 +1,9 @@
 import { describe, expect, it } from "bun:test";
 import { join } from "node:path";
-import { resolveSafePath, sanitizeFileName } from "../../src/core/path_guard";
+import {
+  resolveSafePath,
+  sanitizeFileName,
+} from "../../src/core/http/path_guard";
 
 const baseDir = join("d:/njin", "uploads");
 

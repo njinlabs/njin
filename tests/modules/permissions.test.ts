@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, it } from "bun:test";
-import { createTestApp } from "../../src/core/testing";
+import { createTestApp } from "../../src/core/api/testing";
 
 // The real app, end to end: who may do what to which record, over HTTP.
 const app = await createTestApp({

@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
+import type { DbAdapter } from "../db/contract";
 import { getConfig } from "./config";
-import type { DbAdapter } from "./db/contract";
 
 const c = {
   reset: "\x1b[0m",
@@ -17,7 +17,7 @@ const PKG_VERSION: string = (() => {
     // Safe to use import.meta.dir here — this looks up njin's OWN version,
     // not anything project-specific (unlike view.ts's views lookup).
     return (
-      require(join(import.meta.dir, "../../package.json")) as {
+      require(join(import.meta.dir, "../../../package.json")) as {
         version: string;
       }
     ).version;

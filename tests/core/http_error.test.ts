@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { HttpError } from "../../src/core/http_error";
+import { HttpError } from "../../src/core/http/http_error";
 
 describe("HttpError", () => {
   it("uses the default message for a known status code", () => {

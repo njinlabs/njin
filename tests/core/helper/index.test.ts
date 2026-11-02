@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { defineHelper } from "../../../src/core/helper";
+import { defineHelper } from "../../../src/core/api/helper";
 
 describe("defineHelper", () => {
   it("returns a { name, fn } pair, preserving the fn's identity", () => {

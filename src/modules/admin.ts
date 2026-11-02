@@ -1,8 +1,8 @@
 import { join } from "node:path";
 import Elysia from "elysia";
-import { getConfig } from "../core/config";
+import { resolveSafePath } from "../core/http/path_guard";
 import { makeModule } from "../core/module";
-import { resolveSafePath } from "../core/path_guard";
+import { getConfig } from "../core/runtime/config";
 import elysia from "./elysia";
 
 // Lazy, not a top-level const — this file's static import runs before module.ts's own

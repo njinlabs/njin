@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import z from "zod";
-import { toAdminSchema } from "../../src/core/admin_schema";
+import { toAdminSchema } from "../../src/core/model/admin_schema";
 
 const schema = z.object({
   title: z.string(),

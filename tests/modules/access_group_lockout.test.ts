@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { HttpError } from "../../src/core/http_error";
+import { HttpError } from "../../src/core/http/http_error";
 import { useTestDb } from "../helpers/test_db";
 
 const db = await useTestDb();

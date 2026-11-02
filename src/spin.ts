@@ -1,3 +1,3 @@
-import { boot } from "./core/boot";
+import { boot } from "./core/runtime/boot";
 
 await boot();

@@ -1,5 +1,5 @@
 import Elysia from "elysia";
-import { compile } from "../../src/core/access";
+import { compile } from "../../src/core/auth/access";
 
 // Fake replacement for src/modules/auth.ts's default export — a real Elysia plugin
 // (macros can't be faked with a plain object) whose `auth` macro always resolves to a

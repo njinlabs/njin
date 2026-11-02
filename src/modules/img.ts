@@ -1,6 +1,6 @@
 import Elysia from "elysia";
-import { getConfig } from "../core/config";
 import { makeModule } from "../core/module";
+import { getConfig } from "../core/runtime/config";
 import elysia from "./elysia";
 import view from "./view";
 
@@ -96,7 +96,7 @@ const img = makeModule(() => {
 
       if (url.startsWith("/")) {
         // A real network fetch to localhost:<port> only works when app.listen() actually bound
-        // that port — under njin-supervisor's worker mode (NJIN_WORKER=1, see core/worker.ts)
+        // that port — under njin-supervisor's worker mode (NJIN_WORKER=1, see core/runtime/worker.ts)
         // nothing does, requests arrive via postMessage and are handled in-process instead, so
         // that socket was never listening and this always failed with a connection error.
         // Calling the same in-process Elysia instance's handle() works in both modes, and skips

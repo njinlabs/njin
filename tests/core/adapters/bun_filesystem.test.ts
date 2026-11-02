@@ -3,7 +3,7 @@ import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import bunFilesystemAdapter from "../../../src/core/adapters/bun_filesystem";
-import { loadConfig } from "../../../src/core/config";
+import { loadConfig } from "../../../src/core/runtime/config";
 
 // write()/unlink() resolve their configured dir against getConfig().rootDir — every test
 // below passes an already-absolute dir (mkdtempSync), which resolve() lets win outright,

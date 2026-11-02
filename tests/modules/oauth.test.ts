@@ -9,7 +9,6 @@ import {
 } from "bun:test";
 import { createHash } from "node:crypto";
 import Elysia from "elysia";
-import * as realConfig from "../../src/core/config";
 import {
   oauthClientTable,
   oauthCodeTable,
@@ -17,6 +16,7 @@ import {
   rateLimitTable,
   tokenTable,
 } from "../../src/core/db/internal";
+import * as realConfig from "../../src/core/runtime/config";
 import * as realElysiaModule from "../../src/modules/elysia";
 import { makeFakeElysia } from "../helpers/fake_elysia";
 import { useTestDb } from "../helpers/test_db";
@@ -28,7 +28,7 @@ setDefaultTimeout(30_000);
 // creates, merges and conditional deletes, which a fake would only echo back.
 const db = await useTestDb();
 
-mock.module("../../src/core/config", () => ({
+mock.module("../../src/core/runtime/config", () => ({
   ...realConfig,
   getConfig: () => ({
     publicUrl: "https://site.example",

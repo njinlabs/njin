@@ -2,7 +2,7 @@ import { describe, expect, it, mock } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import * as realConfig from "../../src/core/config";
+import * as realConfig from "../../src/core/runtime/config";
 import * as realAnalyticsModule from "../../src/modules/analytics";
 import * as realElysiaModule from "../../src/modules/elysia";
 import { makeFakeElysia } from "../helpers/fake_elysia";
@@ -10,7 +10,7 @@ import { makeFakeElysia } from "../helpers/fake_elysia";
 // Dev-mode (NODE_ENV !== "production") behaviour of SSR responses: security headers,
 // caching, escaping of abort() messages and the dev error page. Own file for its own module
 // registry — view.ts reads rootDir from getConfig() at init time.
-mock.module("../../src/core/config", () => ({
+mock.module("../../src/core/runtime/config", () => ({
   ...realConfig,
   getConfig: () => ({
     models: [],
@@ -47,7 +47,7 @@ const {
   renderErrorPage,
   renderHttpError,
 } = await import("../../src/modules/view");
-const { HttpError } = await import("../../src/core/http_error");
+const { HttpError } = await import("../../src/core/http/http_error");
 
 describe("htmlResponse()", () => {
   const req = (headers: Record<string, string> = {}, url = "http://x/") =>

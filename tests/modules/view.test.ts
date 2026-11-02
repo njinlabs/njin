@@ -78,7 +78,7 @@ describe("renderHttpError", () => {
     const html = await renderHttpError(
       fakeEdge as never,
       dir,
-      new (await import("../../src/core/http_error")).HttpError(404),
+      new (await import("../../src/core/http/http_error")).HttpError(404),
     );
 
     expect(html).toBe("<h1>404 rendered</h1>");
@@ -96,7 +96,7 @@ describe("renderHttpError", () => {
     };
 
     try {
-      const { HttpError } = await import("../../src/core/http_error");
+      const { HttpError } = await import("../../src/core/http/http_error");
       const html = await renderHttpError(
         fakeEdge as never,
         dir,
@@ -113,7 +113,7 @@ describe("renderHttpError", () => {
 
   it("falls back to the generic error page when no template file exists at all", async () => {
     const fakeEdge = { render: async () => "should never be called" };
-    const { HttpError } = await import("../../src/core/http_error");
+    const { HttpError } = await import("../../src/core/http/http_error");
 
     const html = await renderHttpError(
       fakeEdge as never,

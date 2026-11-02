@@ -1,4 +1,4 @@
-import { getConfig } from "./config";
+import { getConfig } from "../runtime/config";
 
 // The base URL clients actually reach the site on. config.publicUrl wins; otherwise it is
 // derived from the request, honouring a reverse proxy's X-Forwarded-* headers — those are

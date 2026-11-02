@@ -1,6 +1,8 @@
 import type z from "zod";
-import db from "../modules/db";
-import type { Principal } from "../modules/token";
+import db from "../../modules/db";
+import type { Principal } from "../../modules/token";
+import type { Condition, TableDef } from "../db/contract";
+import { HttpError } from "../http/http_error";
 import {
   access,
   buildRelationGraph,
@@ -12,10 +14,8 @@ import {
   redactRefs,
   relationFieldsOf,
 } from "./access";
-import type { Condition, TableDef } from "./db/contract";
-import { HttpError } from "./http_error";
 
-// Where the permission engine (core/access.ts) meets a request. A route asks the guard for a
+// Where the permission engine (core/auth/access.ts) meets a request. A route asks the guard for a
 // gate on one model and runs its reads and writes through it, so REST, the admin panel and MCP
 // all answer to the same rules:
 //

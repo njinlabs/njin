@@ -1,6 +1,6 @@
 import moment from "moment";
-import db from "../modules/db";
-import { rateLimitTable } from "./db/internal";
+import db from "../../modules/db";
+import { rateLimitTable } from "../db/internal";
 import { hashToken } from "./token_hash";
 
 // Counts failed attempts per key (an email, say) in the database, so the count survives a restart

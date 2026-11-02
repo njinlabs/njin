@@ -1,7 +1,7 @@
-import { getConfig } from "../core/config";
 import type { DbAdapter, TableDef } from "../core/db/contract";
 import { internalTables } from "../core/db/internal";
 import { makeModule } from "../core/module";
+import { getConfig } from "../core/runtime/config";
 import { isDraftableVars } from "../core/vars";
 
 // Every table the app will touch: njin's own, the built-in user/file models, then whatever

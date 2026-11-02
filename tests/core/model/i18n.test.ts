@@ -1,5 +1,5 @@
 import { describe, expect, it, mock } from "bun:test";
-import * as realConfig from "../../../src/core/config";
+import * as realConfig from "../../../src/core/runtime/config";
 import { useTestDb } from "../../helpers/test_db";
 
 // A project with two languages. `settings` is swapped by the tests that need another config.
@@ -7,7 +7,7 @@ let settings: realConfig.ResolvedConfig["i18n"] = {
   locales: ["id", "en"],
   defaultLocale: "id",
 };
-mock.module("../../../src/core/config", () => ({
+mock.module("../../../src/core/runtime/config", () => ({
   ...realConfig,
   getConfig: () => ({ i18n: settings }),
 }));
@@ -21,7 +21,7 @@ const {
   beforeCreate,
   UniqueConstraintError,
 } = await import("../../../src/core/model/index");
-const { HttpError } = await import("../../../src/core/http_error");
+const { HttpError } = await import("../../../src/core/http/http_error");
 const { text } = await import("../../../src/core/model/data_type/text");
 const { numeric } = await import("../../../src/core/model/data_type/numeric");
 const { array } = await import("../../../src/core/model/data_type/array");
@@ -30,7 +30,7 @@ const { relation } = await import("../../../src/core/model/data_type/relation");
 const { relationMany } = await import(
   "../../../src/core/model/data_type/relation_many"
 );
-const { toAdminSchema } = await import("../../../src/core/admin_schema");
+const { toAdminSchema } = await import("../../../src/core/model/admin_schema");
 const z = (await import("zod")).default;
 
 type Rec = Record<string, any>;

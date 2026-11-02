@@ -1,9 +1,9 @@
 import Elysia from "elysia";
 import z from "zod";
-import { toAdminSchema } from "../core/admin_schema";
-import { getConfig } from "../core/config";
 import { filtersQuerySchema, isDraftable, isI18n } from "../core/model";
+import { toAdminSchema } from "../core/model/admin_schema";
 import { makeModule } from "../core/module";
+import { getConfig } from "../core/runtime/config";
 import { isDraftableVars, isI18nVars } from "../core/vars";
 import auth from "./auth";
 import elysia from "./elysia";

@@ -13,7 +13,7 @@ mock.module("../../src/modules/logger", () => ({
   }),
 }));
 
-const { makeEvent } = await import("../../src/core/event");
+const { makeEvent } = await import("../../src/core/api/event");
 
 describe("event bus", () => {
   it("delivers the payload to a listener", async () => {

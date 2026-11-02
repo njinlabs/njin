@@ -2,7 +2,7 @@ import { afterAll, describe, expect, it } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { loadConfig } from "../../src/core/config";
+import { loadConfig } from "../../src/core/runtime/config";
 
 // Separate file so --isolate gives it a fresh module registry — view.ts's `isDev`
 // constant is read once at module load time (from NODE_ENV), so it must be set before

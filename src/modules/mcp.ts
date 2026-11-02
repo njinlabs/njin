@@ -2,13 +2,17 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import Elysia from "elysia";
 import z from "zod";
-import { toAdminSchema } from "../core/admin_schema";
-import { getConfig, type ModelFactory, type VarsFactory } from "../core/config";
-import type { Gate } from "../core/guarded";
-import type { McpTool } from "../core/mcp_tool";
+import type { McpTool } from "../core/api/mcp_tool";
+import type { Gate } from "../core/auth/guarded";
+import { publicBase } from "../core/http/public_url";
 import { isDraftable, isI18n } from "../core/model";
+import { toAdminSchema } from "../core/model/admin_schema";
 import { makeModule } from "../core/module";
-import { publicBase } from "../core/public_url";
+import {
+  getConfig,
+  type ModelFactory,
+  type VarsFactory,
+} from "../core/runtime/config";
 import { isDraftableVars, isI18nVars } from "../core/vars";
 import auth from "./auth";
 import elysia from "./elysia";

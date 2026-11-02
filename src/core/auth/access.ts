@@ -1,8 +1,8 @@
 import type z from "zod";
-import type { Condition } from "./db/contract";
+import type { Condition } from "../db/contract";
 
 // Permission engine. Pure: it knows grant strings, token scopes and the relation graph between
-// models, never the database or a request — callers (core/guarded.ts) feed it a user's grants and
+// models, never the database or a request — callers (core/auth/guarded.ts) feed it a user's grants and
 // act on the answer.
 //
 // A grant is "<resource>:<action>[:<scope>]":

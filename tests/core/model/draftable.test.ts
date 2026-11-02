@@ -6,7 +6,7 @@ const db = await useTestDb();
 const { makeModel, afterPublish, afterUnpublish, isDraftable } = await import(
   "../../../src/core/model/index"
 );
-const { HttpError } = await import("../../../src/core/http_error");
+const { HttpError } = await import("../../../src/core/http/http_error");
 const { text } = await import("../../../src/core/model/data_type/text");
 const { array } = await import("../../../src/core/model/data_type/array");
 const { relation } = await import("../../../src/core/model/data_type/relation");

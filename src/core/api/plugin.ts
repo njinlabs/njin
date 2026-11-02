@@ -8,7 +8,7 @@ import type {
   RouteFactory,
   StaticRoute,
   VarsFactory,
-} from "./config";
+} from "../runtime/config";
 
 export type Plugin = {
   models?: ModelFactory[];

@@ -90,7 +90,7 @@ export const oauthConsentTable = table("oauth_consent", [
   datetime("lastUsedAt"),
 ]);
 
-// Failed-attempt counters (core/rate_limit.ts). The record id is the thing being limited, e.g.
+// Failed-attempt counters (core/auth/rate_limit.ts). The record id is the thing being limited, e.g.
 // "login:alice@example.com".
 export const rateLimitTable = table("rate_limit", [
   num("count"),

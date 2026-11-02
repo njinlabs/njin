@@ -1,11 +1,11 @@
 import cors from "@elysia/cors";
 import Elysia, { type AnyElysia, status, ValidationError } from "elysia";
-import { getConfig } from "../core/config";
 import { LinkTargetMissingError } from "../core/db/contract";
-import { HttpError } from "../core/http_error";
+import { HttpError } from "../core/http/http_error";
 import { UniqueConstraintError } from "../core/model";
 import { makeModule } from "../core/module";
-import { serveWorker } from "../core/worker";
+import { getConfig } from "../core/runtime/config";
+import { serveWorker } from "../core/runtime/worker";
 import logger from "./logger";
 
 // Elysia's query parser only understands object/record-shaped query schemas as a single
@@ -119,10 +119,10 @@ const elysia = makeModule(() => {
 
     return {
       // No startup log here — the CLI prints one consolidated banner after every
-      // module has finished booting (src/core/banner.ts), instead of one line per module.
+      // module has finished booting (src/core/runtime/banner.ts), instead of one line per module.
       // Worker mode (NJIN_WORKER=1, set by the generated `njin build:worker` entry) skips
       // the real socket entirely — requests arrive via postMessage() from a supervisor-owned
-      // Worker thread instead (see src/core/worker.ts).
+      // Worker thread instead (see src/core/runtime/worker.ts).
       spin: () => {
         if (process.env.NJIN_WORKER === "1") {
           serveWorker(app);

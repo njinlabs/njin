@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
-import { getConfig, loadConfig } from "../../src/core/config";
-import { definePlugin } from "../../src/core/plugin";
+import { definePlugin } from "../../src/core/api/plugin";
+import { getConfig, loadConfig } from "../../src/core/runtime/config";
 
 // Thunks are never actually invoked in these tests — loadConfig()/getConfig() only
 // carry the array references around, they don't resolve them. Identity is all that

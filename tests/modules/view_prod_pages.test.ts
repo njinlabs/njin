@@ -2,7 +2,7 @@ import { afterAll, describe, expect, it, mock } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import * as realConfig from "../../src/core/config";
+import * as realConfig from "../../src/core/runtime/config";
 import * as realAnalyticsModule from "../../src/modules/analytics";
 import * as realElysiaModule from "../../src/modules/elysia";
 import * as realLoggerModule from "../../src/modules/logger";
@@ -25,7 +25,7 @@ writeFileSync(join(dir, "public", "assets", "app.js"), "console.log(1)");
 
 const errorLog: unknown[] = [];
 
-mock.module("../../src/core/config", () => ({
+mock.module("../../src/core/runtime/config", () => ({
   ...realConfig,
   getConfig: () => ({ models: [], vars: [], helpers: [], rootDir: dir }),
 }));

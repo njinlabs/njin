@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { loadConfig } from "../../src/core/config";
+import { loadConfig } from "../../src/core/runtime/config";
 import logger from "../../src/modules/logger";
 
 const collect = () => {

@@ -1,9 +1,9 @@
 import { randomBytes } from "node:crypto";
 import moment from "moment";
-import { compile, type Permissions } from "../core/access";
+import { compile, type Permissions } from "../core/auth/access";
+import { hashToken, tokenMatches } from "../core/auth/token_hash";
 import type { Row } from "../core/db/contract";
 import { tokenTable } from "../core/db/internal";
-import { hashToken, tokenMatches } from "../core/token_hash";
 import type userModel from "../models/user";
 import db from "./db";
 

@@ -1,8 +1,8 @@
 import { describe, expect, it, mock, setDefaultTimeout, spyOn } from "bun:test";
 import Elysia from "elysia";
-import * as realConfig from "../../src/core/config";
+import { MAX_FAILURES } from "../../src/core/auth/rate_limit";
 import { tokenTable } from "../../src/core/db/internal";
-import { MAX_FAILURES } from "../../src/core/rate_limit";
+import * as realConfig from "../../src/core/runtime/config";
 import * as realElysiaModule from "../../src/modules/elysia";
 import { makeFakeElysia } from "../helpers/fake_elysia";
 import { useTestDb } from "../helpers/test_db";
@@ -15,7 +15,7 @@ setDefaultTimeout(30_000);
 const db = await useTestDb();
 
 // publicBase() reads config for the 401's resource_metadata pointer.
-mock.module("../../src/core/config", () => ({
+mock.module("../../src/core/runtime/config", () => ({
   ...realConfig,
   getConfig: () => ({ publicUrl: "https://site.example" }),
 }));
@@ -34,7 +34,7 @@ const { default: accessGroup, ensureFullAccessGroup } = await import(
 );
 const { default: auth } = await import("../../src/modules/auth");
 const { issueToken } = await import("../../src/modules/token");
-const { access } = await import("../../src/core/access");
+const { access } = await import("../../src/core/auth/access");
 
 await db.sync([userModel.def, accessGroup.def]);
 

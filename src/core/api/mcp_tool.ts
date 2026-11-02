@@ -1,6 +1,6 @@
 import type { ToolAnnotations } from "@modelcontextprotocol/sdk/types.js";
 import type z from "zod";
-import type { Principal } from "../modules/token";
+import type { Principal } from "../../modules/token";
 
 export type McpToolShape = Record<string, z.ZodType>;
 

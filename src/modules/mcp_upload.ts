@@ -2,7 +2,7 @@ import { randomBytes, timingSafeEqual } from "node:crypto";
 import Elysia from "elysia";
 import moment from "moment";
 import { mcpUploadTable } from "../core/db/internal";
-import { escapeHtml, noStore, page } from "../core/html_page";
+import { escapeHtml, noStore, page } from "../core/http/html_page";
 import { makeModule } from "../core/module";
 import db from "./db";
 import elysia from "./elysia";

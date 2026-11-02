@@ -9,7 +9,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import * as realConfig from "../../src/core/config";
+import * as realConfig from "../../src/core/runtime/config";
 import * as realAnalyticsModule from "../../src/modules/analytics";
 import * as realElysiaModule from "../../src/modules/elysia";
 import * as realLoggerModule from "../../src/modules/logger";
@@ -58,7 +58,7 @@ const staticRoutes = [
 ];
 const tracked: string[] = [];
 
-mock.module("../../src/core/config", () => ({
+mock.module("../../src/core/runtime/config", () => ({
   ...realConfig,
   getConfig: () => ({
     models: [],
@@ -90,7 +90,7 @@ mock.module("../../src/modules/elysia", () => ({
 
 const { default: view } = await import("../../src/modules/view");
 const { purgeStatic, warmStatic, getOrRenderStatic, readStatic } = await import(
-  "../../src/core/static_cache"
+  "../../src/core/http/static_cache"
 );
 const viewModule = await view.init();
 viewModule.spin?.();

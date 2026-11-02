@@ -1,15 +1,15 @@
 import { join } from "node:path";
 import type { AnyElysia } from "elysia";
 import type { DestinationStream, Level } from "pino";
-import type { FileAdapter } from "../modules/file";
-import bunFilesystemAdapter from "./adapters/bun_filesystem";
-import surrealAdapter from "./adapters/surreal";
-import type { DbAdapter } from "./db/contract";
-import type { Helper } from "./helper";
-import type { McpTool } from "./mcp_tool";
-import type { makeModel } from "./model";
-import type { Plugin } from "./plugin";
-import type { makeVars } from "./vars";
+import type { FileAdapter } from "../../modules/file";
+import bunFilesystemAdapter from "../adapters/bun_filesystem";
+import surrealAdapter from "../adapters/surreal";
+import type { Helper } from "../api/helper";
+import type { McpTool } from "../api/mcp_tool";
+import type { Plugin } from "../api/plugin";
+import type { DbAdapter } from "../db/contract";
+import type { makeModel } from "../model";
+import type { makeVars } from "../vars";
 
 export type ModelFactory = () => Promise<{
   default: ReturnType<typeof makeModel>;
@@ -95,7 +95,7 @@ export type NjinConfig = {
   port?: number;
   // Public base URL of the site as clients reach it (e.g. "https://example.com") — used for
   // the OAuth/MCP discovery documents, which must name the exact host an agent connects to.
-  // Optional: falls back to the request's own origin (see core/public_url.ts), which is
+  // Optional: falls back to the request's own origin (see core/http/public_url.ts), which is
   // enough for a single-host setup without a proxy rewriting Host.
   publicUrl?: string;
   mcp?: {

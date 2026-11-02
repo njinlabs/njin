@@ -1,6 +1,6 @@
 import Elysia, { status } from "elysia";
 import z from "zod";
-import { HttpError } from "../core/http_error";
+import { HttpError } from "../core/http/http_error";
 import { filtersQuerySchema } from "../core/model";
 import { makeModule } from "../core/module";
 import { assertFullAccessRemains } from "./access_group";

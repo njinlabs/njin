@@ -1,6 +1,6 @@
 import { describe, expect, it, mock } from "bun:test";
 import z from "zod";
-import * as realConfig from "../../src/core/config";
+import * as realConfig from "../../src/core/runtime/config";
 import * as realElysiaModule from "../../src/modules/elysia";
 import { makeFakeAuthPlugin } from "../helpers/fake_auth";
 import { makeFakeElysia } from "../helpers/fake_elysia";
@@ -55,7 +55,7 @@ const fakePageGroup = {
 // Spreading real exports below — without --isolate, mock.module() replaces the module
 // in a registry shared across the whole test run, so a partial mock would otherwise
 // break other files that import loadConfig/injectBracketQuery from these specifiers.
-mock.module("../../src/core/config", () => ({
+mock.module("../../src/core/runtime/config", () => ({
   ...realConfig,
   getConfig: () => ({
     vars: [

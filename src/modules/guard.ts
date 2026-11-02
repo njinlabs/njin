@@ -1,7 +1,7 @@
-import { buildCatalog, type CatalogEntry } from "../core/access";
-import { getConfig } from "../core/config";
-import { createGuard, type Guard, type GuardModel } from "../core/guarded";
+import { buildCatalog, type CatalogEntry } from "../core/auth/access";
+import { createGuard, type Guard, type GuardModel } from "../core/auth/guarded";
 import { isDraftable } from "../core/model";
+import { getConfig } from "../core/runtime/config";
 
 // The guard, built from every model that links to another (the project's, plus the built-in user
 // and access group) so that "ref" access can be worked out from the relations between them.

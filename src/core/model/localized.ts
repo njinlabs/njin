@@ -1,7 +1,7 @@
 import { z } from "zod";
-import { getConfig } from "../config";
 import { fieldMeta } from "../db/table_def";
-import { HttpError } from "../http_error";
+import { HttpError } from "../http/http_error";
+import { getConfig } from "../runtime/config";
 
 // What models (./i18n.ts) and settings groups (../vars) share for fields kept once per language.
 

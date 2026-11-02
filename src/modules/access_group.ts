@@ -1,7 +1,7 @@
 import Elysia, { status } from "elysia";
 import z from "zod";
-import { parseGrant, validateGrants } from "../core/access";
-import { HttpError } from "../core/http_error";
+import { parseGrant, validateGrants } from "../core/auth/access";
+import { HttpError } from "../core/http/http_error";
 import { filtersQuerySchema } from "../core/model";
 import { makeModule } from "../core/module";
 import auth from "./auth";

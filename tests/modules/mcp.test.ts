@@ -1,9 +1,9 @@
 import { describe, expect, it, mock } from "bun:test";
 import Elysia, { status } from "elysia";
 import z from "zod";
-import { compile } from "../../src/core/access";
-import * as realConfig from "../../src/core/config";
-import { defineTool } from "../../src/core/mcp_tool";
+import { defineTool } from "../../src/core/api/mcp_tool";
+import { compile } from "../../src/core/auth/access";
+import * as realConfig from "../../src/core/runtime/config";
 import * as realElysiaModule from "../../src/modules/elysia";
 import * as realMcpUpload from "../../src/modules/mcp_upload";
 import { makeFakeElysia } from "../helpers/fake_elysia";
@@ -212,7 +212,7 @@ const mcpConfig = {
   ] as realConfig.McpToolFactory[],
 };
 
-mock.module("../../src/core/config", () => ({
+mock.module("../../src/core/runtime/config", () => ({
   ...realConfig,
   getConfig: () => ({
     models: [

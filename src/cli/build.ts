@@ -16,7 +16,7 @@ await stageBuildAssets(root, outDir);
 // keep out of the bundle, bundler patches) — this command doesn't know which database is in use.
 // We resolve the project's own config here (same file loadConfig() reads from process.cwd() at
 // runtime) to get at the adapter it configures.
-const { loadConfig, getConfig } = await import("../core/config");
+const { loadConfig, getConfig } = await import("../core/runtime/config");
 await loadConfig();
 
 let dbBuild: Awaited<ReturnType<NonNullable<DbAdapter["build"]>>>;

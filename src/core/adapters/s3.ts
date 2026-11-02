@@ -2,7 +2,7 @@ import { init } from "@paralleldrive/cuid2";
 import type { S3Options } from "bun";
 import z from "zod";
 import type { FileAdapter } from "../../modules/file";
-import { sanitizeFileName } from "../path_guard";
+import { sanitizeFileName } from "../http/path_guard";
 
 const createId = init({
   random: Math.random,

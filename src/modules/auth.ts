@@ -1,10 +1,14 @@
 import bearer from "@elysia/bearer";
 import Elysia, { status } from "elysia";
 import z from "zod";
-import { access, isScope } from "../core/access";
+import { access, isScope } from "../core/auth/access";
+import {
+  clearFailures,
+  isLimited,
+  recordFailure,
+} from "../core/auth/rate_limit";
+import { publicBase } from "../core/http/public_url";
 import { makeModule } from "../core/module";
-import { publicBase } from "../core/public_url";
-import { clearFailures, isLimited, recordFailure } from "../core/rate_limit";
 import elysia from "./elysia";
 import {
   allowedOn,

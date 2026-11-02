@@ -1,5 +1,5 @@
 import type { AnyElysia } from "elysia";
-import { serveWorker } from "../../../src/core/worker";
+import { serveWorker } from "../../../src/core/runtime/worker";
 
 // Minimal fake app — serveWorker()/buildResponseMessage() only ever call app.handle(),
 // so a real Elysia instance isn't needed here.

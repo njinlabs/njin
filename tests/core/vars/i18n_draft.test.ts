@@ -1,10 +1,10 @@
 import { describe, expect, it, mock } from "bun:test";
-import * as realConfig from "../../../src/core/config";
 import { varsPublishedTable, varsTable } from "../../../src/core/db/internal";
+import * as realConfig from "../../../src/core/runtime/config";
 import { useTestDb } from "../../helpers/test_db";
 
 // A project with two languages; the settings groups here are the ones that use them.
-mock.module("../../../src/core/config", () => ({
+mock.module("../../../src/core/runtime/config", () => ({
   ...realConfig,
   getConfig: () => ({ i18n: { locales: ["id", "en"], defaultLocale: "id" } }),
 }));
@@ -15,12 +15,12 @@ const { makeVars, isDraftableVars } = await import("../../../src/core/vars");
 const { afterVarsPublish, afterVarsUnpublish } = await import(
   "../../../src/core/model/hooks"
 );
-const { HttpError } = await import("../../../src/core/http_error");
+const { HttpError } = await import("../../../src/core/http/http_error");
 const { text } = await import("../../../src/core/model/data_type/text");
 const { array } = await import("../../../src/core/model/data_type/array");
 const { relation } = await import("../../../src/core/model/data_type/relation");
 const { makeModel } = await import("../../../src/core/model/index");
-const { toAdminSchema } = await import("../../../src/core/admin_schema");
+const { toAdminSchema } = await import("../../../src/core/model/admin_schema");
 const z = (await import("zod")).default;
 
 const prefix = () => `vars_${crypto.randomUUID().replace(/-/g, "")}`;

@@ -1,16 +1,16 @@
-import db from "../modules/db";
-import elysia from "../modules/elysia";
-import sqliteAdapter from "./adapters/sqlite";
-import { getConfig, loadConfig, type NjinConfig } from "./config";
-import type { DbAdapter, TableDef } from "./db/contract";
-import { internalTables } from "./db/internal";
+import db from "../../modules/db";
+import elysia from "../../modules/elysia";
+import sqliteAdapter from "../adapters/sqlite";
+import type { DbAdapter, TableDef } from "../db/contract";
+import { internalTables } from "../db/internal";
+import { getConfig, loadConfig, type NjinConfig } from "../runtime/config";
 
 // Test helper for projects built on njin: boots the real app (every module, your models, hooks,
 // events, routes and vars) on an in-memory SQLite database and lets a test call it over HTTP
 // without opening a port.
 //
 //   import { createTestApp } from "@njinlabs/njin/testing";
-//   import config from "../config";
+//   import config from "../runtime/config";
 //
 //   const app = await createTestApp(config);
 //   afterAll(() => app.close());
@@ -109,16 +109,16 @@ export const createTestApp = async (
 
   // Imported only now: config/module.ts initialises every module as it loads, and that has to
   // happen after the test config above is in place.
-  const { boot } = await import("./boot");
+  const { boot } = await import("../runtime/boot");
   await boot();
 
   const app = elysia();
   const adapter = db();
-  const { default: userModel } = await import("../models/user");
+  const { default: userModel } = await import("../../models/user");
   const { default: accessGroupModel, ensureFullAccessGroup } = await import(
-    "../models/access_group"
+    "../../models/access_group"
   );
-  const { issueToken } = await import("../modules/token");
+  const { issueToken } = await import("../../modules/token");
 
   const tokenFor = async (user: { id: string }) =>
     (await issueToken({ user: user.id, kind: "session" })).bearer;

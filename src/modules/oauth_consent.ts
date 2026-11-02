@@ -1,7 +1,7 @@
 import Elysia, { status } from "elysia";
 import moment from "moment";
 import z from "zod";
-import { intersectScopes, isScope, scopeCovers } from "../core/access";
+import { intersectScopes, isScope, scopeCovers } from "../core/auth/access";
 import type { Row } from "../core/db/contract";
 import { oauthConsentTable, tokenTable } from "../core/db/internal";
 import { makeModule } from "../core/module";

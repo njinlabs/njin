@@ -1,8 +1,8 @@
 import { mkdir, rename, rm, stat } from "node:fs/promises";
 import { request as httpRequest } from "node:http";
 import { dirname, join } from "node:path";
-import logger from "../modules/logger";
-import { getConfig } from "./config";
+import logger from "../../modules/logger";
+import { getConfig } from "../runtime/config";
 
 // On-demand static pages (ISR-style): a route listed under `static` in config.ts is rendered the
 // first time a URL is requested, the HTML is kept on disk, and every later request is served from

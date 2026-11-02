@@ -2,7 +2,7 @@ import { describe, expect, it, mock } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import * as realConfig from "../../src/core/config";
+import * as realConfig from "../../src/core/runtime/config";
 import * as realAnalyticsModule from "../../src/modules/analytics";
 import * as realElysiaModule from "../../src/modules/elysia";
 import { makeFakeElysia } from "../helpers/fake_elysia";
@@ -23,7 +23,7 @@ const config: {
   helpers: unknown[];
 } = { models: [], vars: [], helpers: [] };
 
-mock.module("../../src/core/config", () => ({
+mock.module("../../src/core/runtime/config", () => ({
   ...realConfig,
   getConfig: () => ({ ...config, rootDir: process.cwd() }),
 }));
@@ -174,7 +174,7 @@ describe("view.init() — fallback abort global", () => {
       await view.init();
       process.chdir(cwd);
 
-      const { HttpError } = await import("../../src/core/http_error");
+      const { HttpError } = await import("../../src/core/http/http_error");
       const abort = (view() as any).globals.abort as (
         code: number,
         message?: string,

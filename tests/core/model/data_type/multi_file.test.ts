@@ -1,6 +1,6 @@
 import { beforeAll, describe, expect, it } from "bun:test";
-import { loadConfig } from "../../../../src/core/config";
 import { multiFile } from "../../../../src/core/model/data_type/multi_file";
+import { loadConfig } from "../../../../src/core/runtime/config";
 import elysia from "../../../../src/modules/elysia";
 import fileModule from "../../../../src/modules/file";
 

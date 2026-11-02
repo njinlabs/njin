@@ -7,7 +7,7 @@ import {
   type WorkerOutboundMessage,
   type WorkerRequestMessage,
   type WorkerResponseMessage,
-} from "../../src/core/worker";
+} from "../../src/core/runtime/worker";
 
 const makeFakeApp = (
   handle: (request: Request) => Promise<Response> | Response,

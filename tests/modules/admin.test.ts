@@ -2,7 +2,7 @@ import { afterAll, describe, expect, it, mock } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { loadConfig } from "../../src/core/config";
+import { loadConfig } from "../../src/core/runtime/config";
 import * as realElysiaModule from "../../src/modules/elysia";
 import { makeFakeElysia } from "../helpers/fake_elysia";
 

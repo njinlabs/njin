@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, mock, spyOn } from "bun:test";
 import z from "zod";
-import * as realConfig from "../../src/core/config";
+import * as realConfig from "../../src/core/runtime/config";
 
 const loggerErrorCalls: unknown[] = [];
 mock.module("../../src/modules/logger", () => ({
@@ -10,7 +10,7 @@ mock.module("../../src/modules/logger", () => ({
 }));
 
 const serveWorkerCalls: unknown[] = [];
-mock.module("../../src/core/worker", () => ({
+mock.module("../../src/core/runtime/worker", () => ({
   serveWorker: (app: unknown) => serveWorkerCalls.push(app),
 }));
 
@@ -18,13 +18,13 @@ mock.module("../../src/core/worker", () => ({
 // --isolate, mock.module() replaces the module in a registry shared across the whole
 // test run, so a partial mock here would otherwise break other files that import
 // loadConfig from this same specifier.
-mock.module("../../src/core/config", () => ({
+mock.module("../../src/core/runtime/config", () => ({
   ...realConfig,
   getConfig: () => ({ port: 5555 }),
 }));
 
 const { UniqueConstraintError } = await import("../../src/core/model");
-const { HttpError } = await import("../../src/core/http_error");
+const { HttpError } = await import("../../src/core/http/http_error");
 const { LinkTargetMissingError } = await import("../../src/core/db/contract");
 const { default: elysia } = await import("../../src/modules/elysia");
 

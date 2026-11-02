@@ -1,6 +1,6 @@
 import z from "zod";
-import { getConfig } from "../core/config";
 import { makeModel, numeric, text } from "../core/model";
+import { getConfig } from "../core/runtime/config";
 
 const file = makeModel("file", {
   name: "File",

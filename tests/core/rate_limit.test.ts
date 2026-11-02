@@ -5,7 +5,7 @@ import { useTestDb } from "../helpers/test_db";
 const db = await useTestDb();
 
 const { MAX_FAILURES, clearFailures, isLimited, recordFailure } = await import(
-  "../../src/core/rate_limit"
+  "../../src/core/auth/rate_limit"
 );
 
 const fail = async (key: string, times: number) => {

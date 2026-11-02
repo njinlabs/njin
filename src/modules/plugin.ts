@@ -1,5 +1,5 @@
-import { getConfig } from "../core/config";
 import { makeModule } from "../core/module";
+import { getConfig } from "../core/runtime/config";
 
 const plugin = makeModule(() => {
   const fn = () => {};

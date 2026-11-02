@@ -1,7 +1,7 @@
 import { describe, expect, it, mock } from "bun:test";
 import Elysia from "elysia";
 import z from "zod";
-import * as realConfig from "../../src/core/config";
+import * as realConfig from "../../src/core/runtime/config";
 import * as realElysiaModule from "../../src/modules/elysia";
 import { makeFakeAuthPlugin } from "../helpers/fake_auth";
 import { makeFakeElysia } from "../helpers/fake_elysia";
@@ -97,7 +97,7 @@ let customRouteMounted = false;
 // partial mock would otherwise break other files that import the un-mocked exports
 // from these same specifiers (e.g. loadConfig from core/config, injectBracketQuery
 // from modules/elysia).
-mock.module("../../src/core/config", () => ({
+mock.module("../../src/core/runtime/config", () => ({
   ...realConfig,
   getConfig: () => ({
     models: [

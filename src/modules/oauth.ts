@@ -1,17 +1,21 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import Elysia from "elysia";
 import moment from "moment";
-import { isScope, scopeCovers } from "../core/access";
-import { getConfig } from "../core/config";
+import { isScope, scopeCovers } from "../core/auth/access";
+import {
+  clearFailures,
+  isLimited,
+  recordFailure,
+} from "../core/auth/rate_limit";
 import {
   oauthClientTable,
   oauthCodeTable,
   tokenTable,
 } from "../core/db/internal";
-import { escapeHtml, noStore, page } from "../core/html_page";
+import { escapeHtml, noStore, page } from "../core/http/html_page";
+import { publicBase } from "../core/http/public_url";
 import { makeModule } from "../core/module";
-import { publicBase } from "../core/public_url";
-import { clearFailures, isLimited, recordFailure } from "../core/rate_limit";
+import { getConfig } from "../core/runtime/config";
 import db from "./db";
 import elysia from "./elysia";
 import { getCatalog, getGuard } from "./guard";

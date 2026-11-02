@@ -1,7 +1,7 @@
 import pino from "pino";
 import pretty from "pino-pretty";
-import { getConfig } from "../core/config";
 import { makeModule } from "../core/module";
+import { getConfig } from "../core/runtime/config";
 
 // Grace period for custom (possibly async) streams to flush the fatal entry before exiting.
 const FATAL_EXIT_DELAY_MS = 100;

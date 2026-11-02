@@ -1,5 +1,5 @@
 import type { AnyElysia } from "elysia";
-import logger from "../modules/logger";
+import logger from "../../modules/logger";
 
 // This project's tsconfig only loads lib "DOM" (not "DOM.Iterable"/webworker), which ships no
 // DedicatedWorkerGlobalScope type. Bun's own docs recommend this exact local override — reusing

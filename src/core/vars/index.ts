@@ -4,7 +4,7 @@ import db from "../../modules/db";
 import type { DbOperations } from "../db/contract";
 import { varsPublishedTable, varsTable } from "../db/internal";
 import { fieldMeta, fieldsFromSchema } from "../db/table_def";
-import { HttpError } from "../http_error";
+import { HttpError } from "../http/http_error";
 import { runAfterHooks, runBeforeHooks } from "../model/hooks";
 import type { DraftOptions } from "../model/index";
 import {

@@ -1,7 +1,7 @@
 import { describe, expect, it, mock } from "bun:test";
-import * as realConfig from "../../src/core/config";
 import type { DbAdapter, TableDef } from "../../src/core/db/contract";
 import { internalTables } from "../../src/core/db/internal";
+import * as realConfig from "../../src/core/runtime/config";
 import realUserModel from "../../src/models/user";
 
 // The db module only wires an adapter into the app: connect it during init(), sync every
@@ -48,7 +48,7 @@ let extraModels: (() => Promise<{
 // --isolate, mock.module() replaces the module in a registry shared across the whole
 // test run, so a partial mock would otherwise break other files that import loadConfig
 // from this same specifier.
-mock.module("../../src/core/config", () => ({
+mock.module("../../src/core/runtime/config", () => ({
   ...realConfig,
   getConfig: () => ({
     adapters: { db: fakeAdapter },
