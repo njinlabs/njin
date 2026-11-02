@@ -16,7 +16,7 @@ import {
   scopeCovers,
   scopeMatches,
   validateGrants,
-} from "../../src/core/auth/access";
+} from "../../../src/core/auth/access";
 
 const link = (model: string) =>
   z.string().meta({ renderAs: "relation", model });

@@ -7,7 +7,7 @@ import {
   type WorkerOutboundMessage,
   type WorkerRequestMessage,
   type WorkerResponseMessage,
-} from "../../src/core/runtime/worker";
+} from "../../../src/core/runtime/worker";
 
 const makeFakeApp = (
   handle: (request: Request) => Promise<Response> | Response,
@@ -84,7 +84,7 @@ describe("buildResponseMessage", () => {
 // worker_fixture.ts boots a real worker around a fake app; this drives it end to end exactly
 // as a supervisor would.
 describe("serveWorker (real Worker thread)", () => {
-  const fixturePath = join(import.meta.dir, "fixtures/worker_fixture.ts");
+  const fixturePath = join(import.meta.dir, "../fixtures/worker_fixture.ts");
 
   it("boots, answers a request over postMessage, and shuts down cleanly on 'shutdown'", async () => {
     const worker = new Worker(fixturePath);

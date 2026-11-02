@@ -5,7 +5,7 @@ import { describe, expect, it, mock } from "bun:test";
 // src/config/module.ts), which never happens in these plain unit tests, so replace it
 // with a no-op fake, same pattern as tests/core/model/index.test.ts fakes ../modules/db.
 const loggedErrors: unknown[] = [];
-mock.module("../../src/modules/logger", () => ({
+mock.module("../../../src/modules/logger", () => ({
   default: () => ({
     error: (err: unknown, msg: string) => {
       loggedErrors.push({ err, msg });
@@ -13,7 +13,7 @@ mock.module("../../src/modules/logger", () => ({
   }),
 }));
 
-const { makeEvent } = await import("../../src/core/api/event");
+const { makeEvent } = await import("../../../src/core/api/event");
 
 describe("event bus", () => {
   it("delivers the payload to a listener", async () => {

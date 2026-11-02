@@ -1,16 +1,20 @@
 import { describe, expect, it } from "bun:test";
 import z from "zod";
-import type { Condition } from "../../src/core/db/contract";
-import { HttpError } from "../../src/core/http/http_error";
-import { useTestDb } from "../helpers/test_db";
+import type { Condition } from "../../../src/core/db/contract";
+import { HttpError } from "../../../src/core/http/http_error";
+import { useTestDb } from "../../helpers/test_db";
 
 const db = await useTestDb();
 
-const { createGuard } = await import("../../src/core/auth/guarded");
-const { makeModel, relation, text } = await import("../../src/core/model");
-const { default: userModel } = await import("../../src/models/user");
-const { default: accessGroup } = await import("../../src/models/access_group");
-const { issueToken, resolveBearer } = await import("../../src/modules/token");
+const { createGuard } = await import("../../../src/core/auth/guarded");
+const { makeModel, relation, text } = await import("../../../src/core/model");
+const { default: userModel } = await import("../../../src/models/user");
+const { default: accessGroup } = await import(
+  "../../../src/models/access_group"
+);
+const { issueToken, resolveBearer } = await import(
+  "../../../src/modules/token"
+);
 
 const category = makeModel("category", {
   name: "Category",

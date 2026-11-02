@@ -2,7 +2,7 @@ import { describe, expect, it, mock, spyOn } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import * as realConfig from "../../src/core/runtime/config";
+import * as realConfig from "../../../src/core/runtime/config";
 
 const fakeConfig = {
   port: 4321,
@@ -15,15 +15,15 @@ const fakeConfig = {
 // Spread the real module's other exports (loadConfig, defineConfig, ...) — without
 // --isolate, mock.module() replaces the module in a registry shared across every test
 // file in the run, so a partial mock here would otherwise break any other file (e.g.
-// tests/core/config.test.ts) that imports loadConfig from this same specifier later.
+// tests/core/runtime/config.test.ts) that imports loadConfig from this same specifier later.
 // rootDir is read lazily (process.cwd() at call time, not captured into fakeConfig above)
 // so it picks up each test's own chdir() before printBanner() runs.
-mock.module("../../src/core/runtime/config", () => ({
+mock.module("../../../src/core/runtime/config", () => ({
   ...realConfig,
   getConfig: () => ({ ...fakeConfig, rootDir: process.cwd() }),
 }));
 
-const { printBanner } = await import("../../src/core/runtime/banner");
+const { printBanner } = await import("../../../src/core/runtime/banner");
 
 describe("printBanner", () => {
   it("prints connection info and marks admin as not found when _admin/index.html is missing", () => {

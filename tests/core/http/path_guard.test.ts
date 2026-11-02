@@ -3,7 +3,7 @@ import { join } from "node:path";
 import {
   resolveSafePath,
   sanitizeFileName,
-} from "../../src/core/http/path_guard";
+} from "../../../src/core/http/path_guard";
 
 const baseDir = join("d:/njin", "uploads");
 
@@ -15,11 +15,11 @@ describe("resolveSafePath", () => {
   });
 
   it("rejects path traversal that escapes baseDir", () => {
-    expect(resolveSafePath(baseDir, "../../etc/passwd")).toBeNull();
+    expect(resolveSafePath(baseDir, "../../../etc/passwd")).toBeNull();
   });
 
   it("rejects an absolute path that resolves outside baseDir", () => {
-    expect(resolveSafePath(baseDir, "../../../secrets.env")).toBeNull();
+    expect(resolveSafePath(baseDir, "../../../../secrets.env")).toBeNull();
   });
 
   it("allows a path that merely starts similarly but stays inside baseDir", () => {
@@ -31,7 +31,9 @@ describe("resolveSafePath", () => {
   it("rejects a sibling directory that merely shares baseDir as a string prefix", () => {
     // baseDir = ".../uploads" — a naive `startsWith(baseDir)` check would let this through
     // because ".../uploads-secret" also starts with ".../uploads".
-    expect(resolveSafePath(baseDir, "../uploads-secret/file.txt")).toBeNull();
+    expect(
+      resolveSafePath(baseDir, "../../uploads-secret/file.txt"),
+    ).toBeNull();
   });
 
   it("allows baseDir itself", () => {
@@ -45,7 +47,7 @@ describe("sanitizeFileName", () => {
   });
 
   it("strips directory traversal down to the final segment", () => {
-    expect(sanitizeFileName("../../../etc/config.ts")).toBe("config.ts");
+    expect(sanitizeFileName("../../../../etc/config.ts")).toBe("config.ts");
   });
 
   it("strips a leading absolute path", () => {

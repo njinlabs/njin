@@ -3,24 +3,24 @@ import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import * as realConfig from "../../src/core/runtime/config";
-import * as realLoggerModule from "../../src/modules/logger";
+import * as realConfig from "../../../src/core/runtime/config";
+import * as realLoggerModule from "../../../src/modules/logger";
 
 const dir = mkdtempSync(join(tmpdir(), "njin-static-cache-"));
 
 let edgeCache: { ban: string[]; headers: Record<string, string> } | undefined;
 
-mock.module("../../src/core/runtime/config", () => ({
+mock.module("../../../src/core/runtime/config", () => ({
   ...realConfig,
   getConfig: () => ({ rootDir: dir, edgeCache }),
 }));
-mock.module("../../src/modules/logger", () => ({
+mock.module("../../../src/modules/logger", () => ({
   ...realLoggerModule,
   default: () => ({ error: () => {} }),
 }));
 
 const { cacheKey, getOrRenderStatic, readStatic, purgeStatic } = await import(
-  "../../src/core/http/static_cache"
+  "../../../src/core/http/static_cache"
 );
 
 afterAll(() => rmSync(dir, { recursive: true, force: true }));

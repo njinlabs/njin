@@ -1,10 +1,10 @@
 import { afterAll, describe, expect, it } from "bun:test";
-import { createTestApp } from "../../src/core/api/testing";
+import { createTestApp } from "../../../src/core/api/testing";
 
 const app = await createTestApp({
-  models: [() => import("../fixtures/testing_post")],
+  models: [() => import("../../fixtures/testing_post")],
 });
-const { default: post } = await import("../fixtures/testing_post");
+const { default: post } = await import("../../fixtures/testing_post");
 
 afterAll(() => app.close());
 

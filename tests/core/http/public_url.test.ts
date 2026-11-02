@@ -1,14 +1,14 @@
 import { describe, expect, it, mock } from "bun:test";
-import * as realConfig from "../../src/core/runtime/config";
+import * as realConfig from "../../../src/core/runtime/config";
 
 let publicUrl: string | undefined;
 
-mock.module("../../src/core/runtime/config", () => ({
+mock.module("../../../src/core/runtime/config", () => ({
   ...realConfig,
   getConfig: () => ({ publicUrl }),
 }));
 
-const { publicBase } = await import("../../src/core/http/public_url");
+const { publicBase } = await import("../../../src/core/http/public_url");
 
 const request = (url: string, headers: Record<string, string> = {}) =>
   new Request(url, { headers });

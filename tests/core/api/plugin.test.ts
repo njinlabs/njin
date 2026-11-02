@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { definePlugin } from "../../src/core/api/plugin";
+import { definePlugin } from "../../../src/core/api/plugin";
 
 describe("definePlugin", () => {
   it("returns the plugin object unchanged", () => {
