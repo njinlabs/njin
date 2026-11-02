@@ -18,6 +18,10 @@ import { pgliteClient } from "../../helpers/pglite_client";
 const client = new PGlite({ extensions: { pg_trgm } });
 const plain = new PGlite(); // no pg_trgm available
 
+// Booting PGlite (WASM + extension) takes seconds; do it at load, not inside the first hook, whose
+// 5s timeout it blows when the whole suite is running.
+await Promise.all([client.waitReady, plain.waitReady]);
+
 afterAll(async () => {
   await client.close();
   await plain.close();

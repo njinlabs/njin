@@ -10,6 +10,9 @@ import { describeAdapter } from "./contract_suite";
 // one instance is shared and every test gets a schema of its own (which also exercises the
 // adapter's `schema` option).
 const client = new PGlite({ extensions: { pg_trgm } });
+
+// Boot at load, not inside the first test, whose 5s timeout a cold start can exceed under load.
+await client.waitReady;
 const db = pgliteClient(client);
 
 afterAll(async () => {
