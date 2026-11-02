@@ -368,13 +368,13 @@ describe("analytics", () => {
 });
 
 describe("the schema a user is shown", () => {
-  type Schema = { data: { prefix: string }[]; vars: { prefix: string }[] };
+  type Schema = { models: { prefix: string }[]; vars: { prefix: string }[] };
 
   it("lists what they can do something with", async () => {
     const schema = await read<Schema>(
       await app.get("/api/schema", { as: editor }),
     );
-    const prefixes = schema.data.map((model) => model.prefix);
+    const prefixes = schema.models.map((model) => model.prefix);
 
     expect(prefixes).toContain("article");
     // reachable as a choice from an article
@@ -387,7 +387,7 @@ describe("the schema a user is shown", () => {
       await app.get("/api/schema", { as: nobody }),
     );
 
-    expect(schema.data).toEqual([]);
+    expect(schema.models).toEqual([]);
     expect(schema.vars).toEqual([]);
   });
 
@@ -396,7 +396,7 @@ describe("the schema a user is shown", () => {
       await app.get("/api/schema", { as: admin }),
     );
 
-    expect(schema.data.map((model) => model.prefix).sort()).toEqual([
+    expect(schema.models.map((model) => model.prefix).sort()).toEqual([
       "article",
       "category",
     ]);
