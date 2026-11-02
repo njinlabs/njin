@@ -65,7 +65,7 @@ const api = makeModule(() => {
           );
 
           return {
-            data: allModels,
+            models: allModels,
             vars: allVars,
             // The languages of the site, for models with `i18n: true`; null when not configured.
             i18n: getConfig().i18n ?? null,

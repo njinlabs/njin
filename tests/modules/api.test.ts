@@ -163,7 +163,7 @@ describe("GET /api/schema", () => {
     );
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
-      data: {
+      models: {
         name: string;
         prefix: string;
         draftable: boolean;
@@ -174,9 +174,9 @@ describe("GET /api/schema", () => {
       vars: { name: string; prefix: string; schema: Record<string, unknown> }[];
     };
 
-    expect(body.data).toHaveLength(3);
-    expect(body.data[0]!.prefix).toBe("post");
-    expect(body.data.map((m) => [m.prefix, m.draftable, m.i18n])).toEqual([
+    expect(body.models).toHaveLength(3);
+    expect(body.models[0]!.prefix).toBe("post");
+    expect(body.models.map((m) => [m.prefix, m.draftable, m.i18n])).toEqual([
       ["post", false, false],
       ["article", true, false],
       ["page", false, true],
@@ -186,7 +186,7 @@ describe("GET /api/schema", () => {
       defaultLocale: "id",
     });
     const props = (
-      body.data[0]!.schema as {
+      body.models[0]!.schema as {
         properties: Record<string, { type?: string; properties?: unknown }>;
       }
     ).properties;
@@ -196,7 +196,7 @@ describe("GET /api/schema", () => {
 
     expect(props.internalFlag).toBeUndefined();
     expect(
-      (body.data[0]!.schema as { required?: string[] }).required,
+      (body.models[0]!.schema as { required?: string[] }).required,
     ).not.toContain("internalFlag");
 
     expect(body.vars).toHaveLength(1);
