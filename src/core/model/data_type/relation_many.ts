@@ -6,7 +6,7 @@ type Return<Model extends ReturnType<typeof makeModel>> = z.ZodPreprocess<
 >;
 
 export function relationMany<Model extends ReturnType<typeof makeModel>>(
-  meta: FormMeta,
+  meta: FormMeta & { labelKey?: keyof Model["validation"]["shape"] },
   model: Model,
 ): Return<Model>;
 
@@ -14,7 +14,7 @@ export function relationMany<
   T extends z.ZodTypeAny,
   Model extends ReturnType<typeof makeModel>,
 >(
-  meta: FormMeta,
+  meta: FormMeta & { labelKey?: keyof Model["validation"]["shape"] },
   model: Model,
   rule: (
     z: z.ZodArray<RelationType<ReturnType<Model["validation"]["partial"]>>>,
