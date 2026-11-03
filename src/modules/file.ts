@@ -64,6 +64,9 @@ const file = makeModule(() => {
 
   fn.init = async () => {
     const { default: baseModel } = await import("../models/file");
+    // Before anything below imports the project models (getGuard does): a model that declares a
+    // file() field reads this module's model while it is being defined.
+    model = baseModel;
 
     type FileUploadCurrent = Awaited<ReturnType<typeof baseModel.create>>;
 
@@ -202,8 +205,6 @@ const file = makeModule(() => {
     } else {
       elysia().use(controller);
     }
-
-    model = baseModel;
 
     return {};
   };
