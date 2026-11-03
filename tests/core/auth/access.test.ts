@@ -477,3 +477,25 @@ describe("scopes", () => {
     expect(intersectScopes([], ["*:*"])).toEqual([]);
   });
 });
+
+describe("catalog with a plugin's resources", () => {
+  const catalog = buildCatalog({
+    models: [],
+    vars: [],
+    extra: [{ resource: "report", actions: ["read", "export"], scoped: false }],
+  });
+
+  it("lists them after the built-in ones", () => {
+    expect(catalog.at(-1)).toEqual({
+      resource: "report",
+      actions: ["read", "export"],
+      scoped: false,
+    });
+  });
+
+  it("validates grants on them like any other", () => {
+    expect(validateGrants(["report:export", "report:*"], catalog)).toEqual([]);
+    expect(validateGrants(["report:delete"], catalog)).toHaveLength(1);
+    expect(validateGrants(["report:read:own"], catalog)).toHaveLength(1);
+  });
+});

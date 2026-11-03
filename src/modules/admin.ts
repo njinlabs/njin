@@ -1,5 +1,6 @@
 import { join } from "node:path";
 import Elysia from "elysia";
+import { adminManifest } from "../core/http/admin_dev";
 import { resolveSafePath } from "../core/http/path_guard";
 import { makeModule } from "../core/module";
 import { getConfig } from "../core/runtime/config";
@@ -15,6 +16,8 @@ const admin = makeModule(() => {
 
   fn.init = () => {
     const controller = new Elysia()
+      // The admin asks which plugins to load; open to anyone, it only names files.
+      .get("/api/admin/manifest", () => adminManifest(getConfig().adminPlugins))
       .get("/_admin", () => indexFile())
       .get("/_admin/*", async ({ params }) => {
         // Elysia leaves wildcard params percent-encoded — decode before touching the filesystem.

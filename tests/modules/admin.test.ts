@@ -2,6 +2,8 @@ import { afterAll, describe, expect, it, mock } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { definePlugin } from "../../src/core/api/plugin";
+import { setAdminDevUrl } from "../../src/core/http/admin_dev";
 import { loadConfig } from "../../src/core/runtime/config";
 import * as realElysiaModule from "../../src/modules/elysia";
 import { makeFakeElysia } from "../helpers/fake_elysia";
@@ -70,5 +72,33 @@ describe("admin", () => {
     );
     expect(res.status).toBe(200);
     expect(await res.text()).toBe("<html>admin shell</html>");
+  });
+
+  it("lists no plugins at /api/admin/manifest when none is served", async () => {
+    const res = await app.handle(
+      new Request("http://localhost/api/admin/manifest"),
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ plugins: [] });
+  });
+
+  it("lists the plugins' admin sides on the dev server", async () => {
+    await loadConfig({
+      rootDir: dir,
+      plugins: [definePlugin({ admin: ["/p/reports/admin/index.tsx"] })],
+    });
+    setAdminDevUrl("http://localhost:5173");
+
+    const res = await app.handle(
+      new Request("http://localhost/api/admin/manifest"),
+    );
+    expect(await res.json()).toEqual({
+      plugins: [
+        { entry: "http://localhost:5173/@fs//p/reports/admin/index.tsx" },
+      ],
+    });
+
+    setAdminDevUrl(undefined);
+    await loadConfig({ rootDir: dir });
   });
 });

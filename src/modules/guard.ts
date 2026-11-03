@@ -43,7 +43,18 @@ const buildCatalogFromConfig = async () => {
     vars.push(group.prefix);
   }
 
-  return buildCatalog({ models, vars });
+  // A plugin's resource must not shadow a model: a grant would mean both. (A settings group lives under "vars.", which a plugin's name cannot contain.)
+  const taken = new Set(models.map((m) => m.prefix));
+  const extra = getConfig().permissions;
+  for (const { resource } of extra) {
+    if (taken.has(resource)) {
+      throw new Error(
+        `Plugin permission "${resource}" is already the prefix of a model.`,
+      );
+    }
+  }
+
+  return buildCatalog({ models, vars, extra });
 };
 
 export const getCatalog = () => {

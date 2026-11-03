@@ -6,7 +6,7 @@ import bunFilesystemAdapter from "../adapters/bun_filesystem";
 import surrealAdapter from "../adapters/surreal";
 import type { Helper } from "../api/helper";
 import type { McpTool } from "../api/mcp_tool";
-import type { Plugin } from "../api/plugin";
+import type { Plugin, PluginPermission } from "../api/plugin";
 import type { DbAdapter } from "../db/contract";
 import type { makeModel } from "../model";
 import type { makeVars } from "../vars";
@@ -197,6 +197,9 @@ export type ResolvedConfig = {
   // flattened into the arrays above — init() is the only part that can't be merged away,
   // so it's the only piece of each Plugin that survives resolution on its own.
   pluginInits: Array<() => Promise<void> | void>;
+  // What plugins add to the access catalog, and the admin plugins they carry.
+  permissions: Required<PluginPermission>[];
+  adminPlugins: string[];
 };
 
 // Identity function — purely for DX (autocomplete/type-checking on the config
@@ -313,12 +316,56 @@ export const loadConfig = async (preloaded?: NjinConfig): Promise<void> => {
       headers: userConfig.edgeCache.headers ?? {},
     },
     i18n: resolveI18n(userConfig.i18n),
+    permissions: resolvePermissions(plugins),
+    adminPlugins: plugins.flatMap((p) => p.admin ?? []),
     pluginInits: plugins
       .map((p) => p.init)
       .filter(
         (fn): fn is () => Promise<void> | void => typeof fn === "function",
       ),
   };
+};
+
+// Names of the access catalog that are not a plugin's to take: the built-in resources, and the
+// "vars." prefix settings groups live under. Models and groups are the project's own and are
+// checked against the catalog when it is built.
+const RESERVED_RESOURCES = new Set([
+  "*",
+  "file",
+  "user",
+  "access_group",
+  "analytics",
+]);
+
+const resolvePermissions = (
+  plugins: Plugin[],
+): Required<PluginPermission>[] => {
+  const seen = new Set<string>();
+
+  return plugins.flatMap((p) =>
+    (p.permissions ?? []).map(({ resource, actions, scoped = false }) => {
+      if (
+        !/^[A-Za-z0-9_-]+$/.test(resource) ||
+        RESERVED_RESOURCES.has(resource) ||
+        seen.has(resource)
+      ) {
+        throw new Error(
+          `Invalid plugin permission "${resource}" — it must be a plain name no other resource uses.`,
+        );
+      }
+      if (
+        actions.length === 0 ||
+        actions.some((action) => !/^[A-Za-z0-9_-]+$/.test(action))
+      ) {
+        throw new Error(
+          `Invalid actions for plugin permission "${resource}" — expected at least one plain name.`,
+        );
+      }
+
+      seen.add(resource);
+      return { resource, actions, scoped };
+    }),
+  );
 };
 
 const LOCALE_CODE = /^[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8})*$/;

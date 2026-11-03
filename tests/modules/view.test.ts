@@ -17,6 +17,10 @@ mock.module("vite", () => ({
   }),
 }));
 
+// The dev server also serves the plugins' admin sides, which it reads from the config.
+const { loadConfig } = await import("../../src/core/runtime/config");
+await loadConfig({});
+
 const loggerErrors: unknown[] = [];
 mock.module("../../src/modules/logger", () => ({
   default: () => ({ error: (...args: unknown[]) => loggerErrors.push(args) }),

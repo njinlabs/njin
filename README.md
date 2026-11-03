@@ -362,6 +362,24 @@ export default defineConfig({
 
 Everything a plugin contributes is merged in ahead of your own project's models/vars/hooks/events/routes — so your project's own registrations always run after, and can build on top of what the plugin sets up.
 
+A plugin can also carry a side in the admin panel and its own permissions:
+
+```ts
+definePlugin({
+  // Resources a group can be granted, next to the models and settings groups: "report:read",
+  // "report:export". The admin hides what its `requires` names from users without them.
+  permissions: [{ resource: "report", actions: ["read", "export"] }],
+  // The file the admin side is default-exported from (`defineAdminPlugin(...)` of
+  // @njinlabs/njin-admin). In development `GET /api/admin/manifest` points the admin at it on the
+  // Vite dev server, so there is nothing to build while you work on it.
+  admin: [import.meta.resolve("./admin/index.tsx")],
+});
+```
+
+A field can be drawn by the plugin's admin side while keeping the type it is stored as:
+`slug: plugin(text({ label: "Slug" }), ["reports:slugify", { from: "title" }])`, where `reports` is the
+admin plugin's name and `slugify` one of its `fields`.
+
 Dispatch from anywhere — for example, composing with a model's `afterCreate` hook:
 
 ```ts

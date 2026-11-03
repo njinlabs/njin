@@ -1,6 +1,7 @@
 import { join } from "node:path";
 import { Edge } from "edge.js";
 import Elysia from "elysia";
+import { loadAdminPluginDev, setAdminDevUrl } from "../core/http/admin_dev";
 import { escapeHtml } from "../core/http/html_page";
 import { HttpError } from "../core/http/http_error";
 import {
@@ -37,8 +38,13 @@ export const buildViteGlobal = async (): Promise<ViteGlobal> => {
   // createTestApp() (core/api/testing.ts) sets NJIN_TEST: no dev server in a test run — the pages
   // still render live, only the asset tags fall back to the built manifest (or a comment).
   if (isDev && process.env.NJIN_TEST !== "1") {
-    const { createServer } = await import("vite");
-    const server = await createServer();
+    const { createServer, searchForWorkspaceRoot } = await import("vite");
+    // The admin's plugins are served by this same dev server, on top of the project's own config.
+    const adminDev = await loadAdminPluginDev(
+      getConfig().adminPlugins,
+      searchForWorkspaceRoot,
+    );
+    const server = await createServer(adminDev ? { plugins: [adminDev] } : {});
     await server.listen();
     server.printUrls();
 
@@ -46,6 +52,7 @@ export const buildViteGlobal = async (): Promise<ViteGlobal> => {
       server.resolvedUrls?.local[0]?.replace(/\/$/, "") ??
       "http://localhost:5173";
 
+    setAdminDevUrl(url);
     process.once("SIGINT", () => server.close());
     process.once("SIGTERM", () => server.close());
 

@@ -21,7 +21,8 @@ const config: {
   models: unknown[];
   vars: unknown[];
   helpers: unknown[];
-} = { models: [], vars: [], helpers: [] };
+  adminPlugins: string[];
+} = { models: [], vars: [], helpers: [], adminPlugins: [] };
 
 mock.module("../../src/core/runtime/config", () => ({
   ...realConfig,

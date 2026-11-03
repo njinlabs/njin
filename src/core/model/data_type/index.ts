@@ -6,6 +6,7 @@ export * from "./file";
 export * from "./multi_file";
 export * from "./numeric";
 export * from "./object";
+export * from "./plugin";
 export * from "./relation";
 export * from "./relation_many";
 export * from "./richtext";

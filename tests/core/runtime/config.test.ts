@@ -183,3 +183,67 @@ describe("loadConfig — i18n", () => {
     ).rejects.toThrow("not in config.i18n.locales");
   });
 });
+
+describe("loadConfig — plugin permissions and admin plugins", () => {
+  it("collects them from every plugin, with scoped defaulting to false", async () => {
+    await loadConfig({
+      plugins: [
+        definePlugin({
+          permissions: [{ resource: "report", actions: ["read"] }],
+          admin: ["file:///plugins/reports/admin/index.tsx"],
+        }),
+        definePlugin({
+          permissions: [{ resource: "board", actions: ["read"], scoped: true }],
+          admin: ["/plugins/boards/admin/index.tsx"],
+        }),
+      ],
+    });
+
+    expect(getConfig().permissions).toEqual([
+      { resource: "report", actions: ["read"], scoped: false },
+      { resource: "board", actions: ["read"], scoped: true },
+    ]);
+    expect(getConfig().adminPlugins).toEqual([
+      "file:///plugins/reports/admin/index.tsx",
+      "/plugins/boards/admin/index.tsx",
+    ]);
+  });
+
+  it("is empty when no plugin adds any", async () => {
+    await loadConfig({ plugins: [definePlugin({})] });
+
+    expect(getConfig().permissions).toEqual([]);
+    expect(getConfig().adminPlugins).toEqual([]);
+  });
+
+  it("refuses a resource that is taken, reserved or not a plain name", async () => {
+    const add = (resource: string) =>
+      loadConfig({
+        plugins: [
+          definePlugin({ permissions: [{ resource, actions: ["read"] }] }),
+        ],
+      });
+
+    for (const resource of ["user", "file", "*", "vars.site", "a:b", ""]) {
+      await expect(add(resource)).rejects.toThrow("Invalid plugin permission");
+    }
+    await expect(
+      loadConfig({
+        plugins: [
+          definePlugin({ permissions: [{ resource: "x", actions: ["read"] }] }),
+          definePlugin({ permissions: [{ resource: "x", actions: ["read"] }] }),
+        ],
+      }),
+    ).rejects.toThrow("Invalid plugin permission");
+  });
+
+  it("refuses a permission without actions", async () => {
+    await expect(
+      loadConfig({
+        plugins: [
+          definePlugin({ permissions: [{ resource: "x", actions: [] }] }),
+        ],
+      }),
+    ).rejects.toThrow("Invalid actions");
+  });
+});

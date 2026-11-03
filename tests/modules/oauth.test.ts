@@ -34,6 +34,7 @@ mock.module("../../src/core/runtime/config", () => ({
     publicUrl: "https://site.example",
     models: [],
     vars: [],
+    permissions: [],
     mcp: {
       redirectUris: [
         "https://app.example/cb",

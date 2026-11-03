@@ -16,6 +16,7 @@ mock.module("../../src/core/runtime/config", () => ({
     models: [],
     vars: [],
     helpers: [],
+    adminPlugins: [],
     rootDir: process.cwd(),
   }),
 }));

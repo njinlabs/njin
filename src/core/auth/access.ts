@@ -51,6 +51,8 @@ export type CatalogEntry = {
 export const buildCatalog = (input: {
   models: { prefix: string; draftable?: boolean }[];
   vars: string[];
+  // What plugins add: resources of their own, with the actions they define.
+  extra?: CatalogEntry[];
 }): CatalogEntry[] => [
   ...input.models.map(({ prefix, draftable }) => ({
     resource: prefix,
@@ -76,6 +78,7 @@ export const buildCatalog = (input: {
     scoped: true,
   },
   { resource: "analytics", actions: ["read"], scoped: false },
+  ...(input.extra ?? []),
 ];
 
 // Human-readable problems, empty when every grant is valid for this catalog.
