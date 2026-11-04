@@ -26,8 +26,9 @@ describe("adminManifest", () => {
       ]),
     ).toEqual({
       plugins: [
-        { entry: "http://localhost:5173/@fs/D:/p/admin/index.tsx" },
+        { name: "p", entry: "http://localhost:5173/@fs/D:/p/admin/index.tsx" },
         {
+          name: "a",
           entry: `http://localhost:5173/@fs/${process.cwd().replace(/\\/g, "/")}/a/index.tsx`,
         },
       ],

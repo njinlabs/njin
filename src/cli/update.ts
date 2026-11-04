@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 import { existsSync } from "node:fs";
-import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
+import { installLatestAdmin } from "./admin_install";
 
 const c = {
   reset: "\x1b[0m",
@@ -57,6 +57,17 @@ if (tagIndex !== -1 && (!requestedTag || requestedTag.startsWith("-"))) {
 
 const distTag = requestedTag ?? "latest";
 
+// The admin panel follows the same channel as njin: a prerelease channel (or a project already
+// pinned to a prerelease) takes prerelease panels too.
+const adminBeta = requestedTag
+  ? requestedTag !== "latest"
+  : currentPinned.includes("-");
+
+// `--admin` refreshes only the admin panel and leaves the njin dependency alone.
+if (args.includes("--admin")) {
+  process.exit((await installLatestAdmin(root, adminBeta)) ? 0 : 1);
+}
+
 console.log(
   `Checking ${distTag === "latest" ? "latest" : `"${distTag}"`} njin version...\n`,
 );
@@ -74,7 +85,6 @@ if (!registryRes.ok) {
 }
 
 const { version: latest } = (await registryRes.json()) as { version: string };
-const adminDir = join(root, "_admin");
 
 // A project already on a prerelease would otherwise be moved *back* to the older stable
 // version by a plain `njin update` — only an explicit --beta/--tag may change channel.
@@ -88,15 +98,19 @@ const isBehindCurrent = (() => {
 
 if (!requestedTag && isBehindCurrent) {
   console.log(
-    `${c.green}✓${c.reset} This project is on ${currentPinned}, ahead of the latest stable (${latest}) — nothing to update. Use "--beta" to follow the beta channel.`,
+    `${c.green}✓${c.reset} This project is on ${currentPinned}, ahead of the latest stable (${latest}) — nothing to update. Use "--beta" to follow the beta channel.
+`,
   );
+  await installLatestAdmin(root, adminBeta);
   process.exit(0);
 }
 
-if (currentPinned === latest && existsSync(adminDir)) {
+if (currentPinned === latest) {
   console.log(
-    `${c.green}✓${c.reset} Already on the latest version (${latest}) — nothing to update.`,
+    `${c.green}✓${c.reset} Already on the latest version (${latest}) — nothing to update.
+`,
   );
+  await installLatestAdmin(root, adminBeta);
   process.exit(0);
 }
 
@@ -125,59 +139,15 @@ if (installExitCode !== 0) {
 }
 
 console.log("\nSyncing admin panel...\n");
-
-// _admin/ is a prebuilt SPA baked into the tagged release tarball, not something published to
-// npm (package.json's "files" excludes template/) — so bumping the dependency above never
-// touches it. It's rebuilt with content-hashed asset filenames on every release, so the old
-// directory is removed first rather than merged, to avoid accumulating stale hashed files.
-const tag = `v${latest}`;
-const tarballUrl = `https://codeload.github.com/njinlabs/njin/tar.gz/refs/tags/${tag}`;
-
-const res = await fetch(tarballUrl);
-if (!res.ok || !res.body) {
-  console.error(
-    `✖ Could not download the admin panel for njin ${tag} (HTTP ${res.status}).\n` +
-      `  The dependency was updated to ${latest}, but _admin/ was not refreshed. Re-run "bunx njin update" to retry.`,
-  );
-  process.exit(1);
-}
-
-await rm(adminDir, { recursive: true, force: true });
-await mkdir(adminDir, { recursive: true });
-
-// --strip-components=3 drops the `njin-<version>/template/_admin/` prefix baked into GitHub's
-// tag-tarball layout, so _admin/'s own contents land directly in adminDir.
-const tar = Bun.spawn(
-  [
-    "tar",
-    "-xz",
-    "-f",
-    "-",
-    "--strip-components=3",
-    "-C",
-    adminDir,
-    `njin-${latest}/template/_admin`,
-  ],
-  {
-    stdin: res.body,
-    stdout: "inherit",
-    stderr: "inherit",
-  },
-);
-
-const tarExitCode = await tar.exited;
-
-if (tarExitCode !== 0) {
-  console.error(
-    `✖ Failed to extract the admin panel (tar exited with code ${tarExitCode}).\n` +
-      `  The dependency was updated to ${latest}, but _admin/ was not refreshed.`,
-  );
-  process.exit(tarExitCode);
-}
+const adminOk = await installLatestAdmin(root, adminBeta);
 
 console.log(`
   ${c.bold}${c.cyan}njin update${c.reset} ${c.dim}done${c.reset}
 
-  ${c.green}➜${c.reset}  njin ${currentPinned} -> ${latest}
-  ${c.green}➜${c.reset}  _admin/ refreshed
+  ${c.green}➜${c.reset}  njin ${currentPinned} -> ${latest}${
+    adminOk
+      ? ""
+      : `
+  ${c.dim}admin panel not refreshed — run "bunx njin update --admin"${c.reset}`
+  }
 `);

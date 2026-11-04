@@ -44,7 +44,7 @@ Plugins are npm packages (not local files) registered directly in `config.ts`'s 
 - `src/views/errors/` — optional custom error pages (`404.edge`, `403.edge`, `500.edge`, etc.)
 - `src/client/main.ts` — frontend entry point
 - `src/client/app.css` — Tailwind CSS (already set up)
-- `_admin/` — prebuilt admin panel SPA, already included by this scaffold — served at `/_admin` automatically, no setup needed
+- `_admin/` — admin panel SPA, downloaded by `njin create` and refreshed by `njin update` (`njin update --admin` for the panel only) — served at `/_admin`, no setup needed
 
 ---
 
@@ -791,7 +791,7 @@ it("lists posts for a signed-in user", async () => {
 bunx njin dev      # dev server + Vite HMR (single command)
 bunx njin build    # build for production -> ./out (public/, _admin/, views/, compiled server)
 bunx njin start    # production, run from source (no compile)
-bunx njin update   # update @njinlabs/njin to the latest version and refresh _admin/
+bunx njin update   # update @njinlabs/njin and the admin panel (--admin: panel only)
 ```
 
 Wire these as `package.json` scripts (`"dev": "njin dev"`, etc.) to run them via `bun run dev` instead.

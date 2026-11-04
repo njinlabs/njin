@@ -10,8 +10,19 @@ export const setAdminDevUrl = (url: string | undefined) => {
   devUrl = url?.replace(/\/$/, "");
 };
 
+// The contract version of the installed admin. A plugin served from source is built against it by
+// definition, and the admin refuses a plugin that does not say which contract it is for.
+let devContract: number | undefined;
+
 // Vite names files with forward slashes, on Windows too.
 const slashes = (path: string) => path.replace(/\\/g, "/");
+
+// A name for messages: the folder the plugin's admin side sits in ("reports/admin/index.tsx").
+const nameOf = (entry: string) => {
+  const parts = toPath(entry).split("/").slice(0, -1);
+  if (parts.at(-1) === "admin") parts.pop();
+  return parts.at(-1) ?? "plugin";
+};
 
 // `import.meta.resolve("./admin/index.tsx")` gives a file: URL; a plain path is fine too.
 const toPath = (entry: string) =>
@@ -21,7 +32,11 @@ const toPath = (entry: string) =>
 // dev server (Vite transforms it as it is asked for); there is no build to point at yet.
 export const adminManifest = (entries: string[]) => ({
   plugins: devUrl
-    ? entries.map((entry) => ({ entry: `${devUrl}/@fs/${toPath(entry)}` }))
+    ? entries.map((entry) => ({
+        name: nameOf(entry),
+        entry: `${devUrl}/@fs/${toPath(entry)}`,
+        ...(devContract === undefined ? {} : { contract: devContract }),
+      }))
     : [],
 });
 
@@ -191,9 +206,9 @@ export const loadAdminPluginDev = async (
 
   let shared: readonly string[];
   try {
-    ({ sharedModules: shared } = await import(
-      here("@njinlabs/njin-admin/shared")
-    ));
+    const admin = await import(here("@njinlabs/njin-admin/shared"));
+    shared = admin.sharedModules;
+    devContract = admin.contract?.version;
   } catch {
     console.warn(
       "Plugins list an admin side, but @njinlabs/njin-admin is not installed: they are not served.",

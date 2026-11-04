@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, readdirSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { installLatestAdmin } from "./admin_install";
 
 const c = {
   reset: "\x1b[0m",
@@ -81,7 +82,13 @@ scaffoldedPkg.dependencies = {
 };
 await Bun.write(pkgPath, `${JSON.stringify(scaffoldedPkg, null, 2)}\n`);
 
-console.log("Installing dependencies...\n");
+// The template carries no admin panel: it is its own project with its own releases, so a new
+// project gets the newest one (a prerelease of njin takes prerelease panels too). A failure
+// only warns — `bunx njin update --admin` fetches it later.
+console.log("Downloading admin panel...\n");
+await installLatestAdmin(targetDir, pkg.version.includes("-"));
+
+console.log("\nInstalling dependencies...\n");
 
 const install = Bun.spawn(["bun", "install"], {
   cwd: targetDir,

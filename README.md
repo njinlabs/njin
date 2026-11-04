@@ -36,7 +36,7 @@ src/
   client/
     main.ts          ← frontend entry point
     app.css          ← Tailwind CSS
-_admin/              ← optional — drop a built admin panel SPA here (not bundled with njin)
+_admin/              ← admin panel, downloaded by create and refreshed by "njin update"
 vite.config.ts       ← Vite config
 ```
 
@@ -697,7 +697,7 @@ A client that was approved before, for at least what it asks now, is not asked a
 
 ## Admin panel
 
-`_admin/` at your project root is a static folder the server serves at `GET /_admin`. New projects get a prebuilt admin panel there, and `bunx njin update` refreshes it; you can also drop in your own build's `index.html` and assets. If the folder is missing, the startup banner just notes it wasn't found. The panel is driven by `GET /api/schema`, so it shows each user only the models and settings they have access to.
+`_admin/` at your project root is a static folder the server serves at `GET /_admin`. `bunx njin create` downloads the newest admin panel release (github.com/njinlabs/njin-admin) into it, and `bunx njin update` refreshes it along with njin itself; `bunx njin update --admin` refreshes only the panel. It is plain files, so commit it like the rest of the project, or drop in your own build's `index.html` and assets and skip `--admin`. If the folder is missing, the startup banner just notes it wasn't found. The panel is driven by `GET /api/schema`, so it shows each user only the models and settings they have access to.
 
 ## Configuration
 
@@ -917,7 +917,7 @@ bunx @njinlabs/njin create my-web  # Scaffold a new project
 bunx njin dev       # Start dev server (Elysia + Vite HMR)
 bunx njin build     # Build for production -> ./out (public/, _admin/, views/, compiled server)
 bunx njin start     # Run from source in production mode (no compile)
-bunx njin update    # Update @njinlabs/njin to the latest version and refresh _admin/
+bunx njin update    # Update @njinlabs/njin and the admin panel (--admin: panel only)
 bunx njin update --beta  # Follow the beta channel instead (or --tag <name>)
 ```
 
