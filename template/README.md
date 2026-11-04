@@ -34,7 +34,7 @@ _admin/            The admin panel
 
 ## Working with AI
 
-This project includes a `CLAUDE.md` that teaches AI coding agents how to build with njin, so you can ask an agent to add a page or a model.
+This project includes `CLAUDE.md` and `AGENTS.md`, which teach AI coding agents how to build with njin, so you can ask an agent to add a page or a model.
 
 Agents can also manage the site's content by connecting to `/mcp` on your site (for example `http://localhost:3000/mcp`). In the admin panel, open **Connected apps** to see what is connected and to take access back at any time.
 
