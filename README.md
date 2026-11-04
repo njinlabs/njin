@@ -557,13 +557,15 @@ DELETE /api/auth/logout        # Bearer <token>
 GET    /api/auth/permissions   # what the caller may do (see Access control)
 ```
 
-Every `/api/*` endpoint needs `Authorization: Bearer <token>`. A token looks like `njt:<id>:<secret>`; only a hash of the secret is stored. There are three kinds:
+Every `/api/*` endpoint needs `Authorization: Bearer <token>` — or, for a session in a browser, the `njin_session` cookie that login sets. A token looks like `njt:<id>:<secret>`; only a hash of the secret is stored. There are three kinds:
 
 | Kind | Made by | Lifetime | May do |
 | --- | --- | --- | --- |
 | session | `POST /api/auth/login` | 30 days, renewed while it is used | whatever its user can, and manage users, groups and tokens |
 | personal token | `POST /api/token` | until revoked | what its scopes say, never more than its user |
 | OAuth token | connecting an MCP client | 1 hour, renewed with a rotating refresh token (30 days) | what the user approved, never more than the user |
+
+**The cookie** is how the admin stays signed in without JavaScript ever holding the token: `HttpOnly`, `SameSite=Strict`, `Path=/api` (and `Secure` when the site is on https). It only ever carries a session, and a request on it that changes data must send an `X-Requested-With` header (any value), which another site can't add. Login still returns the token in its body for clients that aren't browsers; logout clears the cookie.
 
 Managing users, access groups and tokens needs a **session**: a personal or OAuth token can't, so a leaked agent token can't mint itself a replacement. The agent endpoint (`/mcp`) is the other way round and takes personal and OAuth tokens only.
 
@@ -699,7 +701,7 @@ export default defineConfig({
 
 **Files.** File bytes can't go through a tool call, so `create_upload_url` returns a short-lived link (10 minutes, up to 10 files of 10 MB). The agent uploads with `curl -F file=@photo.jpg <url>`, or — if it has no shell or network — shows the link so you can open it and drop the file. `check_upload` then returns the file ids to put in a model's file field. Only safe types are accepted (images except SVG, PDF, Office documents, audio, video, zip, fonts); HTML, SVG and scripts are rejected because `/uploads` is served from the site's own origin.
 
-**What an agent may do.** Everything the built-in tools do goes through the same [access control](#access-control) as the REST API, as the user who connected it, narrowed to what they approved. On the consent page the user ticks which of the things the client asked for (`article:read`, `vars.site:write`, …) it gets; a client that asks for nothing in particular is offered everything the user can do. The agent is told no more than that, and what it may not do comes back as a readable `Forbidden`. Taking a permission away from the user takes effect on the agent's next call.
+**What an agent may do.** Everything the built-in tools do goes through the same [access control](#access-control) as the REST API, as the user who connected it, narrowed to what they approved. On the consent page (served by the admin at `/_admin/oauth/authorize`, backed by `GET` and `POST /api/oauth/authorize`) the user ticks which of the things the client asked for (`article:read`, `vars.site:write`, …) it gets; a client that asks for nothing in particular is offered everything the user can do. The agent is told no more than that, and what it may not do comes back as a readable `Forbidden`. Taking a permission away from the user takes effect on the agent's next call.
 
 **Managing connections.** What a user has approved is theirs to look at and take back (a session is needed, never an agent's token):
 
