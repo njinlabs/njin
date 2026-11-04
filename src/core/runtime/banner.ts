@@ -7,7 +7,8 @@ const c = {
   reset: "\x1b[0m",
   bold: "\x1b[1m",
   dim: "\x1b[2m",
-  cyan: "\x1b[36m",
+  // The light green of the logo (256-colour, so it reads on dark terminals too).
+  brand: "\x1b[38;5;108m",
   green: "\x1b[32m",
   yellow: "\x1b[33m",
 };
@@ -57,7 +58,7 @@ export const printBanner = ({ mode }: BootSummary): void => {
 
   const lines = [
     "",
-    `  ${c.bold}${c.cyan}njin${c.reset} ${c.dim}v${PKG_VERSION}${c.reset}  ${mode === "production" ? c.green : c.yellow}${mode}${c.reset}`,
+    `  ${c.bold}${c.brand}njin${c.reset} ${c.dim}v${PKG_VERSION}${c.reset}  ${mode === "production" ? c.green : c.yellow}${mode}${c.reset}`,
     "",
     ...rows.map(
       ([key, value]) => `  ${c.green}➜${c.reset}  ${label(key)} ${value}`,

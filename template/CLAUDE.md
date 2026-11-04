@@ -560,9 +560,11 @@ Put files in `/static`. In dev they are served by Vite at their original URL. On
 Use `vite.static()` in templates — never hardcode paths or ports:
 
 ```edge
-<img src="{{ vite.static('logo.png') }}" />
-<link rel="icon" href="{{ vite.static('favicon.ico') }}" />
+<img src="{{ vite.static('logo.svg') }}" />
+<link rel="icon" type="image/svg+xml" href="{{ vite.static('favicon.svg') }}" />
 ```
+
+A new project starts with the njin `favicon.svg` and `logo.svg` in `/static`; replace them with the site's own.
 
 ---
 
