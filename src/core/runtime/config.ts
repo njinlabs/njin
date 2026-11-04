@@ -64,7 +64,9 @@ export type StaticRoute = string | { route: string; revalidate?: number };
 export type ResolvedStaticRoute = { route: string; revalidate?: number };
 
 export const normalizeStaticRoute = (route: string): string => {
-  const normalized = route.replace(/\[([^\]/]+)\]/g, ":$1");
+  // A name never holds "[": it would be refused below anyway, and allowing it makes a run of "["
+  // without a closing "]" take quadratic time.
+  const normalized = route.replace(/\[([^[\]/]+)\]/g, ":$1");
   if (
     !normalized.startsWith("/") ||
     /[[\]*]|\.\.|\/\//.test(normalized) ||
