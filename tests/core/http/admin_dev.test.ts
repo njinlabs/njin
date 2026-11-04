@@ -6,6 +6,7 @@ import { createServer, searchForWorkspaceRoot, type ViteDevServer } from "vite";
 import {
   adminManifest,
   adminPluginDev,
+  hasPlugin,
   setAdminDevUrl,
 } from "../../../src/core/http/admin_dev";
 
@@ -163,5 +164,23 @@ export default z;
 
   it("lets the server read the plugin's folder", () => {
     expect(server.config.server.fs.allow).toContain(at("admin"));
+  });
+});
+
+describe("hasPlugin", () => {
+  it("finds a Vite plugin by name in a nested, partly async list", async () => {
+    const list = [
+      { name: "a" },
+      [Promise.resolve([{ name: "@tailwindcss/vite:scan" }])],
+    ];
+
+    expect(await hasPlugin(list, "@tailwindcss/vite")).toBe(true);
+  });
+
+  it("is false for a list without it, and for no list at all", async () => {
+    expect(
+      await hasPlugin([{ name: "a" }, [false, null]], "@tailwindcss/vite"),
+    ).toBe(false);
+    expect(await hasPlugin(undefined, "@tailwindcss/vite")).toBe(false);
   });
 });

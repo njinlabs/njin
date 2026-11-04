@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import type { Plugin } from "vite";
+import type { Plugin, PluginOption } from "vite";
 
 // The dev server's address, once it is listening: the manifest points the admin's plugins at it.
 let devUrl: string | undefined;
@@ -149,6 +149,20 @@ type Options = {
   searchForWorkspaceRoot: (root: string) => string;
 };
 
+// Whether a Vite config's plugin list (nested, possibly promises) holds a plugin called `prefix…`.
+export const hasPlugin = async (
+  list: unknown,
+  prefix: string,
+): Promise<boolean> => {
+  const item = await list;
+  if (Array.isArray(item)) {
+    for (const entry of item) if (await hasPlugin(entry, prefix)) return true;
+    return false;
+  }
+  const name = (item as { name?: unknown } | null | undefined)?.name;
+  return typeof name === "string" && name.startsWith(prefix);
+};
+
 // The plugin's source runs in the admin's page, which is already running its own React, router,
 // query client and kit. A second copy of any of them breaks hooks and context, so inside the
 // plugin's files (the entry and what it imports) those imports read the admin's copy instead.
@@ -257,7 +271,9 @@ export const adminPluginDev = ({
 export const loadAdminPluginDev = async (
   entries: string[],
   searchForWorkspaceRoot: (root: string) => string,
-) => {
+  // Vite's, to read the project's own Vite config (see the Tailwind note below).
+  projectPlugins: () => Promise<unknown> = async () => undefined,
+): Promise<PluginOption[] | undefined> => {
   if (entries.length === 0) return;
 
   const here = (name: string) =>
@@ -275,10 +291,30 @@ export const loadAdminPluginDev = async (
     return;
   }
 
-  return adminPluginDev({
+  const dev = adminPluginDev({
     entries,
     shared,
     exportsOf: async (name) => Object.keys(await import(here(name))),
     searchForWorkspaceRoot,
   });
+
+  // A plugin's stylesheet is Tailwind source, and without Tailwind in Vite the dev server serves
+  // it as it is. A project that does not use Tailwind itself gets it for the plugins' sake, from
+  // the admin package, which depends on it.
+  if (await hasPlugin(await projectPlugins(), "@tailwindcss/vite"))
+    return [dev];
+
+  try {
+    const fromAdmin = Bun.resolveSync(
+      "@njinlabs/njin-admin/shared",
+      process.cwd(),
+    );
+    const tailwind = Bun.resolveSync("@tailwindcss/vite", dirname(fromAdmin));
+    return [dev, (await import(pathToFileURL(tailwind).href)).default()];
+  } catch {
+    console.warn(
+      "Could not load @tailwindcss/vite: the stylesheets of plugins are not compiled.",
+    );
+    return [dev];
+  }
 };

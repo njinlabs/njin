@@ -38,13 +38,22 @@ export const buildViteGlobal = async (): Promise<ViteGlobal> => {
   // createTestApp() (core/api/testing.ts) sets NJIN_TEST: no dev server in a test run — the pages
   // still render live, only the asset tags fall back to the built manifest (or a comment).
   if (isDev && process.env.NJIN_TEST !== "1") {
-    const { createServer, searchForWorkspaceRoot } = await import("vite");
+    const { createServer, searchForWorkspaceRoot, loadConfigFromFile } =
+      await import("vite");
     // The admin's plugins are served by this same dev server, on top of the project's own config.
     const adminDev = await loadAdminPluginDev(
       getConfig().adminPlugins,
       searchForWorkspaceRoot,
+      async () =>
+        (
+          await loadConfigFromFile(
+            { command: "serve", mode: "development" },
+            undefined,
+            process.cwd(),
+          )
+        )?.config.plugins,
     );
-    const server = await createServer(adminDev ? { plugins: [adminDev] } : {});
+    const server = await createServer(adminDev ? { plugins: adminDev } : {});
     await server.listen();
     server.printUrls();
 
