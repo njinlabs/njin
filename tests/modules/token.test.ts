@@ -398,14 +398,6 @@ describe("listing tokens", () => {
     }
   });
 
-  it("leaves out the sign-in cookie of the OAuth pages", async () => {
-    const web = await issueToken({ user: user.id, kind: "web" });
-
-    const tokens = await listTokens(user.id);
-
-    expect(tokens.some((t) => t.id === idOf(web.bearer))).toBe(false);
-  });
-
   it("finds a token only for its owner", async () => {
     const mine = await issueToken({ user: user.id, kind: "pat" });
 

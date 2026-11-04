@@ -7,6 +7,13 @@ import {
   isLimited,
   recordFailure,
 } from "../core/auth/rate_limit";
+import {
+  CSRF_HEADER,
+  clearSessionCookie,
+  isSafeMethod,
+  sessionCookieOf,
+  setSessionCookie,
+} from "../core/auth/session_cookie";
 import { publicBase } from "../core/http/public_url";
 import { makeModule } from "../core/module";
 import elysia from "./elysia";
@@ -18,6 +25,7 @@ import {
   type Principal,
   removeToken,
   resolveBearer,
+  SESSION_TTL_SECONDS,
   type Surface,
   toPublic,
 } from "./token";
@@ -38,12 +46,18 @@ const surfaceOf = (options: true | AuthOptions): Surface => {
   return "any";
 };
 
+const isSecure = (request: Request) =>
+  publicBase(request).startsWith("https://");
+
 // `auth` is the one way to protect a route:
 //   { auth: true }                content API: a session, personal token or OAuth token
 //   { auth: { session: true } }   a session only
 //   { auth: { mcp: true } }       a personal or OAuth token only
 //   { auth: { can: [r, a] } }     also needs access to resource r, action a
-// and resolves `principal` (who, with what, allowed to do what) plus `user` with the id of the
+// A credential comes in an Authorization header (any kind of token) or, for the admin in a
+// browser, in an HttpOnly cookie that holds a session. A request on the cookie that changes data
+// must also carry `X-Requested-With`, which another site cannot add.
+// It resolves `principal` (who, with what, allowed to do what) plus `user` with the id of the
 // token it came in on.
 const auth = makeModule(() => {
   const fn = async () => {
@@ -51,9 +65,14 @@ const auth = makeModule(() => {
       auth: (options: true | AuthOptions) => ({
         resolve: async ({ bearer, request, set }) => {
           const surface = surfaceOf(options);
-          const principal = await resolveBearer(bearer);
+          const cookie = bearer ? undefined : sessionCookieOf(request);
+          const principal = await resolveBearer(bearer ?? cookie);
 
-          if (!principal || !allowedOn(principal.kind, surface)) {
+          if (
+            !principal ||
+            !allowedOn(principal.kind, surface) ||
+            (cookie && principal.kind !== "session")
+          ) {
             if (surface === "mcp") {
               // RFC 9728 — this header is how an MCP client discovers the OAuth flow; without
               // it (and a real 401 status) Claude never starts sign-in.
@@ -62,6 +81,22 @@ const auth = makeModule(() => {
             }
 
             return status(401, { message: "Unauthorized" });
+          }
+
+          if (cookie) {
+            if (
+              !isSafeMethod(request.method) &&
+              !request.headers.has(CSRF_HEADER)
+            ) {
+              return status(403, { message: "Forbidden" });
+            }
+
+            // A session slides with use, so the cookie does too.
+            set.headers["set-cookie"] = setSessionCookie(
+              cookie,
+              SESSION_TTL_SECONDS,
+              isSecure(request),
+            );
           }
 
           if (
@@ -99,8 +134,9 @@ const auth = makeModule(() => {
       )
       .delete(
         "/logout",
-        async ({ user: { tokenId, ...user } }) => {
+        async ({ user: { tokenId, ...user }, request, set }) => {
           await removeToken(tokenId);
+          set.headers["set-cookie"] = clearSessionCookie(isSecure(request));
 
           return { data: user };
         },
@@ -108,7 +144,7 @@ const auth = makeModule(() => {
       )
       .post(
         "/login",
-        async ({ body }) => {
+        async ({ body, request, set }) => {
           const limitKey = `login:${body.email.trim().toLowerCase()}`;
 
           if (await isLimited(limitKey)) {
@@ -139,6 +175,14 @@ const auth = makeModule(() => {
             user: data.id,
             kind: "session",
           });
+
+          // The same session twice: in the cookie the browser keeps (out of reach of scripts),
+          // and in the body for a client that is not a browser.
+          set.headers["set-cookie"] = setSessionCookie(
+            token,
+            SESSION_TTL_SECONDS,
+            isSecure(request),
+          );
 
           const { password: _, ...safeData } = data;
 

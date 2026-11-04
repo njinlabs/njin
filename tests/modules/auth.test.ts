@@ -102,6 +102,24 @@ const call = (
     ),
   );
 
+// The cookie the browser would send back: only its name and value, as it was set.
+const cookieOf = (res: Response) =>
+  res.headers.get("set-cookie")?.split(";")[0] ?? "";
+
+const withCookie = (
+  path: string,
+  cookie: string,
+  init: RequestInit & { headers?: Record<string, string> } = {},
+) =>
+  Promise.resolve(
+    probe.handle(
+      new Request(`http://localhost${path}`, {
+        ...init,
+        headers: { cookie, ...init.headers },
+      }),
+    ),
+  );
+
 const sessionFor = async (user: { id: string }) =>
   (await issueToken({ user: user.id, kind: "session" })).bearer;
 const patFor = async (user: { id: string }, scopes: string[]) =>
@@ -625,5 +643,139 @@ describe("/api/token", () => {
       expect((await list(bearer)).res.status).toBe(401);
       expect((await create(bearer, { name: "Backdoor" })).status).toBe(401);
     }
+  });
+});
+
+describe("the session cookie", () => {
+  const signIn = () =>
+    post("/login", { email: "alice@example.com", password: plainPassword });
+
+  it("is set at login, out of reach of scripts and of other sites", async () => {
+    const res = await signIn();
+    const header = res.headers.get("set-cookie") ?? "";
+
+    expect(header).toStartWith("njin_session=njt:");
+    expect(header).toContain("HttpOnly");
+    expect(header).toContain("SameSite=Strict");
+    expect(header).toContain("Path=/api");
+    expect(header).toContain("Max-Age=2592000");
+  });
+
+  it("is the same session as the token in the body", async () => {
+    const res = await signIn();
+    const body = (await res.json()) as { data: { token: string } };
+
+    expect(cookieOf(res)).toBe(`njin_session=${body.data.token}`);
+  });
+
+  it("is Secure when the site is served over https", async () => {
+    const res = await signIn();
+
+    // the site's public address here is https://site.example
+    expect(res.headers.get("set-cookie")).toContain("; Secure");
+  });
+
+  it("signs a read request in", async () => {
+    const cookie = cookieOf(await signIn());
+
+    const res = await withCookie("/session", cookie);
+
+    expect(res.status).toBe(200);
+  });
+
+  it("is refreshed as the session is used", async () => {
+    const cookie = cookieOf(await signIn());
+
+    const res = await withCookie("/session", cookie);
+
+    expect(res.headers.get("set-cookie")).toStartWith(cookie);
+    expect(res.headers.get("set-cookie")).toContain("Max-Age=2592000");
+  });
+
+  it("is refused for a request that changes data without the header another site cannot add", async () => {
+    const cookie = cookieOf(await signIn());
+    const probeWrite = new Elysia()
+      .use(plugin)
+      .post("/write", () => ({ ok: true }), { auth: { session: true } });
+    const send = (headers: Record<string, string> = {}) =>
+      probeWrite.handle(
+        new Request("http://localhost/write", {
+          method: "POST",
+          headers: { cookie, ...headers },
+        }),
+      );
+
+    expect((await send()).status).toBe(403);
+    expect((await send({ "x-requested-with": "njin-admin" })).status).toBe(200);
+  });
+
+  it("does not need that header when the credential is a bearer token", async () => {
+    const probeWrite = new Elysia()
+      .use(plugin)
+      .post("/write", () => ({ ok: true }), { auth: { session: true } });
+    const bearer = await sessionFor(alice);
+
+    const res = await probeWrite.handle(
+      new Request("http://localhost/write", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${bearer}` },
+      }),
+    );
+
+    expect(res.status).toBe(200);
+  });
+
+  it("does not hold a personal or OAuth token", async () => {
+    for (const bearer of [
+      await patFor(alice, ["*:*"]),
+      await oauthFor(alice, ["*:*"]),
+    ]) {
+      expect((await withCookie("/any", `njin_session=${bearer}`)).status).toBe(
+        401,
+      );
+    }
+  });
+
+  it("is refused once the session has ended, or when it was made up", async () => {
+    const cookie = cookieOf(await signIn());
+    const id = cookie.replace("njin_session=", "").split(":")[1] as string;
+    await db.adapter.update(tokenTable, id, {
+      expiresAt: new Date(Date.now() - 1000).toISOString(),
+    });
+
+    expect((await withCookie("/session", cookie)).status).toBe(401);
+    expect(
+      (await withCookie("/session", "njin_session=njt:no:pe")).status,
+    ).toBe(401);
+  });
+
+  it("is ignored when a bearer token is sent too", async () => {
+    const cookie = cookieOf(await signIn());
+    const pat = await patFor(alice, ["*:*"]);
+
+    const res = await probe.handle(
+      new Request("http://localhost/session", {
+        headers: { cookie, Authorization: `Bearer ${pat}` },
+      }),
+    );
+
+    expect(res.status).toBe(401);
+  });
+
+  it("is cleared at logout, along with the session", async () => {
+    const login = await signIn();
+    const cookie = cookieOf(login);
+
+    const res = await controller.handle(
+      new Request("http://localhost/api/auth/logout", {
+        method: "DELETE",
+        headers: { cookie, "x-requested-with": "njin-admin" },
+      }),
+    );
+
+    expect(res.status).toBe(200);
+    expect(res.headers.get("set-cookie")).toStartWith("njin_session=;");
+    expect(res.headers.get("set-cookie")).toContain("Max-Age=0");
+    expect((await withCookie("/session", cookie)).status).toBe(401);
   });
 });

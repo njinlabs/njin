@@ -22,24 +22,22 @@ export const ACCESS_PREFIX = "njt";
 export const REFRESH_PREFIX = "njr";
 
 const SESSION_TTL_DAYS = 30;
-const WEB_TTL_DAYS = 7;
+export const SESSION_TTL_SECONDS = SESSION_TTL_DAYS * 24 * 60 * 60;
 const OAUTH_ACCESS_TTL_SECONDS = 60 * 60;
 const OAUTH_REFRESH_TTL_DAYS = 30;
 // `lastUsedAt` (and a session's expiry, which slides with use) is rewritten at most this often,
 // so reading with a token does not mean writing on every request.
 const TOUCH_EVERY_SECONDS = 60;
 
-export type TokenKind = "session" | "pat" | "oauth" | "web";
+export type TokenKind = "session" | "pat" | "oauth";
 
 const KINDS: ReadonlySet<string> = new Set<TokenKind>([
   "session",
   "pat",
   "oauth",
-  "web",
 ]);
 
-// What an Authorization header may carry. A "web" token is the cookie of the OAuth sign-in page
-// and is read by that page alone.
+// What a bearer credential may be.
 const DELEGABLE: readonly TokenKind[] = ["session", "pat", "oauth"];
 
 // Where a token is being used. "any" is the content API; "session" is for managing users,
@@ -48,7 +46,6 @@ const DELEGABLE: readonly TokenKind[] = ["session", "pat", "oauth"];
 export type Surface = "any" | "session" | "mcp";
 
 export const allowedOn = (kind: TokenKind, surface: Surface) => {
-  if (kind === "web") return false;
   if (surface === "session") return kind === "session";
   if (surface === "mcp") return kind !== "session";
   return true;
@@ -119,9 +116,6 @@ const parseBearer = (value: string | undefined, prefix: string) => {
 const accessExpiry = (kind: TokenKind) => {
   if (kind === "session") {
     return moment().add(SESSION_TTL_DAYS, "days").toISOString();
-  }
-  if (kind === "web") {
-    return moment().add(WEB_TTL_DAYS, "days").toISOString();
   }
   if (kind === "oauth") {
     return moment().add(OAUTH_ACCESS_TTL_SECONDS, "seconds").toISOString();
@@ -295,7 +289,7 @@ const touch = async (token: TokenRecord) => {
   await db().update(tokenTable, token.id, {
     lastUsedAt: moment().toISOString(),
     // A session stays alive for as long as it is used.
-    ...(token.kind === "session" || token.kind === "web"
+    ...(token.kind === "session"
       ? { expiresAt: accessExpiry(token.kind) }
       : {}),
   });
@@ -355,7 +349,7 @@ export const resolveBearer = async (
     permissions: compile(
       await grantsOf(user.id),
       // A sign-in is the user themselves, like a session; only a delegated token is narrowed.
-      token.kind === "session" || token.kind === "web" ? null : token.scopes,
+      token.kind === "session" ? null : token.scopes,
     ),
   };
 };
@@ -382,10 +376,9 @@ export const listTokens = async (userId: string) => {
     populate: [],
   });
 
-  // The sign-in cookie of the OAuth pages is not a credential to manage.
   return rows.flatMap((row) => {
     const token = toRecord(row);
-    return token && token.kind !== "web" ? [token] : [];
+    return token ? [token] : [];
   });
 };
 
