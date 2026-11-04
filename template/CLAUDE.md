@@ -629,7 +629,7 @@ Add custom JavaScript/CSS in `src/client/main.ts` and `src/client/app.css`.
 
 ## API reference
 
-All endpoints require `Authorization: Bearer <token>` header, and the token's user must be allowed to do what they ask by their access groups (`403`; a record that is someone else's under an `own` grant is `404`) — see [Access control](#access-control).
+All endpoints require `Authorization: Bearer <token>` header (a browser session may send the HttpOnly `njin_session` cookie that login sets instead; on it, requests that change data also need an `X-Requested-With` header), and the token's user must be allowed to do what they ask by their access groups (`403`; a record that is someone else's under an `own` grant is `404`) — see [Access control](#access-control).
 
 ```
 GET    /img?url=&w=&h=&q=         → image/webp  (no auth required, browser-cached)
@@ -652,6 +652,7 @@ GET    /api/access_group/:id      PUT /api/access_group/:id      DELETE /api/acc
                                      409 on a change that would leave nobody with full access
 GET    /api/access/catalog        → { data: [{ resource, actions, scoped }] }   every resource and action a grant can name here
 
+GET    /api/oauth/authorize       → what the admin's consent page shows; POST decides — { data: { redirect } } (session only; the page itself is the admin's, at /_admin/oauth/authorize)
 GET    /api/oauth/consents        → { data: [...] }   apps the user connected over OAuth (session only)
 PUT    /api/oauth/consents/:id    → body: { scopes } — narrow an app; DELETE disconnects it and its tokens
 
