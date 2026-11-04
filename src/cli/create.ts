@@ -82,6 +82,13 @@ scaffoldedPkg.dependencies = {
 };
 await Bun.write(pkgPath, `${JSON.stringify(scaffoldedPkg, null, 2)}\n`);
 
+// The README starts with the project's name, like package.json does.
+const readmePath = join(targetDir, "README.md");
+if (existsSync(readmePath)) {
+  const readme = await Bun.file(readmePath).text();
+  await Bun.write(readmePath, readme.replace(/^# .*/, `# ${projectName}`));
+}
+
 // The template carries no admin panel: it is its own project with its own releases, so a new
 // project gets the newest one (a prerelease of njin takes prerelease panels too). A failure
 // only warns — `bunx njin update --admin` fetches it later.
