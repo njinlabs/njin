@@ -3,7 +3,13 @@ const [command] = process.argv.slice(2);
 
 switch (command) {
   case "create":
-    await import("./create");
+    // `njin create --plugin <dir>` scaffolds a package for a plugin, not a project.
+    await import(
+      process.argv.includes("--plugin") ? "./create-plugin-package" : "./create"
+    );
+    break;
+  case "plugin:create":
+    await import("./plugin-create");
     break;
   case "dev":
     await import("./dev");
@@ -21,9 +27,12 @@ switch (command) {
     await import("./update");
     break;
   default:
-    console.log(`Usage: njin <create|dev|build|build:worker|start|update>
+    console.log(`Usage: njin <create|plugin:create|dev|build|build:worker|start|update>
 
   create <dir>  Scaffold a new project (defaults to current directory)
+                (--plugin scaffolds a package to publish a plugin from instead)
+  plugin:create <name>
+                Add a plugin to this project, in src/plugins/<name>
   dev           Run the dev server (Vite HMR + live reload)
   build         Build for production -> ./out (public/, _admin/, views/, server)
   build:worker  Build a headless worker for production -> ./out (public/, _admin/, views/, worker.js)

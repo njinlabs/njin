@@ -376,6 +376,24 @@ definePlugin({
 });
 ```
 
+`permissions` and `admin` are also accepted by `defineConfig`, with the same shape, so the project's own admin pages need no plugin around them. They are merged after the plugins'.
+
+**Where the admin side comes from.** `admin` points at one file, and what is there decides how it is shipped:
+
+- **Source** (`./admin/index.tsx`): the plugin of a project. `njin dev` serves it from the Vite dev server; `njin build` / `njin build:worker` build it against the admin's contract into `out/_admin/plugins/<name>/` and list it in `GET /api/admin/manifest`.
+- **Built** (`./admin/dist/index.js`, with the `contract.json` the admin's build writes beside it): what an npm package ships, so a project that installs it needs neither Vite nor Tailwind for it. It is served as it is in development and copied by `njin build`.
+
+A plugin's stylesheet is Tailwind source; when the project's own Vite config has no `@tailwindcss/vite`, `njin dev` adds it.
+
+**Scaffolding.**
+
+```sh
+bunx njin plugin:create reports      # a plugin in this project, in src/plugins/reports
+bunx njin create --plugin my-plugin  # a package to publish a plugin from, with a dev/ project to try it in
+```
+
+`plugin:create` only writes the folder and prints how to register it in `config.ts`. The package from `create --plugin` builds its admin side into `admin/dist` before publishing (`prepublishOnly`) and runs `dev/` with the plugin loaded from source (`bun run dev`; `bun run dev:admin` downloads the admin panel there once).
+
 A field can be drawn by the plugin's admin side while keeping the type it is stored as:
 `slug: plugin(text({ label: "Slug" }), ["reports:slugify", { from: "title" }])`, where `reports` is the
 admin plugin's name and `slugify` one of its `fields`.

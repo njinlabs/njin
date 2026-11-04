@@ -20,7 +20,7 @@ njin generates a full REST API, admin panel schema, and SSR website from a singl
 8. `src/views/components/*.edge` — components
 9. `src/client/main.ts`, `src/client/app.css` — frontend
 
-Plugins are npm packages (not local files) registered directly in `config.ts`'s `plugins: []`.
+Plugins are factories (usually from an npm package, or a folder made by `bunx njin plugin:create <name>` in `src/plugins/`) registered directly in `config.ts`'s `plugins: []`.
 
 **Imports:**
 
@@ -348,6 +348,8 @@ export default defineConfig({
 ```
 
 Everything a plugin contributes is merged in ahead of your own project's models/vars/hooks/events/routes — your project's own registrations always run after and can build on top of what the plugin sets up. Only reach for this when explicitly asked to build a reusable plugin — most feature requests belong in the project's own `src/models`, `src/vars`, `src/helpers`, `src/events` files instead.
+
+A plugin can also have an admin side (`admin: [import.meta.resolve("./admin/index.tsx")]`, a file that default-exports `defineAdminPlugin(...)` from `@njinlabs/njin-admin/sdk`) and its own `permissions`; both are accepted by `defineConfig` too. `bunx njin plugin:create <name>` scaffolds one in the project (it prints how to register it in `config.ts`; it needs `@njinlabs/njin-admin` in `package.json`), and `bunx njin create --plugin <dir>` scaffolds a package to publish one from.
 
 ---
 
