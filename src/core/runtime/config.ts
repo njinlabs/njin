@@ -146,6 +146,10 @@ export type NjinConfig = {
   vars?: VarsFactory[];
   helpers?: HelperFactory[];
   plugins?: Plugin[];
+  // The same as a plugin's: what the project adds to the access catalog, and where its own admin
+  // side is (`import.meta.resolve("./src/admin/index.tsx")`). Listed after the plugins'.
+  permissions?: PluginPermission[];
+  admin?: string[];
   // Page routes rendered on their first request in production and then served from a cached HTML
   // file until purged with purgeStatic() (from "@njinlabs/njin/static") or, with `revalidate`,
   // until it is that many seconds old. `njin dev` ignores this and always renders live.
@@ -316,8 +320,11 @@ export const loadConfig = async (preloaded?: NjinConfig): Promise<void> => {
       headers: userConfig.edgeCache.headers ?? {},
     },
     i18n: resolveI18n(userConfig.i18n),
-    permissions: resolvePermissions(plugins),
-    adminPlugins: plugins.flatMap((p) => p.admin ?? []),
+    permissions: resolvePermissions([...plugins, userConfig]),
+    adminPlugins: [
+      ...plugins.flatMap((p) => p.admin ?? []),
+      ...(userConfig.admin ?? []),
+    ],
     pluginInits: plugins
       .map((p) => p.init)
       .filter(
@@ -338,7 +345,7 @@ const RESERVED_RESOURCES = new Set([
 ]);
 
 const resolvePermissions = (
-  plugins: Plugin[],
+  plugins: Pick<Plugin, "permissions">[],
 ): Required<PluginPermission>[] => {
   const seen = new Set<string>();
 

@@ -209,6 +209,38 @@ describe("loadConfig — plugin permissions and admin plugins", () => {
     ]);
   });
 
+  it("takes the project's own after the plugins', and holds it to the same rules", async () => {
+    await loadConfig({
+      plugins: [
+        definePlugin({
+          permissions: [{ resource: "report", actions: ["read"] }],
+          admin: ["/plugins/reports/admin/index.tsx"],
+        }),
+      ],
+      permissions: [{ resource: "board", actions: ["read"] }],
+      admin: ["/src/admin/index.tsx"],
+    });
+
+    expect(getConfig().permissions.map((p) => p.resource)).toEqual([
+      "report",
+      "board",
+    ]);
+    expect(getConfig().adminPlugins).toEqual([
+      "/plugins/reports/admin/index.tsx",
+      "/src/admin/index.tsx",
+    ]);
+
+    // A resource a plugin took is not the project's to take again.
+    await expect(
+      loadConfig({
+        plugins: [
+          definePlugin({ permissions: [{ resource: "x", actions: ["read"] }] }),
+        ],
+        permissions: [{ resource: "x", actions: ["read"] }],
+      }),
+    ).rejects.toThrow("Invalid plugin permission");
+  });
+
   it("is empty when no plugin adds any", async () => {
     await loadConfig({ plugins: [definePlugin({})] });
 
