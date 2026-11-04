@@ -94,7 +94,10 @@ describe("admin", () => {
     );
     expect(await res.json()).toEqual({
       plugins: [
-        { entry: "http://localhost:5173/@fs//p/reports/admin/index.tsx" },
+        {
+          name: "reports",
+          entry: "http://localhost:5173/@fs//p/reports/admin/index.tsx",
+        },
       ],
     });
 

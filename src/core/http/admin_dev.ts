@@ -18,27 +18,86 @@ let devContract: number | undefined;
 const slashes = (path: string) => path.replace(/\\/g, "/");
 
 // A name for messages: the folder the plugin's admin side sits in ("reports/admin/index.tsx").
-const nameOf = (entry: string) => {
+export const pluginName = (entry: string) => {
   const parts = toPath(entry).split("/").slice(0, -1);
+  // "admin/dist/index.js" of a package that ships built, "admin/index.tsx" of source.
+  if (parts.at(-1) === "dist") parts.pop();
   if (parts.at(-1) === "admin") parts.pop();
   return parts.at(-1) ?? "plugin";
 };
 
 // `import.meta.resolve("./admin/index.tsx")` gives a file: URL; a plain path is fine too.
-const toPath = (entry: string) =>
+export const toPath = (entry: string) =>
   slashes(entry.startsWith("file:") ? fileURLToPath(entry) : entry);
 
-// What GET /api/admin/manifest lists. In development a plugin is its source file, served by the
-// dev server (Vite transforms it as it is asked for); there is no build to point at yet.
-export const adminManifest = (entries: string[]) => ({
-  plugins: devUrl
-    ? entries.map((entry) => ({
-        name: nameOf(entry),
-        entry: `${devUrl}/@fs/${toPath(entry)}`,
+// What the admin loads of a plugin (GET /api/admin/manifest).
+export type ManifestPlugin = {
+  name: string;
+  entry: string;
+  styles?: string[];
+  contract?: number;
+};
+
+// A plugin that ships built (an npm package carries `admin/dist`) has a `contract.json` beside
+// its script, written by the admin's build. Anything else is a source file.
+const contractFile = (entry: string) =>
+  join(dirname(toPath(entry)), "contract.json");
+
+export const isBuiltPlugin = (entry: string) => existsSync(contractFile(entry));
+
+export const builtContract = (entry: string): number | undefined => {
+  if (!isBuiltPlugin(entry)) return;
+  return (
+    JSON.parse(readFileSync(contractFile(entry), "utf8")) as {
+      version?: number;
+    }
+  ).version;
+};
+
+// Where `njin build` puts the built plugins, and the list the manifest is made from in production.
+export const PLUGINS_LIST = "_admin/plugins/plugins.json";
+
+const builtManifest = (rootDir?: string): ManifestPlugin[] => {
+  if (!rootDir) return [];
+  const file = join(rootDir, PLUGINS_LIST);
+  if (!existsSync(file)) return [];
+  try {
+    return JSON.parse(readFileSync(file, "utf8")) as ManifestPlugin[];
+  } catch {
+    return [];
+  }
+};
+
+// In development a plugin is its source file, served by the dev server (Vite transforms it as it
+// is asked for); one that ships built is served as it is, with its stylesheet beside it. In
+// production the plugins are what `njin build` left in `_admin/plugins`.
+export const adminManifest = (
+  entries: string[],
+  rootDir?: string,
+): { plugins: ManifestPlugin[] } => {
+  if (!devUrl) return { plugins: builtManifest(rootDir) };
+
+  return {
+    plugins: entries.map((entry) => {
+      const path = toPath(entry);
+      const base = { name: pluginName(entry), entry: `${devUrl}/@fs/${path}` };
+
+      if (isBuiltPlugin(entry)) {
+        const css = `${path.slice(0, path.lastIndexOf("/"))}/index.css`;
+        return {
+          ...base,
+          ...(existsSync(css) ? { styles: [`${devUrl}/@fs/${css}`] } : {}),
+          contract: builtContract(entry),
+        };
+      }
+
+      return {
+        ...base,
         ...(devContract === undefined ? {} : { contract: devContract }),
-      }))
-    : [],
-});
+      };
+    }),
+  };
+};
 
 const SHARED = "\0njin-shared:";
 const GLOBAL = "__njin";

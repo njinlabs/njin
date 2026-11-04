@@ -1,5 +1,6 @@
 import { rm } from "node:fs/promises";
 import { join } from "node:path";
+import { buildAdminPlugins } from "./build-admin-plugins";
 import { stageBuildAssets } from "./build-assets";
 
 const root = process.cwd();
@@ -13,6 +14,18 @@ await stageBuildAssets(root, outDir);
 // doesn't know which database is in use.
 const { loadConfig, getConfig } = await import("../core/runtime/config");
 await loadConfig();
+
+// The admin sides of the plugins, built against the admin's contract (or copied, when a package
+// ships them built) and listed for GET /api/admin/manifest.
+try {
+  await buildAdminPlugins(getConfig().adminPlugins, outDir);
+} catch (error) {
+  console.error(
+    `
+✗ ${error instanceof Error ? error.message : String(error)}`,
+  );
+  process.exit(1);
+}
 const dbBuild = await getConfig().adapters.db.build?.({
   target: "worker",
   outDir,

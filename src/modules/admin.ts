@@ -17,7 +17,9 @@ const admin = makeModule(() => {
   fn.init = () => {
     const controller = new Elysia()
       // The admin asks which plugins to load; open to anyone, it only names files.
-      .get("/api/admin/manifest", () => adminManifest(getConfig().adminPlugins))
+      .get("/api/admin/manifest", () =>
+        adminManifest(getConfig().adminPlugins, getConfig().rootDir),
+      )
       .get("/_admin", () => indexFile())
       .get("/_admin/*", async ({ params }) => {
         // Elysia leaves wildcard params percent-encoded — decode before touching the filesystem.
