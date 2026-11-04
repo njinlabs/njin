@@ -5,6 +5,8 @@
 // API asks for a custom header on anything that changes data (see `auth.ts`), which a cross-site
 // form cannot add. Scoped to `/api`: the admin's own files never need it.
 
+import { publicBase } from "../http/public_url";
+
 export const SESSION_COOKIE = "njin_session";
 
 const SESSION_COOKIE_PATH = "/api";
@@ -15,6 +17,10 @@ const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 // Sent by the admin on every request. A browser will not add a custom header to a request made
 // from another site without the server agreeing to it first (CORS), and this server never does.
 export const CSRF_HEADER = "x-requested-with";
+
+// Marked Secure when the site is on https, so the cookie never travels in the clear.
+export const isSecure = (request: Request) =>
+  publicBase(request).startsWith("https://");
 
 export const isSafeMethod = (method: string) =>
   SAFE_METHODS.has(method.toUpperCase());

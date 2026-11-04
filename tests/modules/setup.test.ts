@@ -1,10 +1,17 @@
 import { describe, expect, it, mock } from "bun:test";
 import { tokenTable } from "../../src/core/db/internal";
+import * as realConfig from "../../src/core/runtime/config";
 import * as realElysiaModule from "../../src/modules/elysia";
 import { makeFakeElysia } from "../helpers/fake_elysia";
 import { useTestDb } from "../helpers/test_db";
 
 const db = await useTestDb();
+
+// publicBase() reads config to know whether the session cookie is Secure.
+mock.module("../../src/core/runtime/config", () => ({
+  ...realConfig,
+  getConfig: () => ({ publicUrl: "https://site.example" }),
+}));
 
 const fakeElysia = makeFakeElysia();
 mock.module("../../src/modules/elysia", () => ({
@@ -77,6 +84,12 @@ describe("setup", () => {
     const token = await db.adapter.find(tokenTable, tokenId);
     expect(token?.user).toBe(stored?.id as string);
     expect(token?.kind).toBe("session");
+
+    // and the browser is signed in as well, out of reach of scripts
+    expect(res.headers.get("set-cookie")).toStartWith(
+      `njin_session=${body.data.token};`,
+    );
+    expect(res.headers.get("set-cookie")).toContain("HttpOnly");
   });
 
   it("puts the first admin in a group that can do everything", async () => {

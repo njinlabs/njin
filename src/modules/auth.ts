@@ -11,6 +11,7 @@ import {
   CSRF_HEADER,
   clearSessionCookie,
   isSafeMethod,
+  isSecure,
   sessionCookieOf,
   setSessionCookie,
 } from "../core/auth/session_cookie";
@@ -45,9 +46,6 @@ const surfaceOf = (options: true | AuthOptions): Surface => {
   if (options.mcp) return "mcp";
   return "any";
 };
-
-const isSecure = (request: Request) =>
-  publicBase(request).startsWith("https://");
 
 // `auth` is the one way to protect a route:
 //   { auth: true }                content API: a session, personal token or OAuth token

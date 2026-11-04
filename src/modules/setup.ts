@@ -1,9 +1,10 @@
 import Elysia, { status } from "elysia";
 import z from "zod";
+import { isSecure, setSessionCookie } from "../core/auth/session_cookie";
 import { makeModule } from "../core/module";
 import db from "./db";
 import elysia from "./elysia";
-import { issueToken } from "./token";
+import { issueToken, SESSION_TTL_SECONDS } from "./token";
 
 const setup = makeModule(() => {
   const fn = () => {};
@@ -26,7 +27,7 @@ const setup = makeModule(() => {
       // Create first admin — locked once any user exists
       .post(
         "/",
-        async ({ body }) => {
+        async ({ body, request, set }) => {
           if (await hasUsers()) {
             return status(403, { message: "Setup already completed" });
           }
@@ -42,6 +43,13 @@ const setup = makeModule(() => {
             user: created.id,
             kind: "session",
           });
+
+          // Signed in from here on, like after a login.
+          set.headers["set-cookie"] = setSessionCookie(
+            bearer,
+            SESSION_TTL_SECONDS,
+            isSecure(request),
+          );
 
           const { password: _, ...safeUser } = created as typeof created & {
             password: string;
