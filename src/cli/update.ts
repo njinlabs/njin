@@ -14,6 +14,41 @@ const c = {
 const root = process.cwd();
 const pkgPath = join(root, "package.json");
 
+// `--beta` is shorthand for `--tag beta`. Without either, only the stable channel (`latest`)
+// is followed — a prerelease is published under its own dist-tag and never becomes `latest`.
+const args = process.argv.slice(3);
+const tagIndex = args.indexOf("--tag");
+const requestedTag = args.includes("--beta")
+  ? "beta"
+  : tagIndex !== -1
+    ? args[tagIndex + 1]
+    : undefined;
+
+if (tagIndex !== -1 && (!requestedTag || requestedTag.startsWith("-"))) {
+  console.error(`✖ --tag needs a dist-tag name, e.g. "--tag beta".`);
+  process.exit(1);
+}
+
+const distTag = requestedTag ?? "latest";
+
+// `--admin` refreshes only the admin panel and leaves the njin dependency alone, so it needs no
+// njin project: a folder that only runs njin (a plugin's `dev/`) can have a panel too. The
+// channel is the one the folder's package.json pins njin to, or else the one of this CLI.
+if (args.includes("--admin")) {
+  const local = existsSync(pkgPath) ? await Bun.file(pkgPath).json() : {};
+  const pinned =
+    local.dependencies?.["@njinlabs/njin"] ??
+    local.devDependencies?.["@njinlabs/njin"];
+  const own = (
+    await Bun.file(join(import.meta.dir, "../../package.json")).json()
+  ).version as string;
+  const beta = requestedTag
+    ? requestedTag !== "latest"
+    : String(pinned ?? own).includes("-");
+
+  process.exit((await installLatestAdmin(root, beta)) ? 0 : 1);
+}
+
 if (!existsSync(pkgPath)) {
   console.error(
     `✖ No package.json found in ${root} — run this from an njin project root.`,
@@ -40,33 +75,11 @@ const currentPinned = String(pkg[depKey]["@njinlabs/njin"]).replace(
   "",
 );
 
-// `--beta` is shorthand for `--tag beta`. Without either, only the stable channel (`latest`)
-// is followed — a prerelease is published under its own dist-tag and never becomes `latest`.
-const args = process.argv.slice(3);
-const tagIndex = args.indexOf("--tag");
-const requestedTag = args.includes("--beta")
-  ? "beta"
-  : tagIndex !== -1
-    ? args[tagIndex + 1]
-    : undefined;
-
-if (tagIndex !== -1 && (!requestedTag || requestedTag.startsWith("-"))) {
-  console.error(`✖ --tag needs a dist-tag name, e.g. "--tag beta".`);
-  process.exit(1);
-}
-
-const distTag = requestedTag ?? "latest";
-
 // The admin panel follows the same channel as njin: a prerelease channel (or a project already
 // pinned to a prerelease) takes prerelease panels too.
 const adminBeta = requestedTag
   ? requestedTag !== "latest"
   : currentPinned.includes("-");
-
-// `--admin` refreshes only the admin panel and leaves the njin dependency alone.
-if (args.includes("--admin")) {
-  process.exit((await installLatestAdmin(root, adminBeta)) ? 0 : 1);
-}
 
 console.log(
   `Checking ${distTag === "latest" ? "latest" : `"${distTag}"`} njin version...\n`,
