@@ -249,8 +249,13 @@ describe("on-demand static pages in production", () => {
     expect(stale.headers.get("x-njin-cache")).toBe("STALE");
     expect(await stale.text()).toBe(first);
 
-    await settle();
-    expect(await (await get("/ticker")).text()).not.toBe(first);
+    // The refresh runs in the background and takes longer on a slow machine than any fixed wait.
+    let fresh = first;
+    for (let i = 0; i < 50 && fresh === first; i++) {
+      await Bun.sleep(20);
+      fresh = await (await get("/ticker")).text();
+    }
+    expect(fresh).not.toBe(first);
   });
 
   it("shares one render between concurrent first hits", async () => {
