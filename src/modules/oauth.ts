@@ -1,31 +1,21 @@
-import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
-import Elysia from "elysia";
+import { createHash, randomBytes } from "node:crypto";
+import Elysia, { status } from "elysia";
 import moment from "moment";
+import z from "zod";
 import { isScope, scopeCovers } from "../core/auth/access";
-import {
-  clearFailures,
-  isLimited,
-  recordFailure,
-} from "../core/auth/rate_limit";
-import {
-  oauthClientTable,
-  oauthCodeTable,
-  tokenTable,
-} from "../core/db/internal";
-import { escapeHtml, noStore, page } from "../core/http/html_page";
+import { oauthClientTable, oauthCodeTable } from "../core/db/internal";
+import { noStore } from "../core/http/html_page";
 import { publicBase } from "../core/http/public_url";
 import { makeModule } from "../core/module";
 import { getConfig } from "../core/runtime/config";
+import auth from "./auth";
 import db from "./db";
 import elysia from "./elysia";
 import { getCatalog, getGuard } from "./guard";
 import { findConsent, rememberConsent } from "./oauth_consent";
 import {
   issueOAuthTokens,
-  issueToken,
   type Principal,
-  removeToken,
-  resolveBearer,
   revokeOAuthToken,
   rotateOAuthTokens,
 } from "./token";
@@ -39,11 +29,6 @@ import {
 
 const CODE_TTL_MINUTES = 10;
 const UNUSED_CLIENT_TTL_HOURS = 24;
-
-// The cookie of the sign-in page. Path-limited and HttpOnly, so nothing but these pages (and no
-// script) ever sees it, and it is a "web" token, which no API accepts.
-const COOKIE = "njin_web";
-const COOKIE_PATH = "/oauth";
 
 // Dynamic registration is open to anyone who can reach the server, so the redirect URI is the
 // only thing stopping a rogue client from receiving an authorization code. Only these known
@@ -150,13 +135,6 @@ const oauthError = (
   headers: HeadersInit = {},
 ) => json({ error, error_description: description }, status, headers);
 
-const errorPage = (message: string, status = 400) =>
-  page(
-    "Cannot authorize",
-    `<h1>Cannot authorize</h1><p>${escapeHtml(message)}</p>`,
-    status,
-  );
-
 type AuthorizeParams = {
   clientId: string;
   redirectUri: string;
@@ -175,125 +153,11 @@ const parseScopes = (raw: string | null) => {
   return scopes.length ? [...new Set(scopes)] : [ALL];
 };
 
-const VERBS: Record<string, string> = {
-  read: "Read",
-  create: "Create",
-  update: "Edit",
-  delete: "Delete",
-  publish: "Publish",
-  write: "Change",
-};
-
-const describeScope = (scope: string) => {
-  const [resource = "", action = ""] = scope.split(":");
-  const what = resource.startsWith("vars.")
-    ? `the “${resource.slice(5)}” settings`
-    : resource;
-
-  return `${VERBS[action] ?? action} ${what}`;
-};
-
-const hidden = (name: string, value: string | null) =>
-  value === null
-    ? ""
-    : `<input type="hidden" name="${name}" value="${escapeHtml(value)}">`;
-
 // The redirect host is spelled out because that — not the client's self-chosen display
 // name — is where the authorization code actually goes (MCP authorization spec).
 const hostOf = (uri: string) => parseUrl(uri)?.host ?? uri;
 
-const loginPage = (
-  client: OAuthClient,
-  params: AuthorizeParams,
-  returnTo: string,
-  error?: string,
-  status = 200,
-) =>
-  page(
-    "Sign in",
-    `<h1>Sign in</h1>
-<p><strong>${escapeHtml(client.clientName)}</strong> wants to connect to this site. Sign in to choose what it may do. It will return to <span class="host">${escapeHtml(hostOf(params.redirectUri))}</span>.</p>
-${error ? `<p class="error">${escapeHtml(error)}</p>` : ""}
-<form method="post" action="/oauth/login">
-${hidden("return", returnTo)}
-<label for="email">Email</label>
-<input id="email" name="email" type="email" autocomplete="username" required autofocus>
-<label for="password">Password</label>
-<input id="password" name="password" type="password" autocomplete="current-password" required>
-<div class="row">
-<button type="submit" class="primary">Sign in</button>
-</div>
-</form>`,
-    status,
-  );
-
-const consentPage = (input: {
-  client: OAuthClient;
-  params: AuthorizeParams;
-  returnTo: string;
-  email: string;
-  offered: string[];
-  csrf: string;
-  error?: string;
-  status?: number;
-}) => {
-  const { client, params, offered } = input;
-
-  // One group per resource, in the order the user's permissions come in.
-  const groups = new Map<string, string[]>();
-  for (const scope of offered) {
-    const resource = scope.split(":")[0] ?? scope;
-    groups.set(resource, [...(groups.get(resource) ?? []), scope]);
-  }
-
-  const choices = [...groups.values()]
-    .map((scopes) =>
-      scopes
-        .map(
-          (scope) =>
-            `<label class="scope"><input type="checkbox" name="grant" value="${escapeHtml(scope)}" checked> <span>${escapeHtml(describeScope(scope))}</span></label>`,
-        )
-        .join("\n"),
-    )
-    .join("\n");
-
-  return page(
-    "Authorize access",
-    `<h1>Authorize ${escapeHtml(client.clientName)}</h1>
-<p><strong>${escapeHtml(client.clientName)}</strong> wants to act on this site as you. It will return to <span class="host">${escapeHtml(hostOf(params.redirectUri))}</span>.</p>
-${input.error ? `<p class="error">${escapeHtml(input.error)}</p>` : ""}
-<form method="post" action="/oauth/authorize">
-${hidden("client_id", params.clientId)}
-${hidden("redirect_uri", params.redirectUri)}
-${hidden("code_challenge", params.codeChallenge)}
-${hidden("state", params.state)}
-${hidden("scope", params.scope)}
-${hidden("resource", params.resource)}
-${hidden("csrf", input.csrf)}
-${
-  offered.length
-    ? `<p>It will be able to:</p>
-<div class="scopes">
-${choices}
-</div>`
-    : "<p>Your account has nothing this client could be given.</p>"
-}
-<div class="row">
-<!-- Allow must come first in the markup: pressing Enter in a field submits with the form's
-first submit button, and that must never be Deny. CSS puts Deny back on the left. -->
-${offered.length ? '<button type="submit" name="action" value="approve" class="primary">Allow</button>' : ""}
-<button type="submit" name="action" value="deny" formnovalidate>Deny</button>
-</div>
-</form>
-<form method="post" action="/oauth/logout" class="who">
-${hidden("return", input.returnTo)}
-Signed in as ${escapeHtml(input.email)}. <button type="submit">Not you?</button>
-</form>`,
-    input.status ?? 200,
-  );
-};
-
-const redirectWith = (
+const redirectUrl = (
   redirectUri: string,
   values: Record<string, string | null>,
   issuer: string,
@@ -303,10 +167,7 @@ const redirectWith = (
     if (value !== null) url.searchParams.set(key, value);
   }
 
-  return new Response(null, {
-    status: 303,
-    headers: { Location: url.toString(), ...noStore },
-  });
+  return url.toString();
 };
 
 const hashCode = (code: string) =>
@@ -317,38 +178,6 @@ const pkceChallenge = (verifier: string) =>
 
 const readForm = async (request: Request) =>
   new URLSearchParams(await request.text());
-
-const cookieOf = (request: Request, name: string) => {
-  for (const part of (request.headers.get("cookie") ?? "").split(";")) {
-    const [key, ...rest] = part.trim().split("=");
-    if (key === name) return rest.join("=");
-  }
-  return null;
-};
-
-const setCookie = (value: string, maxAgeSeconds: number, base: string) =>
-  `${COOKIE}=${value}; Path=${COOKIE_PATH}; HttpOnly; SameSite=Lax; Max-Age=${maxAgeSeconds}${base.startsWith("https://") ? "; Secure" : ""}`;
-
-const WEB_COOKIE_SECONDS = 7 * 24 * 60 * 60;
-
-// Tied to the sign-in, so a form posted from another site (which has no such cookie, and could
-// not guess this) is refused.
-const csrfOf = (bearer: string) =>
-  createHash("sha256")
-    .update(`csrf:${bearer.split(":")[2] ?? ""}`)
-    .digest("hex")
-    .slice(0, 32);
-
-const sameText = (a: string, b: string) => {
-  const left = Buffer.from(a);
-  const right = Buffer.from(b);
-  return left.length === right.length && timingSafeEqual(left, right);
-};
-
-// The query string of an authorize request travels through the sign-in page as a form field and
-// comes back in a Location header: only URL-safe characters may pass.
-const safeQuery = (value: string | null) =>
-  value !== null && /^[\x21-\x7E]*$/.test(value) ? value : "";
 
 const pruneExpired = async () => {
   await db().removeWhere(oauthCodeTable, [
@@ -361,10 +190,6 @@ const pruneExpired = async () => {
       op: "$lt",
       value: moment().subtract(UNUSED_CLIENT_TTL_HOURS, "hours").toISOString(),
     },
-  ]);
-  await db().removeWhere(tokenTable, [
-    { field: "kind", op: "$eq", value: "web" },
-    { field: "expiresAt", op: "$lt", value: moment().toISOString() },
   ]);
 };
 
@@ -413,61 +238,45 @@ const oauth = makeModule(() => {
     const isOurResource = (resource: string, base: string) =>
       [base, `${base}/mcp`].includes(resource.replace(/\/+$/, ""));
 
-    // Shared by GET (show the page) and POST (submit it): resolves the client and validates the
-    // request. A bad client_id or redirect_uri is shown to the user and never redirected to —
-    // redirecting to an unvalidated URI would turn this endpoint into an open redirector.
+    // Shared by GET (what the page shows) and POST (the decision): resolves the client and
+    // validates the request. A bad client_id or redirect_uri is an error for the admin page to show
+    // and is never redirected to — redirecting to an unvalidated URI would turn this endpoint into
+    // an open redirector. Anything else wrong with the request goes back to the client.
     const resolveAuthorize = async (values: URLSearchParams, base: string) => {
       const clientId = values.get("client_id") ?? "";
       const redirectUri = values.get("redirect_uri") ?? "";
 
       const client = await lookupClient(clientId);
-      if (!client) {
-        return { response: errorPage("Unknown client."), client: null };
-      }
+      if (!client) return { error: "Unknown client." };
       if (!redirectMatches(redirectUri, client.redirectUris)) {
-        return {
-          response: errorPage("The redirect address is not registered."),
-          client: null,
-        };
+        return { error: "The redirect address is not registered." };
       }
 
       const state = values.get("state");
-      const reject = (error: string, description: string) =>
-        redirectWith(
+      const reject = (error: string, description: string) => ({
+        redirect: redirectUrl(
           redirectUri,
           { error, error_description: description, state },
           base,
-        );
+        ),
+      });
 
-      if (values.get("response_type") !== "code" && !values.has("action")) {
-        return {
-          response: reject(
-            "unsupported_response_type",
-            "Only code is supported.",
-          ),
-          client: null,
-        };
+      if (values.get("response_type") !== "code") {
+        return reject("unsupported_response_type", "Only code is supported.");
       }
 
       const codeChallenge = values.get("code_challenge") ?? "";
       const method = values.get("code_challenge_method") ?? "S256";
       if (!codeChallenge || method !== "S256") {
-        return {
-          response: reject("invalid_request", "PKCE with S256 is required."),
-          client: null,
-        };
+        return reject("invalid_request", "PKCE with S256 is required.");
       }
 
       const resource = values.get("resource");
       if (resource && !isOurResource(resource, base)) {
-        return {
-          response: reject("invalid_target", "Unknown resource."),
-          client: null,
-        };
+        return reject("invalid_target", "Unknown resource.");
       }
 
       return {
-        response: null,
         client,
         params: {
           clientId,
@@ -478,15 +287,6 @@ const oauth = makeModule(() => {
           resource,
         } satisfies AuthorizeParams,
       };
-    };
-
-    // The sign-in of whoever is at the keyboard, if they have one.
-    const webSession = async (request: Request) => {
-      const bearer = cookieOf(request, COOKIE);
-      if (!bearer) return null;
-
-      const principal = await resolveBearer(bearer, ["web"]);
-      return principal ? { bearer, principal } : null;
     };
 
     const issueCode = async (
@@ -518,6 +318,7 @@ const oauth = makeModule(() => {
     };
 
     const controller = new Elysia()
+      .use((await auth()).plugin)
       .get("/.well-known/oauth-protected-resource", resourceMetadata)
       .get("/.well-known/oauth-protected-resource/mcp", resourceMetadata)
       .get("/.well-known/oauth-authorization-server", ({ request }) => {
@@ -525,7 +326,7 @@ const oauth = makeModule(() => {
 
         return json({
           issuer: base,
-          authorization_endpoint: `${base}/oauth/authorize`,
+          authorization_endpoint: `${base}/_admin/oauth/authorize`,
           token_endpoint: `${base}/oauth/token`,
           registration_endpoint: `${base}/oauth/register`,
           revocation_endpoint: `${base}/oauth/revoke`,
@@ -596,200 +397,93 @@ const oauth = makeModule(() => {
         },
         { parse: "none" },
       )
-      .get("/oauth/authorize", async ({ request }) => {
-        const base = publicBase(request);
-        const url = new URL(request.url);
-        const resolved = await resolveAuthorize(url.searchParams, base);
-        if (resolved.response) return resolved.response;
-
-        const { client, params } = resolved;
-        const returnTo = safeQuery(url.search.slice(1));
-
-        const session = await webSession(request);
-        if (!session) return loginPage(client, params, returnTo);
-
-        const { principal, bearer } = session;
-        const wanted = parseScopes(params.scope);
-
-        // Approved before, and for at least this much: no need to ask again — unless the client
-        // asked to be asked (`prompt=consent`).
-        const earlier = await findConsent(principal.user.id, client.id);
-        if (
-          earlier &&
-          url.searchParams.get("prompt") !== "consent" &&
-          scopeCovers(earlier.scopes, wanted)
-        ) {
-          const code = await issueCode(
-            client,
-            params,
-            principal.user.id,
-            wanted,
-          );
-          await rememberConsent({
-            userId: principal.user.id,
-            clientId: client.id,
-            clientName: client.clientName,
-            scopes: wanted,
-          });
-
-          return redirectWith(
-            params.redirectUri,
-            { code, state: params.state },
-            base,
-          );
-        }
-
-        return consentPage({
-          client,
-          params,
-          returnTo,
-          email: principal.user.email,
-          offered: grantable(principal).filter((scope) =>
-            scopeCovers(wanted, [scope]),
-          ),
-          csrf: csrfOf(bearer),
-        });
-      })
-      .post(
-        "/oauth/login",
-        async ({ request }) => {
+      .get(
+        "/api/oauth/authorize",
+        async ({ request, principal }) => {
           const base = publicBase(request);
-          const values = await readForm(request);
-          const returnTo = safeQuery(values.get("return"));
-
-          const resolved = await resolveAuthorize(
-            new URLSearchParams(returnTo),
-            base,
-          );
-          if (resolved.response) return resolved.response;
+          const url = new URL(request.url);
+          const resolved = await resolveAuthorize(url.searchParams, base);
+          if ("error" in resolved) {
+            return status(400, { message: resolved.error });
+          }
+          if ("redirect" in resolved) return { data: resolved };
 
           const { client, params } = resolved;
-          const email = (values.get("email") ?? "").trim().toLowerCase();
-          const password = values.get("password") ?? "";
-          const limitKey = `oauth-login:${email}`;
+          const wanted = parseScopes(params.scope);
 
-          if (await isLimited(limitKey)) {
-            return loginPage(
+          // Approved before, and for at least this much: no need to ask again — unless the client
+          // asked to be asked (`prompt=consent`).
+          const earlier = await findConsent(principal.user.id, client.id);
+          if (
+            earlier &&
+            url.searchParams.get("prompt") !== "consent" &&
+            scopeCovers(earlier.scopes, wanted)
+          ) {
+            const code = await issueCode(
               client,
               params,
-              returnTo,
-              "Too many failed attempts. Try again in a few minutes.",
-              429,
+              principal.user.id,
+              wanted,
             );
-          }
-
-          const { DUMMY_HASH, findUserByEmail } = await import(
-            "../models/user"
-          );
-          const account = await findUserByEmail<{
-            id: string;
-            password: string;
-          }>(email);
-
-          const passwordOk = await Bun.password.verify(
-            password,
-            account?.password ?? DUMMY_HASH,
-          );
-
-          if (!account || !passwordOk) {
-            await recordFailure(limitKey);
-            return loginPage(
-              client,
-              params,
-              returnTo,
-              "Incorrect email or password.",
-              401,
-            );
-          }
-
-          await clearFailures(limitKey);
-
-          const { bearer } = await issueToken({
-            user: account.id,
-            kind: "web",
-          });
-
-          return new Response(null, {
-            status: 303,
-            headers: {
-              Location: `/oauth/authorize?${returnTo}`,
-              "Set-Cookie": setCookie(bearer, WEB_COOKIE_SECONDS, base),
-              ...noStore,
-            },
-          });
-        },
-        { parse: "none" },
-      )
-      .post(
-        "/oauth/logout",
-        async ({ request }) => {
-          const base = publicBase(request);
-          const values = await readForm(request);
-          const session = await webSession(request);
-
-          if (session) await removeToken(session.principal.token.id);
-
-          return new Response(null, {
-            status: 303,
-            headers: {
-              Location: `/oauth/authorize?${safeQuery(values.get("return"))}`,
-              "Set-Cookie": setCookie("", 0, base),
-              ...noStore,
-            },
-          });
-        },
-        { parse: "none" },
-      )
-      .post(
-        "/oauth/authorize",
-        async ({ request }) => {
-          const base = publicBase(request);
-          const values = await readForm(request);
-          const resolved = await resolveAuthorize(values, base);
-          if (resolved.response) return resolved.response;
-
-          const { client, params } = resolved;
-
-          // Signed out (or never signed in): back to the start, which asks for a sign-in.
-          const session = await webSession(request);
-          if (!session) {
-            const query = new URLSearchParams({
-              response_type: "code",
-              client_id: params.clientId,
-              redirect_uri: params.redirectUri,
-              code_challenge: params.codeChallenge,
-              code_challenge_method: "S256",
-              ...(params.state === null ? {} : { state: params.state }),
-              ...(params.scope === null ? {} : { scope: params.scope }),
-              ...(params.resource === null
-                ? {}
-                : { resource: params.resource }),
+            await rememberConsent({
+              userId: principal.user.id,
+              clientId: client.id,
+              clientName: client.clientName,
+              scopes: wanted,
             });
 
-            return new Response(null, {
-              status: 303,
-              headers: {
-                Location: `/oauth/authorize?${query}`,
-                ...noStore,
+            return {
+              data: {
+                redirect: redirectUrl(
+                  params.redirectUri,
+                  { code, state: params.state },
+                  base,
+                ),
               },
-            });
+            };
           }
 
-          const { principal, bearer } = session;
+          return {
+            data: {
+              client: { id: client.id, name: client.clientName },
+              host: hostOf(params.redirectUri),
+              scopes: grantable(principal).filter((scope) =>
+                scopeCovers(wanted, [scope]),
+              ),
+            },
+          };
+        },
+        { auth: { session: true } },
+      )
+      .post(
+        "/api/oauth/authorize",
+        async ({ request, body, principal }) => {
+          const base = publicBase(request);
+          const { action, grant, ...rest } = body;
 
-          if (!sameText(values.get("csrf") ?? "", csrfOf(bearer))) {
-            return errorPage(
-              "This page is out of date. Go back to the app and start again.",
-              403,
-            );
+          const values = new URLSearchParams();
+          for (const [key, value] of Object.entries(rest)) {
+            if (typeof value === "string") values.set(key, value);
           }
 
-          if (values.get("action") === "deny") {
-            return redirectWith(
-              params.redirectUri,
-              { error: "access_denied", state: params.state },
-              base,
-            );
+          const resolved = await resolveAuthorize(values, base);
+          if ("error" in resolved) {
+            return status(400, { message: resolved.error });
+          }
+          if ("redirect" in resolved) return { data: resolved };
+
+          const { client, params } = resolved;
+
+          if (action === "deny") {
+            return {
+              data: {
+                redirect: redirectUrl(
+                  params.redirectUri,
+                  { error: "access_denied", state: params.state },
+                  base,
+                ),
+              },
+            };
           }
 
           const wanted = parseScopes(params.scope);
@@ -797,21 +491,12 @@ const oauth = makeModule(() => {
             scopeCovers(wanted, [scope]),
           );
 
-          // Only what was offered: a checkbox the page never showed is ignored.
-          const granted = values
-            .getAll("grant")
-            .filter((scope) => offered.includes(scope));
+          // Only what was offered: a scope the page never showed is ignored.
+          const granted = grant.filter((scope) => offered.includes(scope));
 
           if (granted.length === 0) {
-            return consentPage({
-              client,
-              params,
-              returnTo: "",
-              email: principal.user.email,
-              offered,
-              csrf: csrfOf(bearer),
-              error: "Choose at least one thing to allow, or deny.",
-              status: 400,
+            return status(400, {
+              message: "Choose at least one thing to allow, or deny.",
             });
           }
 
@@ -836,13 +521,23 @@ const oauth = makeModule(() => {
             scopes,
           );
 
-          return redirectWith(
-            params.redirectUri,
-            { code, state: params.state },
-            base,
-          );
+          return {
+            data: {
+              redirect: redirectUrl(
+                params.redirectUri,
+                { code, state: params.state },
+                base,
+              ),
+            },
+          };
         },
-        { parse: "none" },
+        {
+          auth: { session: true },
+          body: z.looseObject({
+            action: z.enum(["approve", "deny"]),
+            grant: z.array(z.string()).default([]),
+          }),
+        },
       )
       .post(
         "/oauth/token",
