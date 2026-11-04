@@ -786,6 +786,15 @@ export const sqlAdapter = (config: SqlAdapterSpec): DbAdapter => {
       if (pivot) {
         return sql`exists (select 1 from ${tableRef(pivot.table)} where ${col(pivot.table, "_parent")} = ${col(plan.name, "id")} and ${col(pivot.table, "target")} = ${String(value)})`;
       }
+      // A plain column (status, a select, ...) has no elements to contain, so `$in` reads as
+      // "is one of these": `status: { $in: ["draft", "changed"] }`.
+      const own = targetOf(plan, field);
+      if (own) {
+        const values = (Array.isArray(value) ? value : [value]) as unknown[];
+        if (values.length === 0) return sql`1 = 0`;
+        const bound = values.map((v) => sql`${encode(own.type, v)}`);
+        return sql`${own.ref} in (${sql.join(bound, sql`, `)})`;
+      }
       throw new Error(
         `"$in" needs a list of scalars or relations, and "${field}" is not one`,
       );
