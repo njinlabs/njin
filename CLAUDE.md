@@ -4,7 +4,7 @@ A framework for company profiles, landing pages and content sites on Bun and Ely
 schema the admin panel draws its forms from, an MCP server for agents, and SSR pages (EdgeJS). Published as
 `@njinlabs/njin`; the TypeScript source is what ships (`files: src`), so there is no build step for the package. The admin
 panel is a separate repo, [njin-admin](https://github.com/njinlabs/njin-admin), downloaded into a project's `_admin/` by
-`njin create` and `njin update`. `README.md` is the user-facing documentation.
+`njin create` and `njin update`. `README.md` is a short introduction; the documentation is the separate docs site (njin.run/docs).
 
 ## Layout
 
@@ -46,7 +46,7 @@ CI runs `biome ci`, `tsc --noEmit` and the tests. All three must pass.
   `NJIN_TEST_ADAPTER=postgres|sqlite|mysql` runs the same tests on another engine.
 - Modules are mounted on `makeFakeElysia()` (`tests/helpers/fake_elysia.ts`) and exercised with `app.handle(new Request(...))`.
 - Code that reads config (`publicBase`, the session cookie's `Secure` flag) needs `getConfig` mocked with `mock.module`.
-- Each new behaviour gets a test in the mirrored folder; a change to an endpoint's contract updates `README.md` and
+- Each new behaviour gets a test in the mirrored folder; a change to an endpoint's contract updates
   `template/CLAUDE.md` in the same commit.
 
 ## Auth model (what several files depend on)
