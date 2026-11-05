@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Question or help
+    url: https://github.com/njinlabs/njin/discussions
+    about: Ask how to do something, or share what you built.
+  - name: Documentation
+    url: https://njin.run/docs
+    about: Guides and reference for njin.
+  - name: Security vulnerability
+    url: https://github.com/njinlabs/njin/security/advisories/new
+    about: Report it privately. Do not open a public issue.

@@ -1,0 +1,47 @@
+name: Bug report
+description: Something does not work as documented.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time. For questions, use [Discussions](https://github.com/njinlabs/njin/discussions).
+  - type: input
+    id: version
+    attributes:
+      label: njin version
+      placeholder: "1.0.0"
+    validations:
+      required: true
+  - type: input
+    id: runtime
+    attributes:
+      label: Bun version and OS
+      placeholder: "Bun 1.x, Windows 11"
+    validations:
+      required: true
+  - type: dropdown
+    id: database
+    attributes:
+      label: Database
+      options: [SurrealDB, PostgreSQL, SQLite, MySQL, MariaDB, Not related]
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what did you expect?
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: A minimal model or route that shows the problem is best.
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs or error output
+      render: shell

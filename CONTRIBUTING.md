@@ -34,7 +34,7 @@ bunx tsc --noEmit
 
 ## Code of conduct
 
-Be respectful and constructive. Harassment or abuse is not tolerated.
+This project follows a [code of conduct](CODE_OF_CONDUCT.md). Be respectful and constructive; harassment or abuse is not tolerated. Questions are welcome in [Discussions](https://github.com/njinlabs/njin/discussions).
 
 ## Security
 
