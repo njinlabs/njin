@@ -20,6 +20,6 @@ Not acceptable:
 
 Maintainers may edit or remove comments, commits, issues and other contributions that do not follow this code, and may temporarily or permanently ban anyone who repeatedly violates it.
 
-Report problems privately to **halo@jadiweb.id**. Reports are handled in confidence.
+Report problems privately to **conduct@njin.run**. Reports are handled in confidence.
 
 This code is adapted from the [Contributor Covenant](https://www.contributor-covenant.org), version 2.1.
