@@ -721,6 +721,24 @@ file:create:own     # resources: a model prefix, vars.<prefix>, file, user, acce
 - Access is worked out on every request, so changing a group or removing a user is effective immediately, agents included.
 - Code you write (hooks, helpers, templates, custom MCP tools) calls the model directly and is **not** checked: it is yours to guard. In a custom MCP tool, `handler(args, { can })` gives `can("post", "update")`.
 
+### Protecting your own routes
+
+A route file in `routes` is its own Elysia instance, so it must `.use(authPlugin)` before it can use the `auth` option. Without it the option is not known; do not rely on it being there.
+
+```ts
+import { authPlugin } from "@njinlabs/njin/auth";
+import Elysia from "elysia";
+
+export default new Elysia({ prefix: "/api/report" })
+  .use(authPlugin)
+  .get("/", ({ principal, user }) => ({ data: user }), {
+    auth: { mcp: true, can: ["post", "read"] },
+  });
+```
+
+- `auth: true`: a session, personal token or OAuth token. `{ mcp: true }`: a personal or OAuth token only (what a script or agent sends as `Authorization: Bearer njt:...`). `{ session: true }`: a logged-in admin only. `can: [resource, action]` is added on top of any of them and honours the token's scopes.
+- The handler gets `principal` (kind, permissions, token) and `user` (the user, plus `tokenId`). `401` for no or a wrong kind of token, `403` when `can` fails.
+
 ## Configuration (`config.ts`, project root)
 
 There's no `.env` schema owned by njin anymore — `config.ts` is the single source of truth, and reading from `process.env` inside it is your own choice:
