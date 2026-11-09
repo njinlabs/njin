@@ -47,6 +47,7 @@
     "./boot": "./src/core/runtime/boot.ts",
     "./banner": "./src/core/runtime/banner.ts",
     "./worker": "./src/core/runtime/worker.ts",
+    "./auth": "./src/core/api/auth.ts",
     "./static": "./src/core/http/static_cache.ts",
     "./testing": "./src/core/api/testing.ts",
     "./logger": "./src/modules/logger.ts",
