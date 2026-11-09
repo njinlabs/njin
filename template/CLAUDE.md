@@ -723,7 +723,7 @@ file:create:own     # resources: a model prefix, vars.<prefix>, file, user, acce
 
 ### Protecting your own routes
 
-A route file in `routes` is its own Elysia instance, so it must `.use(authPlugin)` before it can use the `auth` option. Without it the option is not known; do not rely on it being there.
+The `auth` option is enforced on a route file's routes at runtime, but TypeScript only knows it (and types `principal`/`user` in the handler) once the file does `.use(authPlugin)`. Add it to every route file that uses `auth`.
 
 ```ts
 import { authPlugin } from "@njinlabs/njin/auth";
